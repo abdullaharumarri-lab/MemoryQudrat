@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+memory_qudrat.db
+*.pdf
+*.json
+!template.json
+venv/
+.venv/
+.idea/
+.vscode/
