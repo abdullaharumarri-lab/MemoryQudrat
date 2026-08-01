@@ -138,7 +138,20 @@ def main():
     app.add_error_handler(error_handler)
 
     logger.info("MemoryQudrat bot started!")
-    app.run_polling(drop_pending_updates=True)
+    import os
+    PORT = int(os.environ.get('PORT', 8000))
+    APP_URL = os.environ.get('APP_URL')
+
+    if APP_URL:
+        # Run using Webhooks for Render/PaaS
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=APP_URL
+        )
+    else:
+        # Run using Polling for local development
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
