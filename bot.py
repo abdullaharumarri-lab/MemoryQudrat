@@ -140,7 +140,8 @@ def main():
     logger.info("MemoryQudrat bot started!")
     import os
     PORT = int(os.environ.get('PORT', 8000))
-    APP_URL = os.environ.get('APP_URL')
+    # Render automatically sets RENDER_EXTERNAL_URL (e.g. https://my-app.onrender.com)
+    APP_URL = os.environ.get('RENDER_EXTERNAL_URL') or os.environ.get('APP_URL')
 
     if APP_URL:
         # Run using Webhooks for Render/PaaS
