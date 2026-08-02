@@ -54,6 +54,22 @@ logger.info("DNS patch applied for Telegram connectivity.")
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def schedule_reminder(job_queue, chat_id: int):
+    """Schedule (or reschedule) the daily 6 PM reminder for a chat_id."""
+    if job_queue is None:
+        return
+    # Remove existing job if any to avoid duplicates
+    for job in job_queue.get_jobs_by_name(f"reminder_{chat_id}"):
+        job.schedule_removal()
+    riyadh_tz = pytz.timezone("Asia/Riyadh")
+    job_queue.run_daily(
+        daily_reminder,
+        time=time(18, 0, tzinfo=riyadh_tz),
+        data=chat_id,
+        name=f"reminder_{chat_id}",
+    )
+
+
 async def daily_reminder(context):
     """Send a daily reminder if there are due reviews."""
     reviews = db.get_due_quiz_reviews()
@@ -82,19 +98,9 @@ async def start_command(update: Update, context):
     """Handle /start command."""
     chat_id = update.effective_chat.id
 
-    # Schedule daily reminder at 6:00 PM Riyadh time
-    if context.job_queue is not None:
-        current_jobs = context.job_queue.get_jobs_by_name(f"reminder_{chat_id}")
-        for job in current_jobs:
-            job.schedule_removal()
-
-        riyadh_tz = pytz.timezone("Asia/Riyadh")
-        context.job_queue.run_daily(
-            daily_reminder,
-            time=time(18, 0, tzinfo=riyadh_tz),
-            data=chat_id,
-            name=f"reminder_{chat_id}",
-        )
+    # Save chat_id permanently in DB so reminders work after restart
+    db.save_chat_id(chat_id)
+    schedule_reminder(context.job_queue, chat_id)
 
     # Send main menu using clean chat mechanism
     text = (
@@ -113,10 +119,18 @@ async def error_handler(update, context):
     logger.error(f"Error: {context.error}")
 
 
+async def post_init(application):
+    """Restore daily reminders for all known users after bot restarts."""
+    chat_ids = db.get_all_chat_ids()
+    for chat_id in chat_ids:
+        schedule_reminder(application.job_queue, chat_id)
+    logger.info(f"Restored reminders for {len(chat_ids)} user(s).")
+
+
 def main():
     db.init_db()
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
     # Commands
     app.add_handler(CommandHandler("start", start_command))

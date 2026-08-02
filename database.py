@@ -362,3 +362,24 @@ def get_last_message_id(chat_id: int) -> int | None:
     row = cursor.fetchone()
     conn.close()
     return int(row["value"]) if row else None
+
+def save_chat_id(chat_id: int):
+    """Save a user's chat_id so the bot can send reminders after restart."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO bot_state (key, value) VALUES (?, ?)
+           ON CONFLICT(key) DO NOTHING""",
+        (f"chat_{chat_id}", str(chat_id))
+    )
+    conn.commit()
+    conn.close()
+
+def get_all_chat_ids() -> list:
+    """Retrieve all saved chat_ids to schedule reminders on startup."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM bot_state WHERE key LIKE 'chat_%'")
+    rows = cursor.fetchall()
+    conn.close()
+    return [int(row["value"]) for row in rows]
