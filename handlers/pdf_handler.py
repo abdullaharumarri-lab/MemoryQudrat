@@ -38,6 +38,7 @@ async def pdf_document_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 "❌ لم أتمكن من استخراج أسئلة من هذا الملف.\n"
                 "تأكد أن الملف يحتوي على أسئلة اختيار من متعدد.\n\n"
                 "💡 يمكنك رفع ملف JSON مباشرة كبديل.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
             )
             return
 
@@ -58,10 +59,10 @@ async def pdf_document_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await msg.edit_text(
             f"❌ خطأ في معالجة الـ PDF:\n`{str(e)[:200]}`\n\n"
-            "💡 *بديل:* أرسل ملف JSON بالصيغة التالية مباشرة:",
+            "💡 *بديل:* أرسل ملف JSON بصيغة صحيحة مباشرة.",
             parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
         )
-        await _send_json_template(update)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -92,10 +93,11 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             data = json.load(f)
 
         if "questions" not in data or not isinstance(data["questions"], list):
-            await msg.delete()
-            await context.bot.send_message(
+            await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
+                message_id=msg_id,
                 text="❌ صيغة JSON غير صحيحة! يجب أن يحتوي على مفتاح `questions`.\nأرسل /template للحصول على نموذج.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
             )
             return
 
@@ -103,20 +105,22 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
         quiz_name = data.get("quiz_name", doc.file_name.replace(".json", ""))
 
         if not questions:
-            await msg.delete()
-            await context.bot.send_message(
+            await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
-                text="❌ لا توجد أسئلة في الملف."
+                message_id=msg_id,
+                text="❌ لا توجد أسئلة في الملف.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
             )
             return
 
         required_keys = {"question", "options", "answer"}
         for i, q in enumerate(questions):
             if not required_keys.issubset(q.keys()):
-                await msg.delete()
-                await context.bot.send_message(
+                await context.bot.edit_message_text(
                     chat_id=update.effective_chat.id,
+                    message_id=msg_id,
                     text=f"❌ السؤال رقم {i+1} ناقص. المطلوب: `question`, `options`, `answer`",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
                 )
                 return
 
@@ -142,7 +146,8 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=msg_id,
-            text="❌ الملف ليس JSON صحيحاً. تحقق من الصيغة."
+            text="❌ الملف ليس JSON صحيحاً. تحقق من الصيغة.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
         )
     except Exception as e:
         await context.bot.edit_message_text(
@@ -150,6 +155,7 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             message_id=msg_id,
             text=f"❌ خطأ: `{str(e)[:200]}`",
             parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
         )
     finally:
         if tmp_path and os.path.exists(tmp_path):
