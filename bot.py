@@ -115,12 +115,38 @@ async def start_command(update: Update, context):
 
 
 async def error_handler(update, context):
-    """Log errors."""
+    """Log errors — silently ignore stale message/button errors."""
+    error_str = str(context.error)
+
+    # Ignore harmless errors caused by old/deleted messages or stale buttons
+    ignored_errors = [
+        "Button_data_invalid",
+        "Message is not modified",
+        "Bad Request: message to edit not found",
+        "Bad Request: message can't be deleted",
+        "Bad Request: MESSAGE_ID_INVALID",
+        "Query is too old",
+    ]
+    for ignored in ignored_errors:
+        if ignored in error_str:
+            logger.warning(f"Ignored stale error: {error_str}")
+            # Try to answer the callback query to remove loading spinner
+            if update and hasattr(update, 'callback_query') and update.callback_query:
+                try:
+                    await update.callback_query.answer()
+                except Exception:
+                    pass
+            return
+
     logger.error(f"Error: {context.error}")
 
 
 async def post_init(application):
     """Restore daily reminders for all known users after bot restarts."""
+    # Clear any stale session from previous run to prevent freezing
+    db.clear_session()
+    logger.info("Cleared stale session on startup.")
+
     chat_ids = db.get_all_chat_ids()
     for chat_id in chat_ids:
         schedule_reminder(application.job_queue, chat_id)
