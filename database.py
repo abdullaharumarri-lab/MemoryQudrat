@@ -98,14 +98,12 @@ def init_db():
 
 # ─── Quizzes ──────────────────────────────────────────────────────────────────
 
-def save_quiz(name: str, questions: list) -> int:
-    """Save a quiz with its questions. Returns quiz_id."""
+def save_quiz_without_review(name: str, questions: list) -> int:
+    """Save quiz and questions only — no review scheduled yet."""
     conn = get_connection()
     cursor = conn.cursor()
-
     cursor.execute("INSERT INTO quizzes (name) VALUES (?)", (name,))
     quiz_id = cursor.lastrowid
-
     for q in questions:
         cursor.execute(
             """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
@@ -118,14 +116,34 @@ def save_quiz(name: str, questions: list) -> int:
                 q.get("explanation", ""),
             ),
         )
-
-    cursor.execute(
-        "INSERT INTO quiz_reviews (quiz_id, stage, next_review_date) VALUES (?, 0, ?)",
-        (quiz_id, get_first_review_date()),
-    )
-
     conn.commit()
     conn.close()
+    return quiz_id
+
+
+def schedule_first_review(quiz_id: int, start_today: bool = True):
+    """Schedule the first review. start_today=True → today, False → tomorrow."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if start_today:
+        review_date = date.today().isoformat()
+    else:
+        review_date = (date.today() + timedelta(days=1)).isoformat()
+    cursor.execute(
+        "INSERT OR IGNORE INTO quiz_reviews (quiz_id, stage, next_review_date) VALUES (?, 0, ?)",
+        (quiz_id, review_date),
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_quiz(name: str, questions: list) -> int:
+    """Save quiz with smart first review date (today if before 6 PM, else tomorrow)."""
+    quiz_id = save_quiz_without_review(name, questions)
+    riyadh_tz = pytz.timezone("Asia/Riyadh")
+    now_riyadh = datetime.now(riyadh_tz)
+    start_today = now_riyadh.hour < 18
+    schedule_first_review(quiz_id, start_today=start_today)
     return quiz_id
 
 def get_all_quizzes() -> list:

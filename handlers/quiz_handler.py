@@ -117,7 +117,15 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
     except Exception:
-        await query.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+        # Fallback: send new clean message
+        from utils import send_clean_message
+        await send_clean_message(
+            context=context,
+            chat_id=query.message.chat_id,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
 
 
 async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -141,6 +149,12 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
             ]),
         )
+        return
+
+    # Guard: ignore if this question has already been answered (duplicate tap)
+    current_q_id = session["question_ids"][session["current_index"]]
+    if q_id != current_q_id:
+        await query.answer()
         return
 
     question = db.get_question(q_id)

@@ -249,6 +249,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
 
+    # ── Schedule review ──
+    elif data.startswith("sched_today_"):
+        quiz_id = int(data.split("_")[-1])
+        db.schedule_first_review(quiz_id, start_today=True)
+        quiz = db.get_quiz(quiz_id)
+        await query.edit_message_text(
+            f"✅ *تم! ستصلك مراجعة \"*{quiz['name']}\"* اليوم الساعة 6 المساء. 🔔",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("▶️ ابدأ الكويز الآن", callback_data=f"start_quiz_{quiz_id}")],
+                [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+            ]),
+            parse_mode="Markdown",
+        )
+
+    elif data.startswith("sched_tomorrow_"):
+        quiz_id = int(data.split("_")[-1])
+        db.schedule_first_review(quiz_id, start_today=False)
+        quiz = db.get_quiz(quiz_id)
+        await query.edit_message_text(
+            f"✅ *تم! ستصلك مراجعة \"*{quiz['name']}\"* غداً الساعة 6 المساء. 🔔",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("▶️ ابدأ الكويز الآن", callback_data=f"start_quiz_{quiz_id}")],
+                [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+            ]),
+            parse_mode="Markdown",
+        )
+
     # ── Start quiz ──
     elif data.startswith("start_quiz_"):
         quiz_id = int(data.split("_")[-1])

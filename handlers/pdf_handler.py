@@ -41,16 +41,16 @@ async def pdf_document_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return
 
-        quiz_id = db.save_quiz(quiz_name, questions)
+        quiz_id = db.save_quiz_without_review(quiz_name, questions)
 
         await msg.edit_text(
-            f"✅ *تم إنشاء الكويز بنجاح!*\n\n"
+            f"✅ *تم استخراج الكويز بنجاح!*\n\n"
             f"📋 *{quiz_name}*\n"
-            f"📝 {len(questions)} سؤال تم استخراجها\n\n"
-            f"🔁 جدول المراجعة: اليوم ← +١ يوم ← +٣ أيام ← +٧ أيام ← +٣٠ يوم",
+            f"📝 {len(questions)} سؤال\n\n"
+            f"📅 *متى تبدأ أول مراجعة؟*",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("▶️ ابدأ الكويز الآن", callback_data=f"start_quiz_{quiz_id}")],
-                [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")],
+                [InlineKeyboardButton("📅 اليوم (6 المساء)", callback_data=f"sched_today_{quiz_id}")],
+                [InlineKeyboardButton("📅 الغد (6 المساء)", callback_data=f"sched_tomorrow_{quiz_id}")],
             ]),
             parse_mode="Markdown",
         )
@@ -120,22 +120,20 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 )
                 return
 
-        quiz_id = db.save_quiz(quiz_name, questions)
+        quiz_id = db.save_quiz_without_review(quiz_name, questions)
 
-        # Edit processing message to clean result
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=msg_id,
             text=(
-                f"✅ *تم إنشاء الكويز بنجاح!*\n\n"
+                f"✅ *تم حفظ الكويز بنجاح!*\n\n"
                 f"📋 *{quiz_name}*\n"
                 f"📝 {len(questions)} سؤال\n\n"
-                f"🔁 جدول المراجعة:\n"
-                f"اليوم ← +١ يوم ← +٣ أيام ← +٧ أيام ← +٣٠ يوم"
+                f"📅 *متى تبدأ أول مراجعة؟*"
             ),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("▶️ ابدأ الكويز الآن", callback_data=f"start_quiz_{quiz_id}")],
-                [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")],
+                [InlineKeyboardButton("📅 اليوم (6 المساء)", callback_data=f"sched_today_{quiz_id}")],
+                [InlineKeyboardButton("📅 الغد (6 المساء)", callback_data=f"sched_tomorrow_{quiz_id}")],
             ]),
             parse_mode="Markdown",
         )
