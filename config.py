@@ -5,7 +5,7 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")
+DB_PATH = "memory_qudrat.db"
 
 # Spaced repetition intervals in days
 REVIEW_INTERVALS = [1, 3, 7, 30]
