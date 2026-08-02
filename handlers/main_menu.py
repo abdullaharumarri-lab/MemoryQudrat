@@ -36,6 +36,7 @@ def quizzes_keyboard(quizzes: list):
 def quiz_menu_keyboard(quiz_id: int):
     keyboard = [
         [InlineKeyboardButton("▶️ ابدأ الكويز", callback_data=f"start_quiz_{quiz_id}")],
+        [InlineKeyboardButton("🎮 تجربة (بدون احتساب)", callback_data=f"start_practice_{quiz_id}")],
         [InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")],
         [InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")],
     ]
@@ -253,6 +254,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         quiz_id = int(data.split("_")[-1])
         from handlers.quiz_handler import start_quiz_session
         await start_quiz_session(update, context, quiz_id, session_type="quiz")
+
+    # ── Start practice (no review tracking) ──
+    elif data.startswith("start_practice_"):
+        quiz_id = int(data.split("_")[-1])
+        from handlers.quiz_handler import start_quiz_session
+        await start_quiz_session(update, context, quiz_id, session_type="practice")
 
     # ── Delete quiz ──
     elif data.startswith("delete_quiz_"):

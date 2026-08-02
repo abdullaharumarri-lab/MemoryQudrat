@@ -1,7 +1,18 @@
 import sqlite3
 import json
+import pytz
+from datetime import datetime, date, timedelta
 from config import DB_PATH
-from datetime import date
+
+
+def get_first_review_date() -> str:
+    """Smart first review: before 6 PM Riyadh → today, after 6 PM → tomorrow."""
+    riyadh_tz = pytz.timezone("Asia/Riyadh")
+    now_riyadh = datetime.now(riyadh_tz)
+    if now_riyadh.hour < 18:
+        return date.today().isoformat()
+    else:
+        return (date.today() + timedelta(days=1)).isoformat()
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -108,11 +119,9 @@ def save_quiz(name: str, questions: list) -> int:
             ),
         )
 
-    # Schedule first review for tomorrow
-    from spaced_repetition import next_review_date
     cursor.execute(
         "INSERT INTO quiz_reviews (quiz_id, stage, next_review_date) VALUES (?, 0, ?)",
-        (quiz_id, next_review_date(0)),
+        (quiz_id, get_first_review_date()),
     )
 
     conn.commit()
@@ -122,7 +131,7 @@ def save_quiz(name: str, questions: list) -> int:
 def get_all_quizzes() -> list:
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM quizzes ORDER BY created_at DESC")
+    cursor.execute("SELECT * FROM quizzes ORDER BY id DESC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows

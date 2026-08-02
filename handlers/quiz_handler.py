@@ -52,7 +52,12 @@ async def start_quiz_session(
             await query.edit_message_text("❌ لا توجد أسئلة في هذا الكويز.")
             return
         question_ids = [q["id"] for q in questions]
-        title = "▶️ الكويز" if session_type == "quiz" else "🔁 المراجعة"
+        if session_type == "practice":
+            title = "🎮 تجربة"
+        elif session_type == "review":
+            title = "🔁 المراجعة"
+        else:
+            title = "▶️ الكويز"
 
     # Keep questions in original order (no shuffle)
 
@@ -193,9 +198,10 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
     else:
         rating = "💪 استمر في المحاولة"
 
-    # Update spaced repetition for wrong questions
-    for wq_id in wrong_ids:
-        db.add_or_reset_weak_question(quiz_id, wq_id)
+    # Update spaced repetition for wrong questions (not in practice mode)
+    if session_type != "practice":
+        for wq_id in wrong_ids:
+            db.add_or_reset_weak_question(quiz_id, wq_id)
 
     # Advance quiz/review spaced repetition
     if session_type in ("quiz", "review") and session.get("review_id"):
@@ -212,8 +218,9 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
             if qid in quiz_weak:
                 db.advance_weak_question(quiz_weak[qid]["id"])
         sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
-    else:
-        sr_text = ""
+    elif session_type == "practice":
+        # Practice mode: don't update spaced repetition at all
+        sr_text = "🎮 وضع التجربة — لم يتم احتساب هذه الجلسة في المراجعات."
 
     result_text = (
         f"🎉 *انتهى الكويز!*\n\n"
