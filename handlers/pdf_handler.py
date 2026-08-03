@@ -14,9 +14,10 @@ import tempfile
 
 async def pdf_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle PDF file uploads from the user."""
-    doc = update.message.document
+    msg_obj = update.effective_message  # works for both message and channel_post
+    doc = msg_obj.document
 
-    msg = await update.message.reply_text(
+    msg = await msg_obj.reply_text(
         "⏳ جاري استخراج الأسئلة من الـ PDF بالذكاء الاصطناعي...\n"
         "قد يستغرق هذا دقيقة أو أكثر حسب حجم الملف."
     )
@@ -72,7 +73,7 @@ async def pdf_document_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle JSON file uploads — clean chat by deleting file and processing messages."""
-    doc = update.message.document
+    doc = update.effective_message.document  # works for both message and channel_post
     # Send temporary processing message, replacing any old messages
     msg_id = await send_clean_message(
         context=context,

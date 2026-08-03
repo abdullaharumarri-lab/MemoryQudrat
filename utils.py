@@ -7,8 +7,8 @@ async def send_clean_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, t
     Sends a message while deleting the previous bot message to keep the chat clean.
     If update.message is present (user sent a command/text), it also deletes the user's message.
     """
-    # 1. Delete user's message if it exists
-    if update and update.message:
+    # 1. Delete user's message if it exists (skip for channel posts — can't delete)
+    if update and update.effective_message and update.message:
         try:
             await update.message.delete()
         except Exception:
