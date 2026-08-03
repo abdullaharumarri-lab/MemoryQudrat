@@ -1,36 +1,38 @@
-from datetime import date, timedelta
-from config import REVIEW_INTERVALS
+import datetime
+import pytz
 
+REVIEW_INTERVALS = [1, 3, 7, 30]
 
 def next_review_date(stage: int) -> str:
-    """
-    Calculate the next review date based on the current stage.
-    Stage 0 → +1 day, Stage 1 → +3 days, Stage 2 → +7 days, Stage 3 → +30 days
-    """
-    if stage >= len(REVIEW_INTERVALS):
-        # Already completed all stages
-        return date.today().isoformat()
-    interval = REVIEW_INTERVALS[stage]
-    return (date.today() + timedelta(days=interval)).isoformat()
+    if stage < 0 or stage >= len(REVIEW_INTERVALS):
+        raise ValueError("Invalid stage")
+    days_to_add = REVIEW_INTERVALS[stage]
+    # Calculate next review relative to current day
+    riyadh_tz = pytz.timezone("Asia/Riyadh")
+    now_riyadh = datetime.datetime.now(riyadh_tz)
+    base_date = now_riyadh.date()
+    
+    # If before 6 PM, count today as day 0. If after 6 PM, count tomorrow as day 0.
+    if now_riyadh.hour >= 18:
+        base_date += datetime.timedelta(days=1)
+        
+    next_date = base_date + datetime.timedelta(days=days_to_add)
+    return next_date.isoformat()
 
 
-def is_due(review_date_str: str) -> bool:
-    """Check if a review date is today or in the past."""
-    review_date = date.fromisoformat(review_date_str)
-    return review_date <= date.today()
+def days_until(target_date_str: str) -> int:
+    target = datetime.date.fromisoformat(target_date_str)
+    
+    riyadh_tz = pytz.timezone("Asia/Riyadh")
+    now_riyadh = datetime.datetime.now(riyadh_tz)
+    today = now_riyadh.date()
+    
+    delta = (target - today).days
+    return delta
 
 
 def stage_label(stage: int) -> str:
-    """Human-readable label for the current review stage."""
-    labels = ["📅 المراجعة الأولى", "📅 المراجعة الثانية",
-              "📅 المراجعة الثالثة", "📅 المراجعة الرابعة"]
-    if stage < len(labels):
+    labels = ["المراجعة الأولى", "المراجعة الثانية", "المراجعة الثالثة", "المراجعة الرابعة"]
+    if 0 <= stage < len(labels):
         return labels[stage]
-    return "✅ مكتملة"
-
-
-def days_until(date_str: str) -> int:
-    """Return how many days until a review date."""
-    target = date.fromisoformat(date_str)
-    delta = target - date.today()
-    return max(0, delta.days)
+    return "مكتمل"
