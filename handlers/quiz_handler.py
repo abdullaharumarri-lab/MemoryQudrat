@@ -10,9 +10,10 @@ import database as db
 def build_question_keyboard(options: list, question_id: int, session_type: str) -> InlineKeyboardMarkup:
     """Build MCQ keyboard with options."""
     keyboard = []
-    for opt in options:
+    for idx, opt in enumerate(options):
+        # Use index instead of text to avoid 64-byte callback_data limit
         keyboard.append([
-            InlineKeyboardButton(opt, callback_data=f"ans_{session_type}_{question_id}_{opt[:40]}")
+            InlineKeyboardButton(opt, callback_data=f"ans_{session_type}_{question_id}_{idx}")
         ])
     return InlineKeyboardMarkup(keyboard)
 
@@ -133,8 +134,13 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     parts = data.split("_", 3)
     if len(parts) < 4: return
 
-    _, session_type, q_id_str, user_answer = parts
+    _, session_type, q_id_str, opt_idx_str = parts
     q_id = int(q_id_str)
+    
+    try:
+        opt_idx = int(opt_idx_str)
+    except ValueError:
+        return
 
     session = db.get_session()
     if not session or session["session_type"] != session_type:
@@ -152,6 +158,11 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     question = db.get_question(q_id)
     if not question: return
+
+    try:
+        user_answer = question["options"][opt_idx]
+    except IndexError:
+        return
 
     correct = question["correct_answer"]
     is_correct = user_answer.strip() == correct.strip()
