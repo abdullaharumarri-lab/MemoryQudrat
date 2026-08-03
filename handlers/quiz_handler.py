@@ -1,4 +1,4 @@
-import random
+import html
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -73,9 +73,10 @@ async def start_quiz_session(
     )
 
     quiz = db.get_quiz(quiz_id)
+    title_safe = html.escape(quiz['name'])
     await query.edit_message_text(
-        f"{title}\n📋 *{quiz['name']}*\n📝 {len(question_ids)} سؤال\n\nجاري تحميل أول سؤال...",
-        parse_mode="Markdown",
+        f"{title}\n📋 <b>{title_safe}</b>\n📝 {len(question_ids)} سؤال\n\nجاري تحميل أول سؤال...",
+        parse_mode="HTML",
     )
 
     # Show first question
@@ -102,11 +103,13 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     progress = format_progress(idx + 1, total, session["correct_count"])
+    # Escape user-provided content to prevent HTML injection / parse errors
+    q_text = html.escape(question['question_text'])
     text = (
         f"{progress}\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"*السؤال {idx + 1}:*\n"
-        f"{question['question_text']}"
+        f"<b>السؤال {idx + 1}:</b>\n"
+        f"{q_text}"
     )
 
     keyboard = build_question_keyboard(
@@ -114,21 +117,18 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
     query = update.callback_query
-    # Try editing with Markdown first, then plain text, then send new message
     try:
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode="HTML")
     except Exception:
         try:
-            await query.edit_message_text(text, reply_markup=keyboard)
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
         except Exception:
-            try:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=text,
-                    reply_markup=keyboard,
-                )
-            except Exception:
-                pass
+            pass
 
 
 async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -179,18 +179,20 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_index = session["current_index"] + 1
     db.update_session(new_index, new_correct, new_wrong)
 
-    # Build feedback message
+    # Build feedback message (we control this text — safe to use HTML tags)
+    correct_safe = html.escape(correct)
     if is_correct:
-        feedback = f"✅ *إجابة صحيحة!*\n\n"
+        feedback = "✅ <b>إجابة صحيحة!</b>\n\n"
     else:
-        feedback = f"❌ *إجابة خاطئة!*\n\nالصواب: *{correct}*\n\n"
+        feedback = f"❌ <b>إجابة خاطئة!</b>\n\nالصواب: <b>{correct_safe}</b>\n\n"
 
     if question.get("explanation"):
-        feedback += f"💡 {question['explanation']}\n\n"
+        expl_safe = html.escape(question['explanation'])
+        feedback += f"💡 {expl_safe}\n\n"
 
-    feedback += "_جاري تحميل السؤال التالي..._"
+    feedback += "<i>جاري تحميل السؤال التالي...</i>"
 
-    await query.edit_message_text(feedback, parse_mode="Markdown")
+    await query.edit_message_text(feedback, parse_mode="HTML")
 
     # Show next question
     import asyncio
@@ -243,11 +245,11 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         sr_text = "🎮 وضع التجربة — لم يتم احتساب هذه الجلسة في المراجعات."
 
     result_text = (
-        f"🎉 *انتهى الكويز!*\n\n"
+        f"🎉 <b>انتهى الكويز!</b>\n\n"
         f"{rating}\n\n"
-        f"📊 *النتيجة:* {correct}/{total} ({score}%)\n"
+        f"📊 <b>النتيجة:</b> {correct}/{total} ({score}%)\n"
         f"✅ صح: {correct} | ❌ خطأ: {len(wrong_ids)}\n\n"
-        f"{sr_text}"
+        f"{html.escape(sr_text)}"
     )
 
     keyboard = [[InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]]
@@ -264,20 +266,15 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         await query.edit_message_text(
             result_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     except Exception:
         try:
-            await query.edit_message_text(
-                result_text,
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=result_text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="HTML",
             )
         except Exception:
-            try:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=result_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
-            except Exception:
-                pass
+            pass
