@@ -1,5 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+import pytz
+from datetime import datetime
 
 import database as db
 from spaced_repetition import days_until, stage_label
@@ -315,6 +317,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Due reviews ──
     elif data == "due_reviews":
+        # Time-lock: only open after 6 PM Riyadh time
+        riyadh_tz = pytz.timezone("Asia/Riyadh")
+        now_riyadh = datetime.now(riyadh_tz)
+        if now_riyadh.hour < 18:
+            remaining_hours = 18 - now_riyadh.hour
+            remaining_mins = 60 - now_riyadh.minute if now_riyadh.minute > 0 else 0
+            time_str = f"{remaining_hours} ساعة" if remaining_mins == 0 else f"{remaining_hours - 1} ساعة و{remaining_mins} دقيقة"
+            await query.edit_message_text(
+                f"🔒 *مراجعات اليوم مقفلة*\n\n"
+                f"ستفتح المراجعات الساعة 6 المساء بتوقيت الرياض.\n"
+                f"⏰ الوقت المتبقي: {time_str}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
+                ]),
+                parse_mode="Markdown",
+            )
+            return
+
         reviews = db.get_due_quiz_reviews()
         if not reviews:
             await query.edit_message_text(

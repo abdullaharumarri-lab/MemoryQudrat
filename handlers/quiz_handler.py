@@ -116,16 +116,17 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     try:
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
-    except Exception:
-        # Fallback: send new clean message
-        from utils import send_clean_message
-        await send_clean_message(
-            context=context,
-            chat_id=query.message.chat_id,
-            text=text,
-            reply_markup=keyboard,
-            parse_mode="Markdown",
-        )
+    except Exception as e:
+        # If edit fails (e.g. message too old), try sending a new message without deleting old ones
+        try:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
 
 async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,7 +152,10 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
-    # Guard: ignore if this question has already been answered (duplicate tap)
+    # Guard: ignore if session is already finished or question already answered
+    if session["current_index"] >= len(session["question_ids"]):
+        await query.answer()
+        return
     current_q_id = session["question_ids"][session["current_index"]]
     if q_id != current_q_id:
         await query.answer()

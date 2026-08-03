@@ -3,7 +3,7 @@ import logging
 import pytz
 from datetime import time
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 import database as db
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BOT_TOKEN, ALLOWED_CHANNEL_ID
 from handlers.main_menu import main_menu_handler, button_handler
 from handlers.pdf_handler import pdf_document_handler, json_document_handler, template_command
 from handlers.quiz_handler import quiz_answer_handler
@@ -26,7 +26,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ─── DNS Patch for blocked networks ───────────────────────────────────────────
-# Telegram IPs (api.telegram.org) — bypasses DNS blocking
 TELEGRAM_IPS = [
     "149.154.167.220",
     "149.154.167.197",
@@ -58,7 +57,6 @@ def schedule_reminder(job_queue, chat_id: int):
     """Schedule (or reschedule) the daily 6 PM reminder for a chat_id."""
     if job_queue is None:
         return
-    # Remove existing job if any to avoid duplicates
     for job in job_queue.get_jobs_by_name(f"reminder_{chat_id}"):
         job.schedule_removal()
     riyadh_tz = pytz.timezone("Asia/Riyadh")
@@ -98,11 +96,23 @@ async def start_command(update: Update, context):
     """Handle /start command."""
     chat_id = update.effective_chat.id
 
-    # Save chat_id permanently in DB so reminders work after restart
+    # If channel mode is ON and this is NOT the allowed channel → show redirect
+    if ALLOWED_CHANNEL_ID != 0 and chat_id != ALLOWED_CHANNEL_ID:
+        await update.message.reply_text(
+            "🔒 *MemoryQudrat — نظام المراجعة الذكي*\n\n"
+            "هذا البوت يعمل فقط داخل قناة خاصة.\n\n"
+            "📌 *طريقة التفعيل:*\n"
+            "1️⃣ أنشئ قناة خاصة في تيليجرام\n"
+            "2️⃣ أضف البوت كمشرف في القناة\n"
+            "3️⃣ أرسل /start داخل القناة\n\n"
+            "بعد التفعيل يمكنك رفع ملفات الكويز ومتابعة مراجعاتك 🧠",
+            parse_mode="Markdown",
+        )
+        return
+
     db.save_chat_id(chat_id)
     schedule_reminder(context.job_queue, chat_id)
 
-    # Send main menu using clean chat mechanism
     text = (
         "👋 أهلاً بك في *MemoryQudrat*!\n\n"
         "نظام مراجعة ذكي باستخدام التكرار المتباعد 🧠\n"
@@ -114,11 +124,54 @@ async def start_command(update: Update, context):
     )
 
 
+async def channel_guard(update: Update) -> bool:
+    """Return True if the update is from the allowed channel (or no restriction set)."""
+    if ALLOWED_CHANNEL_ID == 0:
+        return True
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    return chat_id == ALLOWED_CHANNEL_ID
+
+
+async def guarded_button_handler(update: Update, context):
+    if not await channel_guard(update):
+        return
+    await button_handler(update, context)
+
+
+async def guarded_quiz_answer_handler(update: Update, context):
+    if not await channel_guard(update):
+        return
+    await quiz_answer_handler(update, context)
+
+
+async def guarded_json_handler(update: Update, context):
+    if not await channel_guard(update):
+        return
+    await json_document_handler(update, context)
+
+
+async def guarded_pdf_handler(update: Update, context):
+    if not await channel_guard(update):
+        return
+    await pdf_document_handler(update, context)
+
+
+async def guarded_menu_handler(update: Update, context):
+    if not await channel_guard(update):
+        return
+    await main_menu_handler(update, context)
+
+
+async def guarded_template_handler(update: Update, context):
+    if not await channel_guard(update):
+        return
+    await template_command(update, context)
+
+
 async def error_handler(update, context):
     """Log errors — silently ignore stale message/button errors."""
     error_str = str(context.error)
 
-    # Ignore harmless errors caused by old/deleted messages or stale buttons
     ignored_errors = [
         "Button_data_invalid",
         "Message is not modified",
@@ -130,7 +183,6 @@ async def error_handler(update, context):
     for ignored in ignored_errors:
         if ignored in error_str:
             logger.warning(f"Ignored stale error: {error_str}")
-            # Try to answer the callback query to remove loading spinner
             if update and hasattr(update, 'callback_query') and update.callback_query:
                 try:
                     await update.callback_query.answer()
@@ -143,7 +195,6 @@ async def error_handler(update, context):
 
 async def post_init(application):
     """Restore daily reminders for all known users after bot restarts."""
-    # Clear any stale session from previous run to prevent freezing
     db.clear_session()
     logger.info("Cleared stale session on startup.")
 
@@ -152,27 +203,32 @@ async def post_init(application):
         schedule_reminder(application.job_queue, chat_id)
     logger.info(f"Restored reminders for {len(chat_ids)} user(s).")
 
+    if ALLOWED_CHANNEL_ID != 0:
+        logger.info(f"Channel mode: ACTIVE — only responding to channel {ALLOWED_CHANNEL_ID}")
+    else:
+        logger.info("Channel mode: DISABLED — responding to all chats")
+
 
 def main():
     db.init_db()
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
-    # Commands
+    # /start is always allowed (shows redirect for non-channel users)
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("menu", main_menu_handler))
-    app.add_handler(CommandHandler("template", template_command))
+    app.add_handler(CommandHandler("menu", guarded_menu_handler))
+    app.add_handler(CommandHandler("template", guarded_template_handler))
 
     # Document handlers
-    app.add_handler(MessageHandler(filters.Document.PDF, pdf_document_handler))
-    app.add_handler(MessageHandler(filters.Document.MimeType("application/json"), json_document_handler))
-    app.add_handler(MessageHandler(filters.Document.FileExtension("json"), json_document_handler))
+    app.add_handler(MessageHandler(filters.Document.PDF, guarded_pdf_handler))
+    app.add_handler(MessageHandler(filters.Document.MimeType("application/json"), guarded_json_handler))
+    app.add_handler(MessageHandler(filters.Document.FileExtension("json"), guarded_json_handler))
 
-    # Answer handlers — must be before generic button handler
-    app.add_handler(CallbackQueryHandler(quiz_answer_handler, pattern=r"^ans_"))
+    # Quiz answer buttons
+    app.add_handler(CallbackQueryHandler(guarded_quiz_answer_handler, pattern=r"^ans_"))
 
-    # All other button presses
-    app.add_handler(CallbackQueryHandler(button_handler))
+    # All other buttons
+    app.add_handler(CallbackQueryHandler(guarded_button_handler))
 
     # Error handler
     app.add_error_handler(error_handler)
@@ -180,20 +236,18 @@ def main():
     logger.info("MemoryQudrat bot started!")
     import os
     PORT = int(os.environ.get('PORT', 8000))
-    # Render automatically sets RENDER_EXTERNAL_URL (e.g. https://my-app.onrender.com)
     APP_URL = os.environ.get('RENDER_EXTERNAL_URL') or os.environ.get('APP_URL')
 
     if APP_URL:
-        # Run using Webhooks for Render/PaaS
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
             webhook_url=APP_URL
         )
     else:
-        # Run using Polling for local development
         app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
     main()
+
