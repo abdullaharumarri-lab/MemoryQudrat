@@ -235,10 +235,24 @@ def main():
         guarded_template_handler
     ))
 
-    # Document handlers
+    # Document handlers — regular messages
     app.add_handler(MessageHandler(filters.Document.PDF, guarded_pdf_handler))
     app.add_handler(MessageHandler(filters.Document.MimeType("application/json"), guarded_json_handler))
     app.add_handler(MessageHandler(filters.Document.FileExtension("json"), guarded_json_handler))
+
+    # Document handlers — channel posts (files sent inside a channel)
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POSTS & filters.Document.PDF,
+        guarded_pdf_handler
+    ))
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POSTS & filters.Document.MimeType("application/json"),
+        guarded_json_handler
+    ))
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POSTS & filters.Document.FileExtension("json"),
+        guarded_json_handler
+    ))
 
     # Quiz answer buttons
     app.add_handler(CallbackQueryHandler(guarded_quiz_answer_handler, pattern=r"^ans_"))
