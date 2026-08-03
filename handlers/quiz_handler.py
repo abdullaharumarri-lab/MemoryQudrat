@@ -114,19 +114,21 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
     query = update.callback_query
+    # Try editing with Markdown first, then plain text, then send new message
     try:
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
-    except Exception as e:
-        # If edit fails (e.g. message too old), try sending a new message without deleting old ones
+    except Exception:
         try:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=text,
-                reply_markup=keyboard,
-                parse_mode="Markdown",
-            )
+            await query.edit_message_text(text, reply_markup=keyboard)
         except Exception:
-            pass
+            try:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=text,
+                    reply_markup=keyboard,
+                )
+            except Exception:
+                pass
 
 
 async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,8 +260,24 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
 
     db.clear_session()
 
-    await query.edit_message_text(
-        result_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
-    )
+    try:
+        await query.edit_message_text(
+            result_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        try:
+            await query.edit_message_text(
+                result_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        except Exception:
+            try:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=result_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                )
+            except Exception:
+                pass
