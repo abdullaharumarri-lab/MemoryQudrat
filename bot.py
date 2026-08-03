@@ -93,12 +93,13 @@ async def daily_reminder(context):
 
 
 async def start_command(update: Update, context):
-    """Handle /start command."""
+    """Handle /start command — works in both DMs and channels."""
     chat_id = update.effective_chat.id
+    msg = update.effective_message  # works for both message and channel_post
 
     # If channel mode is ON and this is NOT the allowed channel → show redirect
     if ALLOWED_CHANNEL_ID != 0 and chat_id != ALLOWED_CHANNEL_ID:
-        await update.message.reply_text(
+        await msg.reply_text(
             "🔒 *MemoryQudrat — نظام المراجعة الذكي*\n\n"
             "هذا البوت يعمل فقط داخل قناة خاصة.\n\n"
             "📌 *طريقة التفعيل:*\n"
@@ -214,10 +215,25 @@ def main():
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
-    # /start is always allowed (shows redirect for non-channel users)
+    # /start — allowed everywhere (DM shows redirect, channel runs bot)
+    # CommandHandler handles DMs; MessageHandler handles channel posts
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POSTS & filters.Regex(r'^/start'),
+        start_command
+    ))
+
+    # /menu and /template — channel posts only
     app.add_handler(CommandHandler("menu", guarded_menu_handler))
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POSTS & filters.Regex(r'^/menu'),
+        guarded_menu_handler
+    ))
     app.add_handler(CommandHandler("template", guarded_template_handler))
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POSTS & filters.Regex(r'^/template'),
+        guarded_template_handler
+    ))
 
     # Document handlers
     app.add_handler(MessageHandler(filters.Document.PDF, guarded_pdf_handler))
