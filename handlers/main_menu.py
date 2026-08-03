@@ -1,4 +1,4 @@
-﻿import html
+import html
 import pytz
 from datetime import datetime
 
@@ -34,8 +34,7 @@ def quizzes_keyboard(quizzes: list):
 
 def quiz_menu_keyboard(quiz_id: int):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ ابدأ الكويز", callback_data=f"start_quiz_{quiz_id}")],
-        [InlineKeyboardButton("🎮 تجربة (بدون احتساب)", callback_data=f"start_practice_{quiz_id}")],
+        [InlineKeyboardButton("▶️ ابدأ الكويز (تجربة)", callback_data=f"start_practice_{quiz_id}")],
         [InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")],
         [InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")],
     ])
@@ -178,7 +177,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query,
             f"✅ <b>تم!</b> ستصلك مراجعة <b>{name_safe}</b> اليوم الساعة 6 المساء. 🔔",
             InlineKeyboardMarkup([
-                [InlineKeyboardButton("▶️ ابدأ الكويز الآن", callback_data=f"start_quiz_{quiz_id}")],
+                [InlineKeyboardButton("▶️ ابدأ الكويز (تجربة)", callback_data=f"start_practice_{quiz_id}")],
                 [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
             ])
         )
@@ -192,7 +191,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query,
             f"✅ <b>تم!</b> ستصلك مراجعة <b>{name_safe}</b> غداً الساعة 6 المساء. 🔔",
             InlineKeyboardMarkup([
-                [InlineKeyboardButton("▶️ ابدأ الكويز الآن", callback_data=f"start_quiz_{quiz_id}")],
+                [InlineKeyboardButton("▶️ ابدأ الكويز (تجربة)", callback_data=f"start_practice_{quiz_id}")],
                 [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
             ])
         )
@@ -233,23 +232,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "due_reviews":
         riyadh_tz = pytz.timezone("Asia/Riyadh")
         now = datetime.now(riyadh_tz)
-        if now.hour < 18:
-            mins_left = (18 - now.hour - 1) * 60 + (60 - now.minute)
-            h, m = divmod(mins_left, 60)
-            time_str = f"{h} ساعة و{m} دقيقة" if m else f"{h} ساعة"
-            await safe_edit(
-                query,
-                f"🔒 <b>مراجعات اليوم مقفلة</b>\n\n"
-                f"ستفتح الساعة 6 المساء بتوقيت الرياض.\n"
-                f"⏰ المتبقي: {time_str}",
-                InlineKeyboardMarkup(back_btn)
-            )
-            return
-
+        
         reviews = db.get_due_quiz_reviews()
         if not reviews:
             await safe_edit(query,
                 "✅ لا توجد مراجعات اليوم!\n\nاستمر بالعمل الجيد 💪",
+                InlineKeyboardMarkup(back_btn)
+            )
+            return
+
+        if now.hour < 18:
+            mins_left = (18 - now.hour - 1) * 60 + (60 - now.minute)
+            h, m = divmod(mins_left, 60)
+            time_str = f"{h} ساعة و{m} دقيقة" if m else f"{h} ساعة"
+            
+            # List them as text without buttons
+            text_lines = [
+                f"🔒 <b>مراجعات اليوم مقفلة</b>",
+                f"ستفتح الساعة 6 المساء بتوقيت الرياض (بعد {time_str}).\n",
+                "<b>الكويزات المستحقة:</b>"
+            ]
+            for r in reviews:
+                label = stage_label(r["stage"])
+                text_lines.append(f"• {r['quiz_name']} — {label}")
+                
+            await safe_edit(
+                query,
+                "\n".join(text_lines),
                 InlineKeyboardMarkup(back_btn)
             )
         else:

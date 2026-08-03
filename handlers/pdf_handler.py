@@ -69,7 +69,7 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             if "question" not in q or "options" not in q or "answer" not in q:
                 raise ValueError("تأكد من وجود question, options, answer في كل سؤال.")
 
-        quiz_id = db.save_quiz(data["quiz_name"], data["questions"])
+        quiz_id = db.save_quiz_without_review(data["quiz_name"], data["questions"])
         quiz = db.get_quiz(quiz_id)
         name_safe = html.escape(quiz['name'])
 
@@ -77,22 +77,27 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
             f"📋 <b>{name_safe}</b>\n"
             f"📝 {len(data['questions'])} سؤال\n\n"
-            f"<i>تمت جدولة أول مراجعة تلقائياً.</i>"
+            f"متى تريد أن تبدأ أول مراجعة لهذا الكويز؟"
         )
-        from handlers.main_menu import quiz_menu_keyboard
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📅 اليوم (الساعة 6 م)", callback_data=f"sched_today_{quiz_id}")],
+            [InlineKeyboardButton("📅 غداً (الساعة 6 م)", callback_data=f"sched_tomorrow_{quiz_id}")],
+        ])
+
         if msg_id:
             await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=msg_id,
                 text=text,
-                reply_markup=quiz_menu_keyboard(quiz_id),
+                reply_markup=keyboard,
                 parse_mode="HTML"
             )
         else:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=text,
-                reply_markup=quiz_menu_keyboard(quiz_id),
+                reply_markup=keyboard,
                 parse_mode="HTML"
             )
 
