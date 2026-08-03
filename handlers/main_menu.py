@@ -232,6 +232,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "due_reviews":
         riyadh_tz = pytz.timezone("Asia/Riyadh")
         now = datetime.now(riyadh_tz)
+        today_date = now.date().isoformat()
         
         reviews = db.get_due_quiz_reviews()
         if not reviews:
@@ -241,31 +242,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        if now.hour < 18:
-            mins_left = (18 - now.hour - 1) * 60 + (60 - now.minute)
-            h, m = divmod(mins_left, 60)
-            time_str = f"{h} ساعة و{m} دقيقة" if m else f"{h} ساعة"
-            
-            # List them as text without buttons
-            text_lines = [
-                f"🔒 <b>مراجعات اليوم مقفلة</b>",
-                f"ستفتح الساعة 6 المساء بتوقيت الرياض (بعد {time_str}).\n",
-                "<b>الكويزات المستحقة:</b>"
-            ]
-            for r in reviews:
-                label = stage_label(r["stage"])
-                text_lines.append(f"• {r['quiz_name']} — {label}")
-                
-            await safe_edit(
-                query,
-                "\n".join(text_lines),
-                InlineKeyboardMarkup(back_btn)
-            )
+        overdue_reviews = [r for r in reviews if r["next_review_date"] < today_date]
+        due_today_reviews = [r for r in reviews if r["next_review_date"] >= today_date]
+
+        if now.hour >= 18:
+            open_reviews = reviews
+            locked_reviews = []
         else:
-            await safe_edit(query,
-                f"🔁 <b>مراجعات اليوم</b> — {len(reviews)} مراجعة",
-                due_reviews_keyboard(reviews)
-            )
+            open_reviews = overdue_reviews
+            locked_reviews = due_today_reviews
+
+        text = ""
+        kb = []
+
+        if open_reviews:
+            text += f"🔁 <b>المراجعات المتاحة الآن</b> — {len(open_reviews)} مراجعة\n\n"
+            kb = due_reviews_keyboard(open_reviews).inline_keyboard
+            
+        if locked_reviews:
+            if open_reviews:
+                text += "──────────────\n\n"
+            text += f"🔒 <b>مراجعات مجدولة لليوم</b> — ({len(locked_reviews)} مراجعة)\n"
+            text += "ستتاح لك الساعة 6 مساءً بتوقيت الرياض."
+
+        if not kb:
+            kb = back_btn
+        elif not open_reviews:
+            # If we didn't add due_reviews_keyboard, we need to add the back button
+            kb.append(back_btn[0])
+
+        await safe_edit(
+            query,
+            text,
+            InlineKeyboardMarkup(kb)
+        )
 
     # ── Start review ──
     elif data.startswith("start_review_"):

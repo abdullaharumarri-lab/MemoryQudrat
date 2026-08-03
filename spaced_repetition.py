@@ -1,7 +1,7 @@
 import datetime
 import pytz
 
-REVIEW_INTERVALS = [1, 3, 7, 30]
+REVIEW_INTERVALS = [0, 1, 3, 7, 14, 30]
 
 def next_review_date(stage: int) -> str:
     if stage < 0 or stage >= len(REVIEW_INTERVALS):
@@ -32,7 +32,7 @@ def days_until(target_date_str: str) -> int:
 
 
 def stage_label(stage: int) -> str:
-    labels = ["المراجعة الأولى", "المراجعة الثانية", "المراجعة الثالثة", "المراجعة الرابعة"]
+    labels = ["المراجعة الأولى", "المراجعة الثانية", "المراجعة الثالثة", "المراجعة الرابعة", "المراجعة الخامسة", "المراجعة السادسة"]
     if 0 <= stage < len(labels):
         return labels[stage]
     return "مكتمل"

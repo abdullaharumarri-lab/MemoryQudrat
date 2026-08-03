@@ -1,4 +1,4 @@
-﻿import socket
+import socket
 import logging
 import pytz
 from datetime import time
@@ -68,7 +68,15 @@ async def daily_reminder(context):
         "\n\nافتح البوت وابدأ المراجعة 💪"
     )
     chat_id = context.job.data
-    await send_clean_message(context=context, chat_id=chat_id, text=text)
+    
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("▶️ حل مراجعات اليوم", callback_data="due_reviews")
+    ]])
+    
+    await send_clean_message(
+        context=context, chat_id=chat_id, text=text, reply_markup=keyboard
+    )
 
 
 async def start_command(update: Update, context):
