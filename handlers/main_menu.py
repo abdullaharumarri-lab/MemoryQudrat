@@ -349,8 +349,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     lines.append(f"🔁 {lbl}: بعد {days} يوم")
                 stages_done = review["stage"]
-                bar = "✅" * stages_done + "◻️" * (4 - stages_done)
-                lines.append(f"📊 التقدم: {bar} ({stages_done}/4)")
+                bar = "✅" * stages_done + "◻️" * (5 - stages_done)
+                lines.append(f"📊 التقدم: {bar} ({stages_done}/5)")
             else:
                 lines.append("✅ اكتملت جميع مراجعات الكويز")
 
