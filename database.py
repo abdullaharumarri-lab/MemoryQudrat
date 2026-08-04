@@ -230,9 +230,10 @@ def advance_quiz_review(review_id: int):
     if new_stage >= len(REVIEW_INTERVALS):
         cursor.execute("DELETE FROM quiz_reviews WHERE id = ?", (review_id,))
     else:
+        new_date_str = next_review_date(new_stage, review["next_review_date"])
         cursor.execute(
             "UPDATE quiz_reviews SET stage = ?, next_review_date = ? WHERE id = ?",
-            (new_stage, next_review_date(new_stage), review_id),
+            (new_stage, new_date_str, review_id),
         )
 
     conn.commit()
@@ -297,9 +298,10 @@ def advance_weak_question(weak_id: int):
     if new_stage >= len(REVIEW_INTERVALS):
         cursor.execute("DELETE FROM weak_questions WHERE id = ?", (weak_id,))
     else:
+        new_date_str = next_review_date(new_stage, wq["next_review_date"])
         cursor.execute(
             "UPDATE weak_questions SET stage = ?, next_review_date = ? WHERE id = ?",
-            (new_stage, next_review_date(new_stage), weak_id),
+            (new_stage, new_date_str, weak_id),
         )
 
     conn.commit()
