@@ -94,6 +94,12 @@ def init_db():
         )
     """)
 
+    # Auto-migrate: Add url column to quizzes if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE quizzes ADD COLUMN url TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     conn.commit()
     conn.close()
 
