@@ -266,9 +266,22 @@ def get_due_weak_questions() -> list:
            WHERE wq.next_review_date <= date('now')
            ORDER BY wq.next_review_date"""
     )
-    rows = [dict(row) for row in cursor.fetchall()]
+    rows = cursor.fetchall()
     conn.close()
-    return rows
+    return [dict(r) for r in rows]
+
+def get_all_weak_questions() -> list:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT wq.*, q.name as quiz_name
+           FROM weak_questions wq
+           JOIN quizzes q ON wq.quiz_id = q.id
+           ORDER BY q.name"""
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 def get_weak_questions_by_quiz(quiz_id: int) -> list:
     conn = get_connection()

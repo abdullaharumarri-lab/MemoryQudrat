@@ -56,8 +56,8 @@ def weak_quizzes_keyboard(quizzes_with_weak: list):
     kb = []
     for item in quizzes_with_weak:
         kb.append([InlineKeyboardButton(
-            f"❌ {item['quiz_name']} ({item['count']} سؤال)",
-            callback_data=f"start_weak_{item['quiz_id']}"
+            f"❌ {item['quiz_name']} ({item['count']} سؤال ضعيف)",
+            callback_data=f"weak_menu_{item['quiz_id']}"
         )])
     kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
     return InlineKeyboardMarkup(kb)
@@ -287,42 +287,98 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Weak questions ──
     elif data == "weak_questions":
-        weak_list = db.get_due_weak_questions()
-        if not weak_list:
+        all_weak = db.get_all_weak_questions()
+        if not all_weak:
             await safe_edit(query,
-                "✅ لا توجد أسئلة ضعيفة مستحقة اليوم!\n\nأداؤك ممتاز 🌟",
+                "✅ لا توجد أسئلة ضعيفة مسجلة!\n\nأداؤك ممتاز 🌟",
                 InlineKeyboardMarkup(back_btn)
             )
             return
+        
         quiz_map = {}
-        for wq in weak_list:
+        for wq in all_weak:
             qid = wq["quiz_id"]
             if qid not in quiz_map:
                 quiz_map[qid] = {"quiz_id": qid, "quiz_name": wq["quiz_name"], "count": 0}
             quiz_map[qid]["count"] += 1
+            
         await safe_edit(query,
-            f"❌ <b>الأسئلة الضعيفة</b> — {len(weak_list)} سؤال مستحق",
+            f"❌ <b>الأسئلة الضعيفة</b> — {len(all_weak)} سؤال كلي",
             weak_quizzes_keyboard(list(quiz_map.values()))
         )
 
-    # ── Start weak ──
-    elif data.startswith("start_weak_"):
+    # ── Weak Menu ──
+    elif data.startswith("weak_menu_"):
+        quiz_id = int(data.split("_")[-1])
+        all_weak = db.get_all_weak_questions()
+        
+        quiz_weak = [wq for wq in all_weak if wq["quiz_id"] == quiz_id]
+        if not quiz_weak:
+            await safe_edit(query, "✅ لا توجد أسئلة ضعيفة هنا.", InlineKeyboardMarkup(back_btn))
+            return
+            
+        quiz_name = quiz_weak[0]["quiz_name"]
+        
+        riyadh_tz = pytz.timezone("Asia/Riyadh")
+        now = datetime.now(riyadh_tz)
+        today_date = now.date().isoformat()
+        
+        # Calculate how many are due today/overdue
+        due_weak = [wq for wq in quiz_weak if wq["next_review_date"] <= today_date]
+        
+        kb = [
+            [InlineKeyboardButton("📚 تدريب على جميع الأخطاء", callback_data=f"start_weak_practice_{quiz_id}")]
+        ]
+        if due_weak:
+            kb.insert(0, [InlineKeyboardButton(f"🔁 مراجعة المستحق ({len(due_weak)})", callback_data=f"start_weak_{quiz_id}")])
+            
+        kb.append([InlineKeyboardButton("🔙 رجوع", callback_data="weak_questions")])
+        
+        await safe_edit(
+            query,
+            f"📋 <b>{html.escape(quiz_name)}</b>\n\n"
+            f"مجموع الأخطاء: {len(quiz_weak)}\n"
+            f"المستحق للمراجعة اليوم: {len(due_weak)}\n\n"
+            f"اختر كيف تريد المراجعة:",
+            InlineKeyboardMarkup(kb)
+        )
+
+    # ── Start weak (spaced repetition) ──
+    elif data.startswith("start_weak_") and not data.startswith("start_weak_practice_"):
         quiz_id = int(data.split("_")[-1])
         from handlers.quiz_handler import start_quiz_session
         await start_quiz_session(update, context, quiz_id, session_type="weak")
 
+    # ── Start weak (practice all) ──
+    elif data.startswith("start_weak_practice_"):
+        quiz_id = int(data.split("_")[-1])
+        from handlers.quiz_handler import start_quiz_session
+        await start_quiz_session(update, context, quiz_id, session_type="weak_practice")
+
     # ── Review schedule ──
-    elif data == "review_schedule":
+    elif data.startswith("review_schedule"):
+        parts = data.split("_")
+        page = int(parts[2]) if len(parts) > 2 else 1
+        
         quizzes = db.get_all_quizzes()
         if not quizzes:
             await safe_edit(query, "📅 لا توجد كويزات بعد!", InlineKeyboardMarkup(back_btn))
             return
 
+        ITEMS_PER_PAGE = 5
+        total_pages = (len(quizzes) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        if page > total_pages: page = total_pages
+        if page < 1: page = 1
+        
+        start_idx = (page - 1) * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        page_quizzes = quizzes[start_idx:end_idx]
+
         conn = db.get_connection()
         cursor = conn.cursor()
-        lines = ["📅 <b>جدول المراجعة</b>", ""]
+        lines = [f"📅 <b>جدول المراجعة</b> (صفحة {page} من {total_pages})", ""]
 
-        for quiz in quizzes:
+        for quiz in page_quizzes:
             questions_count = len(db.get_questions(quiz["id"]))
             cursor.execute("SELECT stage, next_review_date FROM quiz_reviews WHERE quiz_id = ?", (quiz["id"],))
             review = cursor.fetchone()
@@ -342,8 +398,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if review:
                 days = days_until(review["next_review_date"])
                 lbl = stage_label(review["stage"])
-                if days == 0:
-                    lines.append(f"🔁 {lbl}: <b>مستحقة اليوم!</b> ⚠️")
+                if days <= 0:
+                    lines.append(f"🔁 {lbl}: <b>مستحقة!</b> ⚠️")
                 elif days == 1:
                     lines.append(f"🔁 {lbl}: غداً")
                 else:
@@ -364,4 +420,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append("")
 
         conn.close()
-        await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(back_btn))
+        
+        # Pagination buttons
+        nav_row = []
+        if page > 1:
+            nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"review_schedule_{page-1}"))
+        if page < total_pages:
+            nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"review_schedule_{page+1}"))
+            
+        kb = []
+        if nav_row:
+            kb.append(nav_row)
+        kb.append(back_btn[0])
+        
+        await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(kb))

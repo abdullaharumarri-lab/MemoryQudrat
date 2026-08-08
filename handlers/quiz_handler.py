@@ -10,11 +10,16 @@ import database as db
 def build_question_keyboard(options: list, question_id: int, session_type: str) -> InlineKeyboardMarkup:
     """Build MCQ keyboard with options."""
     keyboard = []
+    row = []
+    letters = ["أ", "ب", "ج", "د", "هـ", "و"]
     for idx, opt in enumerate(options):
-        # Use index instead of text to avoid 64-byte callback_data limit
-        keyboard.append([
-            InlineKeyboardButton(opt, callback_data=f"ans_{session_type}_{question_id}_{idx}")
-        ])
+        letter = letters[idx] if idx < len(letters) else str(idx+1)
+        row.append(InlineKeyboardButton(f"[{letter}]", callback_data=f"ans_{session_type}_{question_id}_{idx}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -51,17 +56,18 @@ async def start_quiz_session(
 
     if session_type == "weak":
         weak_list = db.get_due_weak_questions()
-        weak_for_quiz = [w for w in weak_list if w["quiz_id"] == quiz_id]
-        if not weak_for_quiz:
-            await safe_edit_html(
-                query,
-                "✅ لا توجد أسئلة ضعيفة مستحقة لهذا الكويز اليوم!",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
-                context=context
-            )
+        question_ids = [w["question_id"] for w in weak_list if w["quiz_id"] == quiz_id]
+        if not question_ids:
+            await safe_edit_html(query, "✅ لا توجد أسئلة ضعيفة مستحقة لهذا الكويز اليوم!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]), context=context)
             return
-        question_ids = [w["question_id"] for w in weak_for_quiz]
         title = "❌ مراجعة الأسئلة الضعيفة"
+    elif session_type == "weak_practice":
+        all_weak = db.get_all_weak_questions()
+        question_ids = [w["question_id"] for w in all_weak if w["quiz_id"] == quiz_id]
+        if not question_ids:
+            await safe_edit_html(query, "✅ لا توجد أخطاء للتدرب عليها!", context=context)
+            return
+        title = "🛠 تدريب على الأخطاء"
     else:
         questions = db.get_questions(quiz_id)
         if not questions:
@@ -96,34 +102,35 @@ async def start_quiz_session(
     await show_next_question(update, context)
 
 
+async def send_next_question(query, context, session):
+    q_id = session["question_ids"][session["current_index"]]
+    question = db.get_question(q_id)
+
+    letters = ["أ", "ب", "ج", "د", "هـ", "و"]
+    options_text = ""
+    for idx, opt in enumerate(question["options"]):
+        letter = letters[idx] if idx < len(letters) else str(idx+1)
+        options_text += f"\n<b>{letter})</b> {html.escape(opt)}\n"
+
+    text = (
+        f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
+        f"<b>{html.escape(question['question_text'])}</b>\n"
+        f"{options_text}"
+    )
+
+    kb = build_question_keyboard(question["options"], q_id, session["session_type"])
+    await safe_edit_html(query, text, kb, context=context)
+
+
 async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = db.get_session()
     if not session: return
 
-    idx = session["current_index"]
-    question_ids = session["question_ids"]
-    total = len(question_ids)
-
-    if idx >= total:
+    if session["current_index"] >= len(session["question_ids"]):
         await finish_session(update, context, session)
         return
 
-    q_id = question_ids[idx]
-    question = db.get_question(q_id)
-    if not question: return
-
-    progress = format_progress(idx + 1, total, session["correct_count"])
-    q_text = html.escape(question['question_text'])
-    text = (
-        f"{progress}\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"<b>السؤال {idx + 1}:</b>\n"
-        f"{q_text}"
-    )
-
-    keyboard = build_question_keyboard(question["options"], q_id, session["session_type"])
-    query = update.callback_query
-    await safe_edit_html(query, text, keyboard, context=context)
+    await send_next_question(update.callback_query, context, session)
 
 
 async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -225,6 +232,8 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
     elif session_type == "practice":
         sr_text = "🎮 وضع التجربة — لم يتم احتساب هذه الجلسة في المراجعات."
+    elif session_type == "weak_practice":
+        sr_text = "🛠 تدريب على الأخطاء — هذه الجلسة لم تؤثر على جداول التكرار."
 
     result_text = (
         f"🎉 <b>انتهى الكويز!</b>\n\n"
