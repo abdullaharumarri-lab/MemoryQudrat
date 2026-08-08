@@ -10,7 +10,24 @@ from spaced_repetition import days_until, stage_label
 from utils import send_clean_message
 
 
+import urllib.request
+import re
+
 # ─── URL Text Handler ────────────────────────────────────────────────────────
+
+def get_page_title(url: str) -> str:
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            html_content = response.read().decode('utf-8')
+            match = re.search(r'<title>(.*?)</title>', html_content, re.IGNORECASE)
+            if match:
+                title = match.group(1).strip()
+                title = title.replace(" - Google Forms", "").replace(" - نماذج Google", "").strip()
+                return title
+    except Exception:
+        pass
+    return ""
 
 async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
@@ -18,10 +35,26 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if context.user_data.get("waiting_for_url"):
         context.user_data["waiting_for_url"] = False
-        context.user_data["temp_url"] = msg
-        context.user_data["waiting_for_url_name"] = True
-        await send_clean_message(context, chat_id, "🔗 <b>تم استلام الرابط.</b>\n\nالآن أرسل اسماً لهذا الكويز:", update=update)
-        return
+        url = msg
+        
+        # Try to extract title
+        extracted_title = get_page_title(url)
+        
+        if extracted_title:
+            quiz_id = db.save_quiz_url(extracted_title, url)
+            text = (
+                f"✅ <b>تم استخراج الاسم وإضافة الكويز بنجاح!</b>\n\n"
+                f"📚 الكويز: <b>{html.escape(extracted_title)}</b>\n"
+                f"تم جدولة المراجعة في نظام التكرار المتباعد.\n\n"
+                f"<i>سيتم تذكيرك بالرابط عندما يحين وقت المراجعة.</i>"
+            )
+            await send_clean_message(context, chat_id, text, update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
+            return
+        else:
+            context.user_data["temp_url"] = url
+            context.user_data["waiting_for_url_name"] = True
+            await send_clean_message(context, chat_id, "🔗 <b>تم استلام الرابط.</b>\n\nلم أتمكن من استخراج الاسم تلقائياً. يرجى إرسال اسم لهذا الكويز:", update=update)
+            return
         
     if context.user_data.get("waiting_for_url_name"):
         context.user_data["waiting_for_url_name"] = False
