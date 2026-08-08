@@ -10,11 +10,42 @@ from spaced_repetition import days_until, stage_label
 from utils import send_clean_message
 
 
+# ─── URL Text Handler ────────────────────────────────────────────────────────
+
+async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message.text
+    chat_id = update.effective_chat.id
+    
+    if context.user_data.get("waiting_for_url"):
+        context.user_data["waiting_for_url"] = False
+        context.user_data["temp_url"] = msg
+        context.user_data["waiting_for_url_name"] = True
+        await send_clean_message(context, chat_id, "🔗 <b>تم استلام الرابط.</b>\n\nالآن أرسل اسماً لهذا الكويز:", update=update)
+        return
+        
+    if context.user_data.get("waiting_for_url_name"):
+        context.user_data["waiting_for_url_name"] = False
+        url = context.user_data.pop("temp_url", "")
+        name = msg
+        
+        quiz_id = db.save_quiz_url(name, url)
+        
+        text = (
+            f"✅ <b>تمت الإضافة بنجاح!</b>\n\n"
+            f"📚 الكويز: <b>{html.escape(name)}</b>\n"
+            f"تم جدولة المراجعة في نظام التكرار المتباعد.\n\n"
+            f"<i>سيتم تذكيرك بالرابط عندما يحين وقت المراجعة.</i>"
+        )
+        await send_clean_message(context, chat_id, text, update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
+        return
+
+
 # ─── Keyboards ────────────────────────────────────────────────────────────────
 
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 رفع JSON", callback_data="upload_json")],
+        [InlineKeyboardButton("📋 رفع كويز JSON", callback_data="upload_json"),
+         InlineKeyboardButton("🔗 إضافة كويز كرابط", callback_data="upload_url")],
         [InlineKeyboardButton("📚 كويزاتي", callback_data="my_quizzes")],
         [
             InlineKeyboardButton("🔁 مراجعات اليوم", callback_data="due_reviews"),
@@ -108,18 +139,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "upload_json":
         await safe_edit(
             query,
-            "📋 <b>رفع JSON مباشرة</b>\n\n"
-            "أرسل ملف JSON بهذه الصيغة:\n\n"
-            '<pre>{\n  "quiz_name": "اسم الكويز",\n'
-            '  "questions": [\n    {\n'
-            '      "question": "نص السؤال",\n'
-            '      "options": ["أ","ب","ج","د"],\n'
-            '      "answer": "الإجابة الصحيحة",\n'
-            '      "explanation": "شرح (اختياري)"\n'
-            '    }\n  ]\n}</pre>\n\n'
-            "أرسل /template لتحميل نموذج جاهز 📥",
+            "📋 <b>رفع كويز JSON</b>\n\n"
+            "أرسل ملف JSON بالكويز. أرسل /template لتحميل نموذج 📥",
             reply_markup=InlineKeyboardMarkup(back_btn),
         )
+
+    # ── Upload URL ──
+    elif data == "upload_url":
+        await safe_edit(
+            query,
+            "🔗 <b>إضافة كويز كرابط</b>\n\n"
+            "أرسل رابط الكويز (مثلاً رابط Google Forms).",
+            reply_markup=InlineKeyboardMarkup(back_btn),
+        )
+        context.user_data["waiting_for_url"] = True
 
     # ── My Quizzes ──
     elif data == "my_quizzes":
@@ -159,13 +192,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             review_text = f"\n🔁 {lbl} — بعد {days} يوم" if days > 0 else f"\n🔁 {lbl} — <b>اليوم!</b>"
 
         name_safe = html.escape(quiz["name"])
-        await safe_edit(
-            query,
-            f"📋 <b>{name_safe}</b>\n"
-            f"📝 {len(questions)} سؤال | ❌ {len(weak)} سؤال ضعيف"
-            f"{review_text}",
-            quiz_menu_keyboard(quiz_id)
-        )
+        
+        if quiz.get("url"):
+            # URL Quiz Menu
+            await safe_edit(
+                query,
+                f"🔗 <b>{name_safe}</b> (رابط)\n"
+                f"{review_text}",
+                InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")],
+                    [InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")],
+                ])
+            )
+        else:
+            await safe_edit(
+                query,
+                f"📋 <b>{name_safe}</b>\n"
+                f"📝 {len(questions)} سؤال | ❌ {len(weak)} سؤال ضعيف"
+                f"{review_text}",
+                quiz_menu_keyboard(quiz_id)
+            )
 
     # ── Schedule review ──
     elif data.startswith("sched_today_"):
@@ -282,8 +328,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split("_")
         review_id = int(parts[2])
         quiz_id = int(parts[3])
-        from handlers.quiz_handler import start_quiz_session
-        await start_quiz_session(update, context, quiz_id, session_type="review", review_id=review_id)
+        
+        quiz = db.get_quiz(quiz_id)
+        if quiz and quiz.get("url"):
+            # It's a link quiz
+            kb = [
+                [InlineKeyboardButton("🌐 افتح الرابط", url=quiz["url"])],
+                [InlineKeyboardButton("✅ تم الحل", callback_data=f"done_url_review_{review_id}")],
+                [InlineKeyboardButton("🔄 تحويل إلى JSON", callback_data=f"upgrade_json_{quiz_id}")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data="due_reviews")],
+            ]
+            await safe_edit(
+                query,
+                f"🔗 <b>{html.escape(quiz['name'])}</b>\n\n"
+                f"للبدء في المراجعة، افتح الرابط وحل الكويز في المتصفح.\n\n"
+                f"⚠️ <i>بعد الانتهاء، اضغط على (تم الحل) لجدولة المراجعة القادمة.</i>",
+                InlineKeyboardMarkup(kb)
+            )
+        else:
+            from handlers.quiz_handler import start_quiz_session
+            await start_quiz_session(update, context, quiz_id, session_type="review", review_id=review_id)
+
+    # ── Done URL review ──
+    elif data.startswith("done_url_review_"):
+        review_id = int(data.split("_")[-1])
+        db.advance_quiz_review(review_id)
+        await safe_edit(
+            query,
+            "✅ <b>ممتاز!</b> تم تسجيل حلك وجدولة الموعد القادم بنجاح.",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+        )
+        
+    # ── Upgrade URL to JSON ──
+    elif data.startswith("upgrade_json_"):
+        quiz_id = int(data.split("_")[-1])
+        context.user_data["waiting_for_json_upgrade"] = quiz_id
+        await safe_edit(
+            query,
+            "🔄 <b>تحويل إلى JSON</b>\n\n"
+            "الرجاء إرسال ملف الـ JSON الخاص بهذا الكويز ليتم دمجه والبدء بتتبع الأسئلة الضعيفة.\n\n"
+            "<i>(لن تفقد تقدمك الحالي في التكرار المتباعد)</i>",
+            InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="due_reviews")]])
+        )
 
     # ── Weak questions ──
     elif data == "weak_questions":

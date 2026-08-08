@@ -29,6 +29,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS quizzes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
+            url TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -118,6 +119,22 @@ def save_quiz_without_review(name: str, questions: list) -> int:
         )
     conn.commit()
     conn.close()
+    return quiz_id
+
+
+def save_quiz_url(name: str, url: str) -> int:
+    """Save quiz with a URL and smart first review date."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO quizzes (name, url) VALUES (?, ?)", (name, url))
+    quiz_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    riyadh_tz = pytz.timezone("Asia/Riyadh")
+    now_riyadh = datetime.now(riyadh_tz)
+    start_today = now_riyadh.hour < 18
+    schedule_first_review(quiz_id, start_today=start_today)
     return quiz_id
 
 

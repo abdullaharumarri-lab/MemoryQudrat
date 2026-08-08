@@ -69,21 +69,53 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             if "question" not in q or "options" not in q or "answer" not in q:
                 raise ValueError("تأكد من وجود question, options, answer في كل سؤال.")
 
-        quiz_id = db.save_quiz_without_review(data["quiz_name"], data["questions"])
-        quiz = db.get_quiz(quiz_id)
-        name_safe = html.escape(quiz['name'])
-
-        text = (
-            f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
-            f"📋 <b>{name_safe}</b>\n"
-            f"📝 {len(data['questions'])} سؤال\n\n"
-            f"متى تريد أن تبدأ أول مراجعة لهذا الكويز؟"
-        )
+        quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
         
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📅 اليوم (الساعة 6 م)", callback_data=f"sched_today_{quiz_id}")],
-            [InlineKeyboardButton("📅 غداً (الساعة 6 م)", callback_data=f"sched_tomorrow_{quiz_id}")],
-        ])
+        if quiz_upgrade_id:
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_upgrade_id,))
+            for q in data["questions"]:
+                cursor.execute(
+                    """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        quiz_upgrade_id,
+                        q["question"],
+                        json.dumps(q["options"], ensure_ascii=False),
+                        q["answer"],
+                        q.get("explanation", ""),
+                    ),
+                )
+            conn.commit()
+            conn.close()
+            
+            quiz = db.get_quiz(quiz_upgrade_id)
+            name_safe = html.escape(quiz['name'])
+            text = (
+                f"✅ <b>تمت الترقية بنجاح!</b>\n\n"
+                f"📋 <b>{name_safe}</b>\n"
+                f"تمت إضافة {len(data['questions'])} سؤال تفاعلي للكويز.\n\n"
+                f"<i>سيستمر نظام التكرار المتباعد حسب جدولك السابق!</i>"
+            )
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+            
+        else:
+            quiz_id = db.save_quiz_without_review(data["quiz_name"], data["questions"])
+            quiz = db.get_quiz(quiz_id)
+            name_safe = html.escape(quiz['name'])
+    
+            text = (
+                f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
+                f"📋 <b>{name_safe}</b>\n"
+                f"📝 {len(data['questions'])} سؤال\n\n"
+                f"متى تريد أن تبدأ أول مراجعة لهذا الكويز؟"
+            )
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📅 اليوم (الساعة 6 م)", callback_data=f"sched_today_{quiz_id}")],
+                [InlineKeyboardButton("📅 غداً (الساعة 6 م)", callback_data=f"sched_tomorrow_{quiz_id}")],
+            ])
 
         if msg_id:
             await context.bot.edit_message_text(
