@@ -327,7 +327,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         due_weak = [wq for wq in quiz_weak if wq["next_review_date"] <= today_date]
         
         kb = [
-            [InlineKeyboardButton("📚 تدريب على جميع الأخطاء", callback_data=f"start_weak_practice_{quiz_id}")]
+            [InlineKeyboardButton("📚 تدريب على جميع الأخطاء", callback_data=f"start_weakpractice_{quiz_id}")]
         ]
         if due_weak:
             kb.insert(0, [InlineKeyboardButton(f"🔁 مراجعة المستحق ({len(due_weak)})", callback_data=f"start_weak_{quiz_id}")])
@@ -344,16 +344,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # ── Start weak (spaced repetition) ──
-    elif data.startswith("start_weak_") and not data.startswith("start_weak_practice_"):
+    elif data.startswith("start_weak_"):
         quiz_id = int(data.split("_")[-1])
         from handlers.quiz_handler import start_quiz_session
         await start_quiz_session(update, context, quiz_id, session_type="weak")
 
     # ── Start weak (practice all) ──
-    elif data.startswith("start_weak_practice_"):
+    elif data.startswith("start_weakpractice_"):
         quiz_id = int(data.split("_")[-1])
         from handlers.quiz_handler import start_quiz_session
-        await start_quiz_session(update, context, quiz_id, session_type="weak_practice")
+        await start_quiz_session(update, context, quiz_id, session_type="weakpractice")
 
     # ── Review schedule ──
     elif data.startswith("review_schedule"):

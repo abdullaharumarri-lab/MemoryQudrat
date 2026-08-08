@@ -61,7 +61,7 @@ async def start_quiz_session(
             await safe_edit_html(query, "✅ لا توجد أسئلة ضعيفة مستحقة لهذا الكويز اليوم!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]), context=context)
             return
         title = "❌ مراجعة الأسئلة الضعيفة"
-    elif session_type == "weak_practice":
+    elif session_type == "weakpractice":
         all_weak = db.get_all_weak_questions()
         question_ids = [w["question_id"] for w in all_weak if w["quiz_id"] == quiz_id]
         if not question_ids:
@@ -232,7 +232,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
     elif session_type == "practice":
         sr_text = "🎮 وضع التجربة — لم يتم احتساب هذه الجلسة في المراجعات."
-    elif session_type == "weak_practice":
+    elif session_type == "weakpractice":
         sr_text = "🛠 تدريب على الأخطاء — هذه الجلسة لم تؤثر على جداول التكرار."
 
     result_text = (
