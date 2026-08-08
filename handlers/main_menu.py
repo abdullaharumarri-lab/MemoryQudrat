@@ -33,7 +33,10 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     chat_id = update.effective_chat.id
     
-    if context.user_data.get("waiting_for_url"):
+    # If it's a URL, process it regardless of state
+    is_url = msg and (msg.startswith("http://") or msg.startswith("https://"))
+    
+    if context.user_data.get("waiting_for_url") or is_url:
         context.user_data["waiting_for_url"] = False
         url = msg
         
