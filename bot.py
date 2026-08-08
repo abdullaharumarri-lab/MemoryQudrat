@@ -141,6 +141,13 @@ def main():
         filters.TEXT & ~filters.COMMAND, url_text_handler
     ))
 
+    # Catch-all to see if messages are even arriving
+    async def debug_fallback(update, context):
+        with open("bot_debug.log", "a", encoding="utf-8") as f:
+            f.write(f"Received update: {update.to_dict()}\n")
+            
+    app.add_handler(MessageHandler(filters.ALL, debug_fallback))
+
     app.add_handler(CallbackQueryHandler(quiz_answer_handler, pattern=r"^ans_"))
     app.add_handler(CallbackQueryHandler(button_handler))
 

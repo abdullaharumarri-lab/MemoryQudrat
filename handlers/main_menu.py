@@ -30,49 +30,57 @@ def get_page_title(url: str) -> str:
     return ""
 
 async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
+    msg = update.message.text or update.message.caption or ""
+    msg = msg.strip()
     chat_id = update.effective_chat.id
     
     # If it's a URL, process it regardless of state
     is_url = msg and (msg.startswith("http://") or msg.startswith("https://"))
     
     if context.user_data.get("waiting_for_url") or is_url:
-        context.user_data["waiting_for_url"] = False
-        url = msg
-        
-        # Try to extract title
-        extracted_title = get_page_title(url)
-        
-        if extracted_title:
-            quiz_id = db.save_quiz_url(extracted_title, url)
+        try:
+            context.user_data["waiting_for_url"] = False
+            url = msg
+            
+            # Try to extract title
+            extracted_title = get_page_title(url)
+            
+            if extracted_title:
+                quiz_id = db.save_quiz_url(extracted_title, url)
+                text = (
+                    f"✅ <b>تم استخراج الاسم وإضافة الكويز بنجاح!</b>\n\n"
+                    f"📚 الكويز: <b>{html.escape(extracted_title)}</b>\n"
+                    f"تم جدولة المراجعة في نظام التكرار المتباعد.\n\n"
+                    f"<i>سيتم تذكيرك بالرابط عندما يحين وقت المراجعة.</i>"
+                )
+                await send_clean_message(context, chat_id, text, update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
+                return
+            else:
+                context.user_data["temp_url"] = url
+                context.user_data["waiting_for_url_name"] = True
+                await send_clean_message(context, chat_id, "🔗 <b>تم استلام الرابط.</b>\n\nلم أتمكن من استخراج الاسم تلقائياً. يرجى إرسال اسم لهذا الكويز:", update=update)
+                return
+        except Exception as e:
+            await send_clean_message(context, chat_id, f"❌ حدث خطأ أثناء معالجة الرابط: {e}", update=update)
+            return
+            
+    if context.user_data.get("waiting_for_url_name"):
+        try:
+            context.user_data["waiting_for_url_name"] = False
+            url = context.user_data.pop("temp_url", "")
+            name = msg
+            
+            quiz_id = db.save_quiz_url(name, url)
+            
             text = (
-                f"✅ <b>تم استخراج الاسم وإضافة الكويز بنجاح!</b>\n\n"
-                f"📚 الكويز: <b>{html.escape(extracted_title)}</b>\n"
+                f"✅ <b>تمت الإضافة بنجاح!</b>\n\n"
+                f"📚 الكويز: <b>{html.escape(name)}</b>\n"
                 f"تم جدولة المراجعة في نظام التكرار المتباعد.\n\n"
                 f"<i>سيتم تذكيرك بالرابط عندما يحين وقت المراجعة.</i>"
             )
             await send_clean_message(context, chat_id, text, update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
-            return
-        else:
-            context.user_data["temp_url"] = url
-            context.user_data["waiting_for_url_name"] = True
-            await send_clean_message(context, chat_id, "🔗 <b>تم استلام الرابط.</b>\n\nلم أتمكن من استخراج الاسم تلقائياً. يرجى إرسال اسم لهذا الكويز:", update=update)
-            return
-        
-    if context.user_data.get("waiting_for_url_name"):
-        context.user_data["waiting_for_url_name"] = False
-        url = context.user_data.pop("temp_url", "")
-        name = msg
-        
-        quiz_id = db.save_quiz_url(name, url)
-        
-        text = (
-            f"✅ <b>تمت الإضافة بنجاح!</b>\n\n"
-            f"📚 الكويز: <b>{html.escape(name)}</b>\n"
-            f"تم جدولة المراجعة في نظام التكرار المتباعد.\n\n"
-            f"<i>سيتم تذكيرك بالرابط عندما يحين وقت المراجعة.</i>"
-        )
-        await send_clean_message(context, chat_id, text, update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
+        except Exception as e:
+            await send_clean_message(context, chat_id, f"❌ حدث خطأ أثناء الحفظ: {e}", update=update)
         return
 
 
