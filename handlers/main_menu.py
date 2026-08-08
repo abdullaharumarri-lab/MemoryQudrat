@@ -365,7 +365,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(query, "📅 لا توجد كويزات بعد!", InlineKeyboardMarkup(back_btn))
             return
 
-        ITEMS_PER_PAGE = 5
+        ITEMS_PER_PAGE = 10
         total_pages = (len(quizzes) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
         if page > total_pages: page = total_pages
         if page < 1: page = 1
