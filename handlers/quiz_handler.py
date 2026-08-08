@@ -10,16 +10,10 @@ import database as db
 def build_question_keyboard(options: list, question_id: int, session_type: str) -> InlineKeyboardMarkup:
     """Build MCQ keyboard with options."""
     keyboard = []
-    row = []
     letters = ["أ", "ب", "ج", "د", "هـ", "و"]
     for idx, opt in enumerate(options):
         letter = letters[idx] if idx < len(letters) else str(idx+1)
-        row.append(InlineKeyboardButton(f"[{letter}]", callback_data=f"ans_{session_type}_{question_id}_{idx}"))
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
+        keyboard.append([InlineKeyboardButton(f"{letter}) {opt}", callback_data=f"ans_{session_type}_{question_id}_{idx}")])
     return InlineKeyboardMarkup(keyboard)
 
 
