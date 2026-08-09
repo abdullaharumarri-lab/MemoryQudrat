@@ -168,6 +168,20 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(update.callback_query, text, main_menu_keyboard())
 
 
+async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    quizzes = db.get_all_quizzes()
+    if not quizzes:
+        if update.message:
+            await send_clean_message(context, update.effective_chat.id, "لا توجد كويزات لتعديلها.", update=update)
+        return
+    kb = []
+    for q in quizzes:
+        kb.append([InlineKeyboardButton(f"🔧 {q['name']}", callback_data=f"fixstage_menu_{q['id']}")])
+    text = "🛠 <b>إدارة مراحل المراجعة</b>\n\nاختر الكويز الذي تريد تعديل مرحلته:"
+    if update.message:
+        await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=InlineKeyboardMarkup(kb))
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -564,3 +578,72 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb.append(back_btn[0])
         
         await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(kb))
+
+    # ── Fix Stage Menu ──
+    elif data.startswith("fixstage_menu_"):
+        quiz_id = int(data.split("_")[-1])
+        quiz = db.get_quiz(quiz_id)
+        if not quiz:
+            await safe_edit(query, "الكويز غير موجود.", InlineKeyboardMarkup(back_btn))
+            return
+            
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM quiz_reviews WHERE quiz_id = ?", (quiz_id,))
+        review = cursor.fetchone()
+        conn.close()
+        
+        if not review:
+            await safe_edit(query, f"✅ كويز <b>{html.escape(quiz['name'])}</b> اكتملت مراجعاته النهائية.", InlineKeyboardMarkup(back_btn))
+            return
+            
+        stage = review["stage"]
+        kb = [
+            [
+                InlineKeyboardButton("➖ تقليل", callback_data=f"fixstage_set_{quiz_id}_{stage-1}"),
+                InlineKeyboardButton(f"المرحلة الحالية: {stage}", callback_data="ignore"),
+                InlineKeyboardButton("➕ زيادة", callback_data=f"fixstage_set_{quiz_id}_{stage+1}")
+            ],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
+        ]
+        
+        text = (
+            f"🔧 <b>تعديل المرحلة:</b> {html.escape(quiz['name'])}\n\n"
+            f"• <b>المرحلة 0:</b> المراجعة الأولى (نفس اليوم)\n"
+            f"• <b>المرحلة 1:</b> بعد يوم\n"
+            f"• <b>المرحلة 2:</b> بعد 3 أيام\n"
+            f"• <b>المرحلة 3:</b> بعد 7 أيام\n"
+            f"• <b>المرحلة 4:</b> بعد 15 يوم\n"
+            f"• <b>المرحلة 5:</b> بعد 30 يوم\n\n"
+            f"<i>استخدم الأزرار لتغيير المرحلة. البوت سيحسب الموعد القادم بناءً على اليوم الحالي.</i>"
+        )
+        await safe_edit(query, text, InlineKeyboardMarkup(kb))
+
+    elif data.startswith("fixstage_set_"):
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        new_stage = int(parts[3])
+        
+        if new_stage < 0: new_stage = 0
+        if new_stage > 5: new_stage = 5
+        
+        from spaced_repetition import REVIEW_INTERVALS
+        from datetime import date, timedelta
+        
+        # Calculate new next_review_date based on today + interval for the NEW stage
+        interval = REVIEW_INTERVALS[new_stage]
+        new_date_str = (date.today() + timedelta(days=interval)).isoformat()
+        
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE quiz_reviews SET stage = ?, next_review_date = ? WHERE quiz_id = ?",
+            (new_stage, new_date_str, quiz_id)
+        )
+        conn.commit()
+        conn.close()
+        
+        # Re-render the menu to show the updated stage
+        query.data = f"fixstage_menu_{quiz_id}"
+        await button_handler(update, context)
+        return
