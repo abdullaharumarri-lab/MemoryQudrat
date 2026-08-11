@@ -100,6 +100,19 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # Column already exists
 
+    # Quiz sessions log for weekly stats
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS quiz_sessions_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quiz_id INTEGER,
+            session_type TEXT NOT NULL,
+            total INTEGER NOT NULL,
+            correct INTEGER NOT NULL,
+            wrong INTEGER NOT NULL,
+            session_date DATE DEFAULT (date('now'))
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -306,6 +319,37 @@ def get_all_weak_questions() -> list:
     conn.close()
     return [dict(r) for r in rows]
 
+
+def get_due_all_weak_questions_sorted() -> list:
+    """Returns all due weak questions sorted: newest added (lowest next_review_date) first."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT wq.*, q.name as quiz_name
+           FROM weak_questions wq
+           JOIN quizzes q ON wq.quiz_id = q.id
+           WHERE wq.next_review_date <= date('now')
+           ORDER BY wq.id DESC"""
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_weak_questions_sorted_for_practice() -> list:
+    """Returns ALL weak questions (not just due) sorted newest first, for weakpractice."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT wq.*, q.name as quiz_name
+           FROM weak_questions wq
+           JOIN quizzes q ON wq.quiz_id = q.id
+           ORDER BY wq.id DESC"""
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
 def get_weak_questions_by_quiz(quiz_id: int) -> list:
     conn = get_connection()
     cursor = conn.cursor()
@@ -406,6 +450,63 @@ def clear_session():
     cursor.execute("DELETE FROM active_session")
     conn.commit()
     conn.close()
+
+
+def log_session(quiz_id, session_type: str, total: int, correct: int, wrong: int):
+    """Log a completed session for weekly stats."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO quiz_sessions_log (quiz_id, session_type, total, correct, wrong)
+           VALUES (?, ?, ?, ?, ?)""",
+        (quiz_id, session_type, total, correct, wrong)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_weekly_stats() -> dict:
+    """Returns stats for the past 7 days."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT COUNT(*) as sessions, SUM(total) as total, SUM(correct) as correct,
+                  SUM(wrong) as wrong
+           FROM quiz_sessions_log
+           WHERE session_date >= date('now', '-6 days')
+           AND session_type NOT IN ('practice')"""
+    )
+    row = dict(cursor.fetchone())
+    
+    cursor.execute(
+        """SELECT COUNT(DISTINCT session_date) as active_days
+           FROM quiz_sessions_log
+           WHERE session_date >= date('now', '-6 days')
+           AND session_type NOT IN ('practice')"""
+    )
+    days_row = dict(cursor.fetchone())
+    
+    cursor.execute(
+        """SELECT q.name, COUNT(*) as count, SUM(sl.total) as total, SUM(sl.correct) as correct
+           FROM quiz_sessions_log sl
+           LEFT JOIN quizzes q ON sl.quiz_id = q.id
+           WHERE sl.session_date >= date('now', '-6 days')
+           AND sl.session_type NOT IN ('practice')
+           GROUP BY sl.quiz_id
+           ORDER BY count DESC
+           LIMIT 5"""
+    )
+    top_quizzes = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    
+    return {
+        "sessions": row["sessions"] or 0,
+        "total": row["total"] or 0,
+        "correct": row["correct"] or 0,
+        "wrong": row["wrong"] or 0,
+        "active_days": days_row["active_days"] or 0,
+        "top_quizzes": top_quizzes,
+    }
 
 # ─── Bot State ────────────────────────────────────────────────────────────────
 

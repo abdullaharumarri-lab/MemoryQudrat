@@ -95,7 +95,8 @@ def main_menu_keyboard():
             InlineKeyboardButton("🔁 مراجعات اليوم", callback_data="due_reviews"),
             InlineKeyboardButton("❌ الأسئلة الضعيفة", callback_data="weak_questions"),
         ],
-        [InlineKeyboardButton("📅 جدول المراجعة", callback_data="review_schedule")],
+        [InlineKeyboardButton("📅 جدول المراجعة", callback_data="review_schedule"),
+         InlineKeyboardButton("📊 ملخص الأسبوع", callback_data="weekly_stats")],
     ])
 
 
@@ -258,6 +259,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔗 <b>{name_safe}</b> (رابط)\n"
                 f"{review_text}",
                 InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 تحويل إلى JSON", callback_data=f"upgrade_json_{quiz_id}")],
                     [InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")],
                     [InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")],
                 ])
@@ -439,16 +441,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
+        # Count due weak
+        all_due_weak = db.get_due_all_weak_questions_sorted()
+        due_count = len(all_due_weak)
+        
         quiz_map = {}
         for wq in all_weak:
             qid = wq["quiz_id"]
             if qid not in quiz_map:
                 quiz_map[qid] = {"quiz_id": qid, "quiz_name": wq["quiz_name"], "count": 0}
             quiz_map[qid]["count"] += 1
-            
+
+        kb = []
+        if due_count > 0:
+            kb.append([InlineKeyboardButton(f"📚 مراجعة الكل — {due_count} سؤال مستحق", callback_data="start_weakall")])
+        for item in quiz_map.values():
+            kb.append([InlineKeyboardButton(
+                f"❌ {item['quiz_name']} ({item['count']} سؤال ضعيف)",
+                callback_data=f"weak_menu_{item['quiz_id']}"
+            )])
+        kb.append(back_btn[0])
+
         await safe_edit(query,
-            f"❌ <b>الأسئلة الضعيفة</b> — {len(all_weak)} سؤال كلي",
-            weak_quizzes_keyboard(list(quiz_map.values()))
+            f"❌ <b>الأسئلة الضعيفة</b> — {len(all_weak)} سؤال كلي\n"
+            f"🔴 مستحق اليوم: <b>{due_count}</b>",
+            InlineKeyboardMarkup(kb)
         )
 
     # ── Weak Menu ──
@@ -486,6 +503,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"اختر كيف تريد المراجعة:",
             InlineKeyboardMarkup(kb)
         )
+
+    # ── Start weak all ──
+    elif data == "start_weakall":
+        from handlers.quiz_handler import start_quiz_session
+        await start_quiz_session(update, context, quiz_id=0, session_type="weakall")
+
+    # ── Weekly stats ──
+    elif data == "weekly_stats":
+        stats = db.get_weekly_stats()
+        s = stats["sessions"]
+        t = stats["total"]
+        c = stats["correct"]
+        w = stats["wrong"]
+        days = stats["active_days"]
+        pct = int((c / t) * 100) if t > 0 else 0
+
+        if pct >= 80: medal = "🏆"
+        elif pct >= 60: medal = "👍"
+        elif pct >= 40: medal = "📚"
+        else: medal = "💪"
+
+        lines = [
+            f"📊 <b>ملخص الأسبوع</b> (آخر 7 أيام)\n",
+            f"📖 جلسات المراجعة: <b>{s}</b>",
+            f"ℹ️ أيام نشاط: <b>{days}/7</b>",
+            f"📝 إجمالي الأسئلة: <b>{t}</b>",
+            f"✅ صحيح: <b>{c}</b> | ❌ خطأ: <b>{w}</b>",
+            f"{medal} نسبتك: <b>{pct}%</b>\n",
+        ]
+
+        if stats["top_quizzes"]:
+            lines.append("🔝 <b>أكثر الكويزات مراجعة:</b>")
+            for i, tq in enumerate(stats["top_quizzes"], 1):
+                name = html.escape(tq["name"] or "غير محدد")
+                tq_pct = int((tq["correct"] / tq["total"]) * 100) if tq["total"] else 0
+                lines.append(f"{i}. {name} — {tq['count']} جلسة ({tq_pct}%)")
+
+        if s == 0:
+            lines = ["📊 <b>ملخص الأسبوع</b>\n\nلا توجد جلسات هذا الأسبوع بعد. ابدأ المراجعة! 💪"]
+
+        await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(back_btn))
 
     # ── Start weak (spaced repetition) ──
     elif data.startswith("start_weak_"):

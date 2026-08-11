@@ -48,20 +48,61 @@ async def start_quiz_session(
 ):
     query = update.callback_query
 
+    if session_type == "weakall":
+        # All due weak questions from ALL quizzes, newest first
+        weak_list = db.get_due_all_weak_questions_sorted()
+        if not weak_list:
+            await safe_edit_html(
+                query,
+                "✅ لا توجد أسئلة ضعيفة مستحقة اليوم!",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
+                context=context
+            )
+            return
+        question_ids = [w["question_id"] for w in weak_list]
+        db.save_session(
+            session_type="weakall",
+            quiz_id=0,
+            review_id=None,
+            question_ids=question_ids,
+            current_index=0,
+            correct_count=0,
+            wrong_ids=[],
+        )
+        await safe_edit_html(
+            query,
+            f"❌ <b>مراجعة جميع الأسئلة الضعيفة</b>\n📝 {len(question_ids)} سؤال مستحق\n\nجاري تحميل أول سؤال...",
+            context=context
+        )
+        await show_next_question(update, context)
+        return
+
     if session_type == "weak":
         weak_list = db.get_due_weak_questions()
-        question_ids = [w["question_id"] for w in weak_list if w["quiz_id"] == quiz_id]
+        # Sort: newest first (highest id first)
+        weak_list_quiz = sorted(
+            [w for w in weak_list if w["quiz_id"] == quiz_id],
+            key=lambda x: x["id"], reverse=True
+        )
+        question_ids = [w["question_id"] for w in weak_list_quiz]
         if not question_ids:
-            await safe_edit_html(query, "✅ لا توجد أسئلة ضعيفة مستحقة لهذا الكويز اليوم!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]), context=context)
+            await safe_edit_html(
+                query,
+                "✅ لا توجد أسئلة ضعيفة مستحقة لهذا الكويز اليوم!",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
+                context=context
+            )
             return
         title = "❌ مراجعة الأسئلة الضعيفة"
+
     elif session_type == "weakpractice":
-        all_weak = db.get_all_weak_questions()
+        all_weak = db.get_all_weak_questions_sorted_for_practice()
         question_ids = [w["question_id"] for w in all_weak if w["quiz_id"] == quiz_id]
         if not question_ids:
             await safe_edit_html(query, "✅ لا توجد أخطاء للتدرب عليها!", context=context)
             return
         title = "🛠 تدريب على الأخطاء"
+
     else:
         questions = db.get_questions(quiz_id)
         if not questions:
@@ -137,7 +178,7 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     _, session_type, q_id_str, opt_idx_str = parts
     q_id = int(q_id_str)
-    
+
     try:
         opt_idx = int(opt_idx_str)
     except ValueError:
@@ -210,12 +251,19 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
 
     if session_type != "practice":
         for wq_id in wrong_ids:
-            db.add_or_reset_weak_question(quiz_id, wq_id)
+            if session_type == "weakall":
+                # For weakall, look up the question's own quiz_id
+                q = db.get_question(wq_id)
+                if q:
+                    db.add_or_reset_weak_question(q["quiz_id"], wq_id)
+            else:
+                db.add_or_reset_weak_question(quiz_id, wq_id)
 
     sr_text = ""
     if session_type in ("quiz", "review") and session.get("review_id"):
         db.advance_quiz_review(session["review_id"])
         sr_text = "✅ تمت المراجعة وجُدوِّل الموعد التالي تلقائياً."
+
     elif session_type == "weak":
         weak_all = db.get_due_weak_questions()
         quiz_weak = {w["question_id"]: w for w in weak_all if w["quiz_id"] == quiz_id}
@@ -224,10 +272,25 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
             if qid in quiz_weak:
                 db.advance_weak_question(quiz_weak[qid]["id"])
         sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
+
+    elif session_type == "weakall":
+        all_due = db.get_due_all_weak_questions_sorted()
+        due_map = {w["question_id"]: w for w in all_due}
+        correct_ids = [qid for qid in session["question_ids"] if qid not in wrong_ids]
+        for qid in correct_ids:
+            if qid in due_map:
+                db.advance_weak_question(due_map[qid]["id"])
+        sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
+
     elif session_type == "practice":
         sr_text = "🎮 وضع التجربة — لم يتم احتساب هذه الجلسة في المراجعات."
+
     elif session_type == "weakpractice":
         sr_text = "🛠 تدريب على الأخطاء — هذه الجلسة لم تؤثر على جداول التكرار."
+
+    # Log session for weekly stats (exclude practice modes)
+    if session_type not in ("practice", "weakpractice"):
+        db.log_session(quiz_id if quiz_id != 0 else None, session_type, total, correct, len(wrong_ids))
 
     result_text = (
         f"🎉 <b>انتهى الكويز!</b>\n\n"
