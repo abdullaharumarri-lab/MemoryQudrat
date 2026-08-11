@@ -16,24 +16,38 @@ from utils import send_clean_message
 async def template_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     template = {
         "quiz_name": "نموذج كويز",
+        "wrong": [2],
         "questions": [
             {
-                "question": "ما عاصمة السعودية؟",
-                "options": ["الرياض", "جدة", "الدمام", "مكة"],
-                "answer": "الرياض",
-                "explanation": "الرياض هي عاصمة المملكة العربية السعودية."
+                "question": "سؤال صحته صح 100%",
+                "options": ["صح", "خطأ", "ربما", "لا شيء"],
+                "answer": "صح",
+                "explanation": "هذا توضيح اختياري."
+            },
+            {
+                "question": "سؤال أخطأت فيه (رقمه 2 في 'wrong')",
+                "options": ["خطأ", "صح", "ربما", "لا شيء"],
+                "answer": "صح",
+                "explanation": ""
             }
         ]
     }
+    txt = (
+        "📄 <b>نموذج JSON</b>\n\n"
+        "🔹 <b>quiz_name</b>: اسم الكويز\n"
+        "🔹 <b>wrong</b> (اختياري): أرقام الأسئلة التي أخطأت فيها (1، 2، 3...). البوت يضيفها تلقائياً لقائمة الضعيفة.\n"
+        "🔹 <b>questions</b>: قائمة الأسئلة (كل سؤال فيه question و options و answer)\n\n"
+        "ℹ️ عند رفع الكويز، بوتك يضيف الأسئلة الموجودة في wrong مباشرةً إلى الأسئلة الضعيفة بدون حاجة لحل الكويز من جديد."
+    )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tmp:
         json.dump(template, tmp, ensure_ascii=False, indent=2)
         tmp_path = tmp.name
 
     try:
         if update.message:
-            await update.message.reply_document(document=open(tmp_path, "rb"), filename="template.json")
+            await update.message.reply_document(document=open(tmp_path, "rb"), filename="template.json", caption=txt, parse_mode="HTML")
         elif update.effective_message:
-            await update.effective_message.reply_document(document=open(tmp_path, "rb"), filename="template.json")
+            await update.effective_message.reply_document(document=open(tmp_path, "rb"), filename="template.json", caption=txt, parse_mode="HTML")
     finally:
         os.unlink(tmp_path)
 
@@ -104,14 +118,29 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             quiz_id = db.save_quiz_without_review(data["quiz_name"], data["questions"])
             quiz = db.get_quiz(quiz_id)
             name_safe = html.escape(quiz['name'])
-    
+
+            # Auto-mark wrong questions from "wrong" field
+            wrong_indices = data.get("wrong", [])
+            wrong_count = 0
+            if wrong_indices:
+                saved_questions = db.get_questions(quiz_id)
+                for idx in wrong_indices:
+                    # indices are 1-based in the JSON
+                    real_idx = int(idx) - 1
+                    if 0 <= real_idx < len(saved_questions):
+                        q = saved_questions[real_idx]
+                        db.add_or_reset_weak_question(quiz_id, q["id"])
+                        wrong_count += 1
+
+            wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة تلقائياً." if wrong_count else ""
+
             text = (
                 f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
                 f"📋 <b>{name_safe}</b>\n"
-                f"📝 {len(data['questions'])} سؤال\n\n"
+                f"📝 {len(data['questions'])} سؤال{wrong_note}\n\n"
                 f"متى تريد أن تبدأ أول مراجعة لهذا الكويز؟"
             )
-            
+
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📅 اليوم (الساعة 6 م)", callback_data=f"sched_today_{quiz_id}")],
                 [InlineKeyboardButton("📅 غداً (الساعة 6 م)", callback_data=f"sched_tomorrow_{quiz_id}")],
