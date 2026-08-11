@@ -49,12 +49,12 @@ async def start_quiz_session(
     query = update.callback_query
 
     if session_type == "weakall":
-        # All due weak questions from ALL quizzes, newest first
-        weak_list = db.get_due_all_weak_questions_sorted()
+        # ALL weak questions from ALL quizzes, newest first (not just due)
+        weak_list = db.get_all_weak_questions_sorted_for_practice()
         if not weak_list:
             await safe_edit_html(
                 query,
-                "✅ لا توجد أسئلة ضعيفة مستحقة اليوم!",
+                "✅ لا توجد أسئلة ضعيفة مسجلة!",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
                 context=context
             )
@@ -71,7 +71,7 @@ async def start_quiz_session(
         )
         await safe_edit_html(
             query,
-            f"❌ <b>مراجعة جميع الأسئلة الضعيفة</b>\n📝 {len(question_ids)} سؤال مستحق\n\nجاري تحميل أول سؤال...",
+            f"❌ <b>مراجعة جميع الأسئلة الضعيفة</b>\n📝 {len(question_ids)} سؤال (الأحدث أولاً)\n\nجاري تحميل أول سؤال...",
             context=context
         )
         await show_next_question(update, context)
@@ -274,12 +274,13 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
 
     elif session_type == "weakall":
-        all_due = db.get_due_all_weak_questions_sorted()
-        due_map = {w["question_id"]: w for w in all_due}
+        # Advance correctly answered weak questions (from all questions pool)
+        all_weak = db.get_all_weak_questions_sorted_for_practice()
+        all_weak_map = {w["question_id"]: w for w in all_weak}
         correct_ids = [qid for qid in session["question_ids"] if qid not in wrong_ids]
         for qid in correct_ids:
-            if qid in due_map:
-                db.advance_weak_question(due_map[qid]["id"])
+            if qid in all_weak_map:
+                db.advance_weak_question(all_weak_map[qid]["id"])
         sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
 
     elif session_type == "practice":

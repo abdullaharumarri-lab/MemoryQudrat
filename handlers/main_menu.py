@@ -96,7 +96,7 @@ def main_menu_keyboard():
             InlineKeyboardButton("❌ الأسئلة الضعيفة", callback_data="weak_questions"),
         ],
         [InlineKeyboardButton("📅 جدول المراجعة", callback_data="review_schedule"),
-         InlineKeyboardButton("📊 ملخص الأسبوع", callback_data="weekly_stats")],
+         InlineKeyboardButton("📊 إحصائياتي", callback_data="weekly_stats")],
     ])
 
 
@@ -441,7 +441,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Count due weak
+        # Count ALL weak questions (not just due)
+        all_weak_count = len(all_weak)
         all_due_weak = db.get_due_all_weak_questions_sorted()
         due_count = len(all_due_weak)
         
@@ -453,8 +454,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             quiz_map[qid]["count"] += 1
 
         kb = []
-        if due_count > 0:
-            kb.append([InlineKeyboardButton(f"📚 مراجعة الكل — {due_count} سؤال مستحق", callback_data="start_weakall")])
+        if all_weak_count > 0:
+            kb.append([InlineKeyboardButton(
+                f"📚 مراجعة الكل — {all_weak_count} سؤال (الأحدث أولاً)",
+                callback_data="start_weakall"
+            )])
         for item in quiz_map.values():
             kb.append([InlineKeyboardButton(
                 f"❌ {item['quiz_name']} ({item['count']} سؤال ضعيف)",
@@ -463,7 +467,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb.append(back_btn[0])
 
         await safe_edit(query,
-            f"❌ <b>الأسئلة الضعيفة</b> — {len(all_weak)} سؤال كلي\n"
+            f"❌ <b>الأسئلة الضعيفة</b> — {all_weak_count} سؤال كلي\n"
             f"🔴 مستحق اليوم: <b>{due_count}</b>",
             InlineKeyboardMarkup(kb)
         )
@@ -509,14 +513,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from handlers.quiz_handler import start_quiz_session
         await start_quiz_session(update, context, quiz_id=0, session_type="weakall")
 
-    # ── Weekly stats ──
+    # ── My stats (إحصائياتي) ──
     elif data == "weekly_stats":
-        stats = db.get_weekly_stats()
-        s = stats["sessions"]
+        MONTH_AR = {
+            "01": "يناير", "02": "فبراير", "03": "مارس", "04": "أبريل",
+            "05": "مايو", "06": "يونيو", "07": "يوليو", "08": "أغسطس",
+            "09": "سبتمبر", "10": "أكتوبر", "11": "نوفمبر", "12": "ديسمبر"
+        }
+        stats = db.get_my_stats()
         t = stats["total"]
         c = stats["correct"]
         w = stats["wrong"]
-        days = stats["active_days"]
+        s = stats["sessions"]
         pct = int((c / t) * 100) if t > 0 else 0
 
         if pct >= 80: medal = "🏆"
@@ -524,24 +532,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif pct >= 40: medal = "📚"
         else: medal = "💪"
 
-        lines = [
-            f"📊 <b>ملخص الأسبوع</b> (آخر 7 أيام)\n",
-            f"📖 جلسات المراجعة: <b>{s}</b>",
-            f"ℹ️ أيام نشاط: <b>{days}/7</b>",
-            f"📝 إجمالي الأسئلة: <b>{t}</b>",
-            f"✅ صحيح: <b>{c}</b> | ❌ خطأ: <b>{w}</b>",
-            f"{medal} نسبتك: <b>{pct}%</b>\n",
-        ]
+        lines = [f"📊 <b>إحصائياتي</b>\n"]
 
-        if stats["top_quizzes"]:
-            lines.append("🔝 <b>أكثر الكويزات مراجعة:</b>")
-            for i, tq in enumerate(stats["top_quizzes"], 1):
-                name = html.escape(tq["name"] or "غير محدد")
-                tq_pct = int((tq["correct"] / tq["total"]) * 100) if tq["total"] else 0
-                lines.append(f"{i}. {name} — {tq['count']} جلسة ({tq_pct}%)")
+        if t == 0:
+            lines.append("لا توجد بيانات بعد. ابدأ بالمراجعة لتظهر إحصائياتك! 💪")
+        else:
+            lines += [
+                f"────── جملة عامة ──────",
+                f"📖 عدد الجلسات: <b>{s}</b>",
+                f"📝 إجمالي الأسئلة: <b>{t}</b>",
+                f"✅ صحيح: <b>{c}</b>  |  ❌ خطأ: <b>{w}</b>",
+                f"{medal} النسبة العامة: <b>{pct}%</b>",
+                f"🖥 الكويزات المجدولة: <b>{stats['total_quizzes']}</b>",
+                f"❌ الأسئلة الضعيفة الحالية: <b>{stats['total_weak']}</b>",
+            ]
 
-        if s == 0:
-            lines = ["📊 <b>ملخص الأسبوع</b>\n\nلا توجد جلسات هذا الأسبوع بعد. ابدأ المراجعة! 💪"]
+            if stats["best_month"]:
+                bm = stats["best_month"]["month_key"]
+                yr, mo = bm.split("-")
+                bm_ar = f"{MONTH_AR.get(mo, mo)} {yr}"
+                lines.append(f"🌟 أفضل شهر: <b>{bm_ar}</b> ({stats['best_month']['pct']}%)")
+
+            if stats["monthly"]:
+                lines.append("")
+                lines.append("────── تفصيل شهري ──────")
+                for m in stats["monthly"]:
+                    yr, mo = m["month_key"].split("-")
+                    m_ar = f"{MONTH_AR.get(mo, mo)} {yr}"
+                    m_pct = int((m["correct"] / m["total"]) * 100) if m["total"] else 0
+                    lines.append(
+                        f"🗓 <b>{m_ar}</b>: {m['sessions']} جلسة | "
+                        f"✅{m['correct']} ❌{m['wrong']} | {m_pct}%"
+                    )
 
         await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(back_btn))
 

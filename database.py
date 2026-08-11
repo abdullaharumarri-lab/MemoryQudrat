@@ -465,47 +465,69 @@ def log_session(quiz_id, session_type: str, total: int, correct: int, wrong: int
     conn.close()
 
 
-def get_weekly_stats() -> dict:
-    """Returns stats for the past 7 days."""
+def get_my_stats() -> dict:
+    """Returns comprehensive all-time and monthly stats."""
     conn = get_connection()
     cursor = conn.cursor()
+
+    # All-time totals
     cursor.execute(
-        """SELECT COUNT(*) as sessions, SUM(total) as total, SUM(correct) as correct,
-                  SUM(wrong) as wrong
+        """SELECT COUNT(*) as sessions, SUM(total) as total, SUM(correct) as correct, SUM(wrong) as wrong
            FROM quiz_sessions_log
-           WHERE session_date >= date('now', '-6 days')
-           AND session_type NOT IN ('practice')"""
+           WHERE session_type NOT IN ('practice')"""
     )
-    row = dict(cursor.fetchone())
-    
+    alltime = dict(cursor.fetchone())
+
+    # Current month name
+    cursor.execute("SELECT strftime('%m', 'now') as month, strftime('%Y', 'now') as year")
+    current = dict(cursor.fetchone())
+
+    # Per-month breakdown (last 6 months)
     cursor.execute(
-        """SELECT COUNT(DISTINCT session_date) as active_days
+        """SELECT strftime('%Y-%m', session_date) as month_key,
+                  SUM(total) as total, SUM(correct) as correct, SUM(wrong) as wrong,
+                  COUNT(*) as sessions
            FROM quiz_sessions_log
-           WHERE session_date >= date('now', '-6 days')
-           AND session_type NOT IN ('practice')"""
+           WHERE session_type NOT IN ('practice')
+           AND session_date >= date('now', '-5 months', 'start of month')
+           GROUP BY month_key
+           ORDER BY month_key DESC"""
     )
-    days_row = dict(cursor.fetchone())
-    
+    monthly = [dict(r) for r in cursor.fetchall()]
+
+    # Total weak questions currently in DB
+    cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions")
+    total_weak = dict(cursor.fetchone())["cnt"]
+
+    # Total quizzes count
+    cursor.execute("SELECT COUNT(*) as cnt FROM quizzes")
+    total_quizzes = dict(cursor.fetchone())["cnt"]
+
+    # Best month
     cursor.execute(
-        """SELECT q.name, COUNT(*) as count, SUM(sl.total) as total, SUM(sl.correct) as correct
-           FROM quiz_sessions_log sl
-           LEFT JOIN quizzes q ON sl.quiz_id = q.id
-           WHERE sl.session_date >= date('now', '-6 days')
-           AND sl.session_type NOT IN ('practice')
-           GROUP BY sl.quiz_id
-           ORDER BY count DESC
-           LIMIT 5"""
+        """SELECT strftime('%Y-%m', session_date) as month_key,
+                  SUM(correct)*100/MAX(SUM(total),1) as pct
+           FROM quiz_sessions_log
+           WHERE session_type NOT IN ('practice')
+           GROUP BY month_key
+           ORDER BY pct DESC
+           LIMIT 1"""
     )
-    top_quizzes = [dict(r) for r in cursor.fetchall()]
+    best_row = cursor.fetchone()
+    best_month = dict(best_row) if best_row else None
+
     conn.close()
-    
+
     return {
-        "sessions": row["sessions"] or 0,
-        "total": row["total"] or 0,
-        "correct": row["correct"] or 0,
-        "wrong": row["wrong"] or 0,
-        "active_days": days_row["active_days"] or 0,
-        "top_quizzes": top_quizzes,
+        "sessions": alltime["sessions"] or 0,
+        "total": alltime["total"] or 0,
+        "correct": alltime["correct"] or 0,
+        "wrong": alltime["wrong"] or 0,
+        "monthly": monthly,
+        "total_weak": total_weak,
+        "total_quizzes": total_quizzes,
+        "best_month": best_month,
+        "current_month": f"{current['year']}-{current['month']}",
     }
 
 # ─── Bot State ────────────────────────────────────────────────────────────────
