@@ -76,8 +76,10 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
         with open(tmp_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        if "quiz_name" not in data or "questions" not in data:
-            raise ValueError("الملف لا يحتوي على 'quiz_name' أو 'questions'.")
+        if "quiz_name" not in data and "name" not in data:
+            raise ValueError("الملف لا يحتوي على 'quiz_name' أو 'name'.")
+        if "questions" not in data:
+            raise ValueError("الملف لا يحتوي على 'questions'.")
 
         for q in data["questions"]:
             if "question" not in q or "options" not in q or "answer" not in q:
@@ -115,24 +117,34 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
             
         else:
-            quiz_id = db.save_quiz_without_review(data["quiz_name"], data["questions"])
+            quiz_name = data.get("quiz_name") or data.get("name", "كويز بدون اسم")
+            quiz_id = db.save_quiz_without_review(quiz_name, data["questions"])
             quiz = db.get_quiz(quiz_id)
             name_safe = html.escape(quiz['name'])
 
             # Auto-mark wrong questions from "wrong" field
             wrong_indices = data.get("wrong", [])
             wrong_count = 0
+            
             if wrong_indices:
                 saved_questions = db.get_questions(quiz_id)
+                total_q = len(saved_questions)
                 for idx in wrong_indices:
-                    # indices are 1-based in the JSON
-                    real_idx = int(idx) - 1
-                    if 0 <= real_idx < len(saved_questions):
-                        q = saved_questions[real_idx]
-                        db.add_or_reset_weak_question(quiz_id, q["id"])
-                        wrong_count += 1
+                    try:
+                        real_idx = int(idx) - 1
+                        if 0 <= real_idx < total_q:
+                            q = saved_questions[real_idx]
+                            db.add_or_reset_weak_question(quiz_id, q["id"])
+                            wrong_count += 1
+                    except (ValueError, TypeError):
+                        continue
 
-            wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة تلقائياً." if wrong_count else ""
+            if wrong_count:
+                wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة تلقائياً."
+            elif wrong_indices:
+                wrong_note = f"\n⚠️ وُجد حقل 'wrong' لكن الأرقام {list(wrong_indices)} لم تطابق أي سؤال. تأكد أن الأرقام بين 1 و{len(data['questions'])}."
+            else:
+                wrong_note = ""
 
             text = (
                 f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
