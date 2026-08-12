@@ -212,6 +212,8 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     if nav_row:
         kb.append(nav_row)
 
+    kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+
     text = f"🛠 <b>تعديل موعد المراجعة (صفحة {page}/{total_pages})</b>\n\nاختر الكويز الذي تريد تعديل موعده:"
     if update.message:
         await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=InlineKeyboardMarkup(kb))
