@@ -169,16 +169,28 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(update.callback_query, text, main_menu_keyboard())
 
 
-async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     reviews = db.get_all_quiz_reviews()
     if not reviews:
+        text = "لا توجد كويزات مجدولة."
         if update.message:
-            await send_clean_message(context, update.effective_chat.id, "لا توجد كويزات مجدولة.", update=update)
+            await send_clean_message(context, update.effective_chat.id, text, update=update)
+        elif update.callback_query:
+            await safe_edit(update.callback_query, text)
         return
+
+    ITEMS_PER_PAGE = 30
+    total_items = len(reviews)
+    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(1, min(page, total_pages))
+
+    start_idx = (page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_reviews = reviews[start_idx:end_idx]
 
     from spaced_repetition import days_until
     kb = []
-    for r in reviews:
+    for r in page_reviews:
         days = days_until(r["next_review_date"])
         if days <= 0:
             timing = "🔴 مستحق الآن"
@@ -191,9 +203,20 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback_data=f"fixstage_menu_{r['quiz_id']}"
         )])
 
-    text = "🛠 <b>تعديل موعد المراجعة</b>\n\nاختر الكويز الذي تريد تعديل موعده:"
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"fixstage_page_{page-1}"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"fixstage_page_{page+1}"))
+    
+    if nav_row:
+        kb.append(nav_row)
+
+    text = f"🛠 <b>تعديل موعد المراجعة (صفحة {page}/{total_pages})</b>\n\nاختر الكويز الذي تريد تعديل موعده:"
     if update.message:
         await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=InlineKeyboardMarkup(kb))
+    elif update.callback_query:
+        await safe_edit(update.callback_query, text, InlineKeyboardMarkup(kb))
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -672,6 +695,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(kb))
 
+    # ── Fixstage pagination ──
+    elif data.startswith("fixstage_page_"):
+        page = int(data.split("_")[-1])
+        await fixstage_command(update, context, page)
+
     # ── Fix Stage Menu ──
     elif data.startswith("fixstage_menu_") or data.startswith("fixstage_set_"):
         if data.startswith("fixstage_menu_"):
@@ -746,7 +774,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("🔵 بعد 3 أيام", callback_data=f"fixdate_{quiz_id}_3")],
             [InlineKeyboardButton("🔵 بعد 7 أيام", callback_data=f"fixdate_{quiz_id}_7"),
              InlineKeyboardButton("🔵 بعد 14 يوم", callback_data=f"fixdate_{quiz_id}_14")],
-            [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
+            [InlineKeyboardButton("🔙 رجوع", callback_data="fixstage_page_1")]
         ]
         await safe_edit(query, text, InlineKeyboardMarkup(kb))
 
@@ -782,5 +810,5 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📚 <b>{html.escape(quiz['name'])}</b>\n"
             f"📅 ستظهر للمراجعة: <b>{new_date}</b> ({day_label})\n\n"
             f"<i>المرحلة لم تتغير، فقط التاريخ تغير.</i>",
-            InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+            InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="fixstage_page_1")]])
         )
