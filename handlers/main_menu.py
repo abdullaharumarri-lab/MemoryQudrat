@@ -673,8 +673,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(kb))
 
     # ── Fix Stage Menu ──
-    elif data.startswith("fixstage_menu_"):
-        quiz_id = int(data.split("_")[-1])
+    elif data.startswith("fixstage_menu_") or data.startswith("fixstage_set_"):
+        if data.startswith("fixstage_menu_"):
+            quiz_id = int(data.split("_")[-1])
+        else:
+            parts = data.split("_")
+            quiz_id = int(parts[2])
+            new_stage = int(parts[3])
+            
+            # Ensure boundaries
+            if new_stage < 0: new_stage = 0
+            if new_stage > 4: new_stage = 4
+            
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE quiz_reviews SET stage = ? WHERE quiz_id = ?", (new_stage, quiz_id))
+            conn.commit()
+            conn.close()
+
         quiz = db.get_quiz(quiz_id)
         if not quiz:
             await safe_edit(query, "الكويز غير موجود.", InlineKeyboardMarkup(back_btn))
@@ -722,6 +738,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"\nاختر متى تريد مراجعتها:"
 
         kb = [
+            [InlineKeyboardButton("➖ المرحلة السابقة", callback_data=f"fixstage_set_{quiz_id}_{stage-1}"),
+             InlineKeyboardButton("➕ المرحلة التالية", callback_data=f"fixstage_set_{quiz_id}_{stage+1}")],
             [InlineKeyboardButton("🔴 اليوم", callback_data=f"fixdate_{quiz_id}_0"),
              InlineKeyboardButton("🟡 غداً", callback_data=f"fixdate_{quiz_id}_1")],
             [InlineKeyboardButton("🔵 بعد يومين", callback_data=f"fixdate_{quiz_id}_2"),
