@@ -76,6 +76,17 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
         with open(tmp_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
+        # DEBUG: show what we found in the JSON
+        top_keys = list(data.keys())
+        wrong_val = data.get("wrong", data.get("mistakes", data.get("incorrect", "NOT FOUND")))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🔍 <b>تشخيص الملف:</b>\n"
+                 f"المفاتيح الموجودة: <code>{top_keys}</code>\n"
+                 f"قيمة wrong: <code>{wrong_val}</code>",
+            parse_mode="HTML"
+        )
+
         if "quiz_name" not in data and "name" not in data:
             raise ValueError("الملف لا يحتوي على 'quiz_name' أو 'name'.")
         if "questions" not in data:
@@ -86,6 +97,7 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 raise ValueError("تأكد من وجود question, options, answer في كل سؤال.")
 
         quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
+
         
         if quiz_upgrade_id:
             conn = db.get_connection()
