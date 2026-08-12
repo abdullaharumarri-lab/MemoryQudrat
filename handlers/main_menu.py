@@ -170,15 +170,28 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    quizzes = db.get_all_quizzes()
-    if not quizzes:
+    reviews = db.get_all_quiz_reviews()
+    if not reviews:
         if update.message:
-            await send_clean_message(context, update.effective_chat.id, "لا توجد كويزات لتعديلها.", update=update)
+            await send_clean_message(context, update.effective_chat.id, "لا توجد كويزات مجدولة.", update=update)
         return
+
+    from spaced_repetition import days_until
     kb = []
-    for q in quizzes:
-        kb.append([InlineKeyboardButton(f"🔧 {q['name']}", callback_data=f"fixstage_menu_{q['id']}")])
-    text = "🛠 <b>إدارة مراحل المراجعة</b>\n\nاختر الكويز الذي تريد تعديل مرحلته:"
+    for r in reviews:
+        days = days_until(r["next_review_date"])
+        if days <= 0:
+            timing = "🔴 مستحق الآن"
+        elif days == 1:
+            timing = "🟡 غداً"
+        else:
+            timing = f"⏳ بعد {days} يوم"
+        kb.append([InlineKeyboardButton(
+            f"🔧 {r['quiz_name']} — {timing}",
+            callback_data=f"fixstage_menu_{r['quiz_id']}"
+        )])
+
+    text = "🛠 <b>تعديل موعد المراجعة</b>\n\nاختر الكويز الذي تريد تعديل موعده:"
     if update.message:
         await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=InlineKeyboardMarkup(kb))
 
@@ -660,65 +673,93 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(kb))
 
     # ── Fix Stage Menu ──
-    elif data.startswith("fixstage_menu_") or data.startswith("fixstage_set_"):
-        quiz_id = int(data.split("_")[-1]) if data.startswith("fixstage_menu_") else int(data.split("_")[2])
-        
-        # If it's a set operation, do the update first
-        if data.startswith("fixstage_set_"):
-            parts = data.split("_")
-            new_stage = int(parts[3])
-            
-            if new_stage < 0: new_stage = 0
-            if new_stage > 4: new_stage = 4
-            
-            from spaced_repetition import REVIEW_INTERVALS
-            from datetime import date, timedelta
-            
-            interval = REVIEW_INTERVALS[new_stage]
-            new_date_str = (date.today() + timedelta(days=interval)).isoformat()
-            
-            conn = db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE quiz_reviews SET stage = ?, next_review_date = ? WHERE quiz_id = ?",
-                (new_stage, new_date_str, quiz_id)
-            )
-            conn.commit()
-            conn.close()
-
-        # Render menu
+    elif data.startswith("fixstage_menu_"):
+        quiz_id = int(data.split("_")[-1])
         quiz = db.get_quiz(quiz_id)
         if not quiz:
             await safe_edit(query, "الكويز غير موجود.", InlineKeyboardMarkup(back_btn))
             return
-            
+
         conn = db.get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM quiz_reviews WHERE quiz_id = ?", (quiz_id,))
         review = cursor.fetchone()
         conn.close()
-        
+
         if not review:
-            await safe_edit(query, f"✅ كويز <b>{html.escape(quiz['name'])}</b> اكتملت مراجعاته النهائية.", InlineKeyboardMarkup(back_btn))
+            await safe_edit(query, f"✅ كويز <b>{html.escape(quiz['name'])}</b> اكتملت مراجعاته كلها.", InlineKeyboardMarkup(back_btn))
             return
-            
+
+        from spaced_repetition import days_until, REVIEW_INTERVALS
+        from datetime import date, timedelta
+
         stage = review["stage"]
+        next_date = review["next_review_date"]
+        days = days_until(next_date)
+
+        if days <= 0:
+            status = f"🔴 <b>متأخر {abs(days)} يوم</b> (can review now)"
+        elif days == 1:
+            status = "🟡 غداً"
+        else:
+            status = f"⏳ بعد <b>{days} يوم</b>"
+
+        stage_labels = ["أولى", "ثانية", "ثالثة", "رابعة", "خامسة"]
+        stage_label = stage_labels[stage] if stage < len(stage_labels) else str(stage)
+
+        # Compute the next date string after completing this stage
+        next_interval = REVIEW_INTERVALS[stage + 1] if stage + 1 < len(REVIEW_INTERVALS) else None
+
+        text = (
+            f"🛠 <b>تعديل موعد المراجعة</b>\n"
+            f"📚 {html.escape(quiz['name'])}\n\n"
+            f"🗓 المرحلة: <b>ال{stage_label}</b>\n"
+            f"📅 موعدها: <b>{next_date}</b> — {status}\n"
+        )
+        if next_interval is not None:
+            after_complete = (date.today() + timedelta(days=next_interval)).isoformat()
+            text += f"ℹ️ بعد إتمامها ستكون التالية: <b>{after_complete}</b>\n"
+        text += f"\nاختر متى تريد مراجعتها:"
+
         kb = [
-            [
-                InlineKeyboardButton("➖ تقليل", callback_data=f"fixstage_set_{quiz_id}_{stage-1}"),
-                InlineKeyboardButton(f"المرحلة الحالية: {stage}", callback_data="ignore"),
-                InlineKeyboardButton("➕ زيادة", callback_data=f"fixstage_set_{quiz_id}_{stage+1}")
-            ],
+            [InlineKeyboardButton("🔴 اليوم", callback_data=f"fixdate_{quiz_id}_0"),
+             InlineKeyboardButton("🟡 غداً", callback_data=f"fixdate_{quiz_id}_1")],
+            [InlineKeyboardButton("🔵 بعد يومين", callback_data=f"fixdate_{quiz_id}_2"),
+             InlineKeyboardButton("🔵 بعد 3 أيام", callback_data=f"fixdate_{quiz_id}_3")],
+            [InlineKeyboardButton("🔵 بعد 7 أيام", callback_data=f"fixdate_{quiz_id}_7"),
+             InlineKeyboardButton("🔵 بعد 14 يوم", callback_data=f"fixdate_{quiz_id}_14")],
             [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
         ]
-        
-        text = (
-            f"🔧 <b>تعديل المرحلة:</b> {html.escape(quiz['name'])}\n\n"
-            f"• <b>المرحلة 0:</b> المراجعة الأولى (نفس اليوم)\n"
-            f"• <b>المرحلة 1:</b> بعد 3 أيام\n"
-            f"• <b>المرحلة 2:</b> بعد 7 أيام\n"
-            f"• <b>المرحلة 3:</b> بعد 14 يوم\n"
-            f"• <b>المرحلة 4:</b> بعد 30 يوم\n\n"
-            f"<i>استخدم الأزرار لتغيير المرحلة. البوت سيحسب الموعد القادم بناءً على اليوم الحالي.</i>"
-        )
         await safe_edit(query, text, InlineKeyboardMarkup(kb))
+
+    # ── Fix date (set next_review_date directly, keep stage) ──
+    elif data.startswith("fixdate_"):
+        parts = data.split("_")
+        quiz_id = int(parts[1])
+        days_offset = int(parts[2])
+
+        from datetime import date, timedelta
+        new_date = (date.today() + timedelta(days=days_offset)).isoformat()
+
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE quiz_reviews SET next_review_date = ? WHERE quiz_id = ?",
+            (new_date, quiz_id)
+        )
+        conn.commit()
+        conn.close()
+
+        quiz = db.get_quiz(quiz_id)
+        day_label = ["اليوم", "غداً", f"بعد {days_offset} يوم"][min(days_offset, 2)]
+        if days_offset > 1:
+            day_label = f"بعد {days_offset} يوم"
+
+        await safe_edit(
+            query,
+            f"✅ تم التعديل!\n\n"
+            f"📚 <b>{html.escape(quiz['name'])}</b>\n"
+            f"📅 ستظهر للمراجعة: <b>{new_date}</b> ({day_label})\n\n"
+            f"<i>المرحلة لم تتغير، فقط التاريخ تغير.</i>",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+        )

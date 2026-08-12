@@ -248,6 +248,21 @@ def get_due_quiz_reviews() -> list:
     conn.close()
     return rows
 
+def get_all_quiz_reviews() -> list:
+    """Returns all scheduled quiz_reviews with quiz names, ordered by next date."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT qr.*, q.name as quiz_name
+           FROM quiz_reviews qr
+           JOIN quizzes q ON qr.quiz_id = q.id
+           ORDER BY qr.next_review_date"""
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
 def advance_quiz_review(review_id: int):
     """Move to next stage or delete if completed all stages."""
     from spaced_repetition import next_review_date, REVIEW_INTERVALS
