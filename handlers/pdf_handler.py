@@ -76,17 +76,6 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
         with open(tmp_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # DEBUG: show what we found in the JSON
-        top_keys = list(data.keys())
-        wrong_val = data.get("wrong", data.get("mistakes", data.get("incorrect", "NOT FOUND")))
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"🔍 <b>تشخيص الملف:</b>\n"
-                 f"المفاتيح الموجودة: <code>{top_keys}</code>\n"
-                 f"قيمة wrong: <code>{wrong_val}</code>",
-            parse_mode="HTML"
-        )
-
         if "quiz_name" not in data and "name" not in data:
             raise ValueError("الملف لا يحتوي على 'quiz_name' أو 'name'.")
         if "questions" not in data:
@@ -117,13 +106,29 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 )
             conn.commit()
             conn.close()
-            
+
+            # Process wrong field in upgrade path too
+            wrong_indices = data.get("wrong", [])
+            wrong_count = 0
+            if wrong_indices:
+                saved_questions = db.get_questions(quiz_upgrade_id)
+                for idx in wrong_indices:
+                    try:
+                        real_idx = int(idx) - 1
+                        if 0 <= real_idx < len(saved_questions):
+                            q = saved_questions[real_idx]
+                            db.add_or_reset_weak_question(quiz_upgrade_id, q["id"])
+                            wrong_count += 1
+                    except (ValueError, TypeError):
+                        continue
+
             quiz = db.get_quiz(quiz_upgrade_id)
             name_safe = html.escape(quiz['name'])
+            wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة تلقائياً." if wrong_count else ""
             text = (
                 f"✅ <b>تمت الترقية بنجاح!</b>\n\n"
                 f"📋 <b>{name_safe}</b>\n"
-                f"تمت إضافة {len(data['questions'])} سؤال تفاعلي للكويز.\n\n"
+                f"تمت إضافة {len(data['questions'])} سؤال تفاعلي للكويز.{wrong_note}\n\n"
                 f"<i>سيستمر نظام التكرار المتباعد حسب جدولك السابق!</i>"
             )
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
