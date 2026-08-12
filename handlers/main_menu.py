@@ -739,7 +739,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         days_offset = int(parts[2])
 
         from datetime import date, timedelta
-        new_date = (date.today() + timedelta(days=days_offset)).isoformat()
+        # If "today" → set yesterday so it's immediately available (overdue), bypass 6PM rule
+        if days_offset == 0:
+            new_date = (date.today() - timedelta(days=1)).isoformat()
+            day_label = "الآن فوراً 🔴"
+        else:
+            new_date = (date.today() + timedelta(days=days_offset)).isoformat()
+            day_label = "غداً" if days_offset == 1 else f"بعد {days_offset} يوم"
 
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -751,9 +757,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         quiz = db.get_quiz(quiz_id)
-        day_label = ["اليوم", "غداً", f"بعد {days_offset} يوم"][min(days_offset, 2)]
-        if days_offset > 1:
-            day_label = f"بعد {days_offset} يوم"
 
         await safe_edit(
             query,
