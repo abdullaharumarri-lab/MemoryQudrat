@@ -1,12 +1,12 @@
 import html
 import pytz
-from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
-from spaced_repetition import days_until, stage_label
+from spaced_repetition import days_until, stage_label, REVIEW_INTERVALS
+from datetime import datetime, date, timedelta
 from utils import send_clean_message
 
 
@@ -206,7 +206,7 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     end_idx = start_idx + ITEMS_PER_PAGE
     page_reviews = reviews[start_idx:end_idx]
 
-    from spaced_repetition import days_until
+
     kb = []
     for r in page_reviews:
         days = days_until(r["next_review_date"])
@@ -759,8 +759,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(query, f"✅ كويز <b>{html.escape(quiz['name'])}</b> اكتملت مراجعاته كلها.", InlineKeyboardMarkup(back_btn))
             return
 
-        from spaced_repetition import days_until, REVIEW_INTERVALS
-        from datetime import date, timedelta
+
 
         stage = review["stage"]
         next_date = review["next_review_date"]
@@ -809,7 +808,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         quiz_id = int(parts[1])
         days_offset = int(parts[2])
 
-        from datetime import date, timedelta
+
         # If "today" → set yesterday so it's immediately available (overdue), bypass 6PM rule
         if days_offset == 0:
             new_date = (date.today() - timedelta(days=1)).isoformat()
