@@ -127,7 +127,7 @@ async def start_quiz_session(
     )
 
     quiz = db.get_quiz(quiz_id)
-    title_safe = html.escape(quiz['name'])
+    title_safe = html.escape(quiz.get('name', 'كويز')) if quiz else "كويز"
     await safe_edit_html(
         query,
         f"{title}\n📋 <b>{title_safe}</b>\n📝 {len(question_ids)} سؤال\n\nجاري تحميل أول سؤال...",

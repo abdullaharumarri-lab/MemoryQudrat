@@ -481,9 +481,10 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
                 [InlineKeyboardButton("🔄 تحويل إلى JSON", callback_data=f"upgrade_json_{quiz_id}")],
                 [InlineKeyboardButton("🔙 رجوع", callback_data="due_reviews")],
             ]
+            q_name = html.escape(quiz.get("name", "كويز"))
             await safe_edit(
                 query,
-                f"🔗 <b>{html.escape(quiz['name'])}</b>\n\n"
+                f"🔗 <b>{q_name}</b>\n\n"
                 f"للبدء في المراجعة، افتح الرابط وحل الكويز في المتصفح.\n\n"
                 f"⚠️ <i>بعد الانتهاء، اضغط على (تم الحل) لجدولة المراجعة القادمة.</i>",
                 InlineKeyboardMarkup(kb)
@@ -777,8 +778,9 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         review = cursor.fetchone()
         conn.close()
 
+        q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
         if not review:
-            await safe_edit(query, f"✅ كويز <b>{html.escape(quiz['name'])}</b> اكتملت مراجعاته كلها.", InlineKeyboardMarkup(back_btn))
+            await safe_edit(query, f"✅ كويز <b>{q_name}</b> اكتملت مراجعاته كلها.", InlineKeyboardMarkup(back_btn))
             return
 
 
@@ -802,7 +804,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
 
         text = (
             f"🛠 <b>تعديل موعد المراجعة</b>\n"
-            f"📚 {html.escape(quiz['name'])}\n\n"
+            f"📚 {q_name}\n\n"
             f"🗓 المرحلة: <b>ال{stage_label}</b>\n"
             f"📅 موعدها: <b>{next_date}</b> — {status}\n"
         )
@@ -849,11 +851,12 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         conn.close()
 
         quiz = db.get_quiz(quiz_id)
+        q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
 
         await safe_edit(
             query,
             f"✅ تم التعديل!\n\n"
-            f"📚 <b>{html.escape(quiz['name'])}</b>\n"
+            f"📚 <b>{q_name}</b>\n"
             f"📅 ستظهر للمراجعة: <b>{new_date}</b> ({day_label})\n\n"
             f"<i>المرحلة لم تتغير، فقط التاريخ تغير.</i>",
             InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="fixstage_page_1")]])

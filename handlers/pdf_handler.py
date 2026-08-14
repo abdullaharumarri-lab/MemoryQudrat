@@ -123,7 +123,7 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
                         continue
 
             quiz = db.get_quiz(quiz_upgrade_id)
-            name_safe = html.escape(quiz['name'])
+            name_safe = html.escape(quiz.get('name', 'كويز')) if quiz else "كويز"
             wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة تلقائياً." if wrong_count else ""
             text = (
                 f"✅ <b>تمت الترقية بنجاح!</b>\n\n"
@@ -137,7 +137,7 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             quiz_name = data.get("quiz_name") or data.get("name", "كويز بدون اسم")
             quiz_id = db.save_quiz_without_review(quiz_name, data["questions"])
             quiz = db.get_quiz(quiz_id)
-            name_safe = html.escape(quiz['name'])
+            name_safe = html.escape(quiz.get('name', quiz_name)) if quiz else html.escape(quiz_name)
 
             # Auto-mark wrong questions from "wrong" field
             wrong_indices = data.get("wrong", [])
