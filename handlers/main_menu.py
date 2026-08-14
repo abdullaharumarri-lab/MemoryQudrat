@@ -1,5 +1,6 @@
 import html
 import pytz
+import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -163,11 +164,11 @@ async def safe_edit(query, text, reply_markup=None, parse_mode="HTML"):
     """Edit message, fall back to answering query on failure."""
     try:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-    except Exception:
+    except Exception as e:
         try:
             await query.edit_message_text(text, reply_markup=reply_markup)
-        except Exception:
-            pass
+        except Exception as e2:
+            logging.warning("safe_edit failed: %s | Fallback: %s", e, e2)
 
 
 # ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -241,9 +242,25 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass
     data = query.data
 
+    try:
+        await _handle_button_click(update, context, query, data)
+    except Exception as e:
+        logging.exception("Error in button_handler for data=%s: %s", data, e)
+        back_btn = [[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]
+        await safe_edit(
+            query,
+            "❌ حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.",
+            InlineKeyboardMarkup(back_btn)
+        )
+
+
+async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, query, data):
     back_btn = [[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]
 
     # ── Main menu ──

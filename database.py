@@ -216,7 +216,14 @@ def get_questions(quiz_id: int) -> list:
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     for r in rows:
-        r["options"] = json.loads(r["options"])
+        opts = r.get("options")
+        if opts:
+            try:
+                r["options"] = json.loads(opts) if isinstance(opts, str) else opts
+            except Exception:
+                r["options"] = []
+        else:
+            r["options"] = []
     return rows
 
 def get_question(question_id: int) -> dict | None:
@@ -227,7 +234,14 @@ def get_question(question_id: int) -> dict | None:
     conn.close()
     if row:
         row = dict(row)
-        row["options"] = json.loads(row["options"])
+        opts = row.get("options")
+        if opts:
+            try:
+                row["options"] = json.loads(opts) if isinstance(opts, str) else opts
+            except Exception:
+                row["options"] = []
+        else:
+            row["options"] = []
         return row
     return None
 

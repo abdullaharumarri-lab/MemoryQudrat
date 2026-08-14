@@ -15,7 +15,12 @@ def next_review_date(stage: int, previous_date_str: str) -> str:
 
 
 def days_until(target_date_str: str) -> int:
-    target = datetime.date.fromisoformat(target_date_str)
+    if not target_date_str:
+        return 0
+    try:
+        target = datetime.date.fromisoformat(str(target_date_str))
+    except Exception:
+        return 0
     
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     now_riyadh = datetime.datetime.now(riyadh_tz)
