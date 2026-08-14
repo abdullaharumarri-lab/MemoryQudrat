@@ -4,11 +4,18 @@ import pytz
 REVIEW_INTERVALS = [0, 3, 7, 14, 30]
 
 def next_review_date(stage: int, previous_date_str: str) -> str:
-    if stage < 0 or stage >= len(REVIEW_INTERVALS):
-        raise ValueError("Invalid stage")
+    try:
+        stg = int(stage)
+    except (ValueError, TypeError):
+        stg = 0
+    if stg < 0 or stg >= len(REVIEW_INTERVALS):
+        stg = len(REVIEW_INTERVALS) - 1
         
-    days_to_add = REVIEW_INTERVALS[stage]
-    prev_date = datetime.date.fromisoformat(previous_date_str)
+    days_to_add = REVIEW_INTERVALS[stg]
+    try:
+        prev_date = datetime.date.fromisoformat(str(previous_date_str))
+    except Exception:
+        prev_date = datetime.date.today()
     
     next_date = prev_date + datetime.timedelta(days=days_to_add)
     return next_date.isoformat()
@@ -32,6 +39,10 @@ def days_until(target_date_str: str) -> int:
 
 def stage_label(stage: int) -> str:
     labels = ["المراجعة الأولى", "المراجعة الثانية", "المراجعة الثالثة", "المراجعة الرابعة", "المراجعة الخامسة"]
-    if 0 <= stage < len(labels):
-        return labels[stage]
+    try:
+        stg = int(stage)
+        if 0 <= stg < len(labels):
+            return labels[stg]
+    except (ValueError, TypeError):
+        pass
     return "مكتمل"

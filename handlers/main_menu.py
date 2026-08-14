@@ -307,13 +307,18 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Quiz menu ──
     elif data.startswith("quiz_menu_"):
-        quiz_id = int(data.split("_")[-1])
+        try:
+            quiz_id = int(data.split("_")[-1])
+        except (ValueError, TypeError):
+            await safe_edit(query, "❌ الكويز غير موجود.", InlineKeyboardMarkup(back_btn))
+            return
+
         quiz = db.get_quiz(quiz_id)
         if not quiz:
             await safe_edit(query, "❌ الكويز غير موجود.", InlineKeyboardMarkup(back_btn))
             return
-        questions = db.get_questions(quiz_id)
-        weak = db.get_weak_questions_by_quiz(quiz_id)
+        questions = db.get_questions(quiz_id) or []
+        weak = db.get_weak_questions_by_quiz(quiz_id) or []
 
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -324,11 +329,11 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         review_text = ""
         if review:
             d = dict(review)
-            days = days_until(d["next_review_date"])
-            lbl = stage_label(d["stage"])
+            days = days_until(d.get("next_review_date"))
+            lbl = stage_label(d.get("stage", 0))
             review_text = f"\n🔁 {lbl} — بعد {days} يوم" if days > 0 else f"\n🔁 {lbl} — <b>اليوم!</b>"
 
-        name_safe = html.escape(quiz["name"])
+        name_safe = html.escape(quiz.get("name", "كويز"))
         
         if quiz.get("url"):
             # URL Quiz Menu
