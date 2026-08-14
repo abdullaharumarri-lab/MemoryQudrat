@@ -100,12 +100,30 @@ def main_menu_keyboard():
     ])
 
 
-def quizzes_keyboard(quizzes: list):
+def quizzes_keyboard(quizzes: list, page: int = 1):
+    ITEMS_PER_PAGE = 20
+    total = len(quizzes)
+    total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(1, min(page, total_pages))
+
+    start = (page - 1) * ITEMS_PER_PAGE
+    end = start + ITEMS_PER_PAGE
+    page_quizzes = quizzes[start:end]
+
     kb = []
-    for q in quizzes:
+    for q in page_quizzes:
         kb.append([InlineKeyboardButton(f"📋 {q['name']}", callback_data=f"quiz_menu_{q['id']}")])
+
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"my_quizzes_page_{page-1}"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"my_quizzes_page_{page+1}"))
+    if nav_row:
+        kb.append(nav_row)
+
     kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
-    return InlineKeyboardMarkup(kb)
+    return InlineKeyboardMarkup(kb), page, total_pages
 
 
 def quiz_menu_keyboard(quiz_id: int):
@@ -252,7 +270,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_for_url"] = True
 
     # ── My Quizzes ──
-    elif data == "my_quizzes":
+    elif data == "my_quizzes" or data.startswith("my_quizzes_page_"):
+        page = 1
+        if data.startswith("my_quizzes_page_"):
+            page = int(data.split("_")[-1])
+
         quizzes = db.get_all_quizzes()
         if not quizzes:
             await safe_edit(query,
@@ -260,9 +282,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardMarkup(back_btn)
             )
         else:
+            keyboard, cur_page, total_pages = quizzes_keyboard(quizzes, page)
             await safe_edit(query,
-                f"📚 <b>كويزاتي</b> — {len(quizzes)} كويز",
-                quizzes_keyboard(quizzes)
+                f"📚 <b>كويزاتي</b> — {len(quizzes)} كويز (صفحة {cur_page}/{total_pages})",
+                keyboard
             )
 
     # ── Quiz menu ──
