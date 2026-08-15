@@ -107,17 +107,40 @@ async def post_init(application):
 
 def main():
     db.init_db()
+
+    # Configure aggressive TCP keep-alive and HTTPX connection limits to prevent 
+    # silent connection drops by the VPS NAT/firewall which cause extreme latency.
+    from telegram.request import HTTPXRequest
+    import httpx
+    
+    socket_options = [
+        (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+        (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30),
+        (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10),
+        (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3),
+    ]
+    limits = httpx.Limits(
+        max_connections=100,
+        max_keepalive_connections=20,
+        keepalive_expiry=5.0,  # Drop idle connections quickly
+    )
+    
+    request = HTTPXRequest(
+        connection_pool_size=100,
+        connect_timeout=5.0,    # Fail fast on connect
+        read_timeout=30.0,
+        write_timeout=20.0,
+        pool_timeout=10.0,
+        socket_options=socket_options,
+        httpx_kwargs={"limits": limits}
+    )
+
     app = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
         .post_init(post_init)
-        .concurrent_updates(True)
-        .connect_timeout(10.0)
-        .read_timeout(15.0)
-        .write_timeout(10.0)
-        .get_updates_read_timeout(30.0)
-        .pool_timeout(5.0)
-        .connection_pool_size(50)
+        .request(request)
+        .get_updates_request(request)
         .build()
     )
 

@@ -110,6 +110,12 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
         logger.warning("safe_edit plain edit failed: %s", e)
 
     # 3. Fallback: send message if editing failed completely
+    # But DO NOT fallback if it's a network timeout, otherwise repeated clicks send 10 messages!
+    err_str = str(e).lower()
+    if "timeout" in err_str or "timed out" in err_str or "readtimeout" in err_str:
+        logger.warning("safe_edit dropping message instead of fallback due to timeout")
+        return
+
     try:
         if query.message:
             await query.message.reply_text(clean_text, reply_markup=reply_markup)
@@ -119,7 +125,7 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
                 text=clean_text,
                 reply_markup=reply_markup
             )
-    except Exception as e:
-        logger.error("safe_edit fallback reply_text failed: %s", e)
+    except Exception as e2:
+        logger.error("safe_edit fallback reply_text failed: %s", e2)
 
 
