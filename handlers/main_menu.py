@@ -817,9 +817,30 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("🔵 بعد 3 أيام", callback_data=f"fixdate_{quiz_id}_3")],
             [InlineKeyboardButton("🔵 بعد 7 أيام", callback_data=f"fixdate_{quiz_id}_7"),
              InlineKeyboardButton("🔵 بعد 14 يوم", callback_data=f"fixdate_{quiz_id}_14")],
+            [InlineKeyboardButton("✅ تم الحل (إكمال المراجعة)", callback_data=f"fixstage_done_{review['id']}_{quiz_id}")],
             [InlineKeyboardButton("🔙 رجوع", callback_data="fixstage_page_1")]
         ]
         await safe_edit(query, text, InlineKeyboardMarkup(kb))
+
+    # ── Fixstage done (mark review as completed) ──
+    elif data.startswith("fixstage_done_"):
+        parts = data.split("_")
+        review_id = int(parts[2])
+        quiz_id = int(parts[3])
+        db.advance_quiz_review(review_id)
+        
+        quiz = db.get_quiz(quiz_id)
+        q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
+        
+        await safe_edit(
+            query,
+            f"✅ <b>تمت المراجعة!</b>\n\n"
+            f"تم تحديث موعد كويز <b>{q_name}</b> للمرحلة التالية بنجاح.",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ تعديل الكويز مجدداً", callback_data=f"fixstage_menu_{quiz_id}")],
+                [InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="fixstage_page_1")]
+            ])
+        )
 
     # ── Fix date (set next_review_date directly, keep stage) ──
     elif data.startswith("fixdate_"):
