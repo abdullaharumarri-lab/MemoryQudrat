@@ -160,15 +160,40 @@ def weak_quizzes_keyboard(quizzes_with_weak: list):
 
 # ─── Safe edit helper ──────────────────────────────────────────────────────────
 
+def truncate_text(text: str, max_len: int = 3800) -> str:
+    """Safely truncate text to avoid Telegram 4096 char limit."""
+    if not text or len(text) <= max_len:
+        return text
+    return text[:max_len - 30] + "\n\n...(تم اختصار النص لطوله)"
+
 async def safe_edit(query, text, reply_markup=None, parse_mode="HTML"):
-    """Edit message, fall back to answering query on failure."""
+    """Edit message, fall back to plain text or sending message on failure."""
+    if not query:
+        return
+    text = truncate_text(text, 3800)
     try:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        return
     except Exception as e:
-        try:
-            await query.edit_message_text(text, reply_markup=reply_markup)
-        except Exception as e2:
-            logging.warning("safe_edit failed: %s | Fallback: %s", e, e2)
+        if "Message is not modified" in str(e):
+            return
+        logging.warning("safe_edit HTML edit failed: %s", e)
+    
+    # Try editing without HTML parse_mode
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+        return
+    except Exception as e:
+        if "Message is not modified" in str(e):
+            return
+        logging.warning("safe_edit plain edit failed: %s", e)
+
+    # Fallback to reply_text if editing failed completely
+    try:
+        if query.message:
+            await query.message.reply_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        logging.error("safe_edit fallback reply_text failed: %s", e)
 
 
 # ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -243,7 +268,8 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
-        await query.answer()
+        import asyncio
+        await asyncio.wait_for(query.answer(), timeout=1.0)
     except Exception:
         pass
     data = query.data
@@ -342,6 +368,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"🔗 <b>{name_safe}</b> (رابط)\n"
                 f"{review_text}",
                 InlineKeyboardMarkup([
+                    [InlineKeyboardButton("▶️ تجربة الكويز", url=quiz["url"])],
                     [InlineKeyboardButton("🔄 تحويل إلى JSON", callback_data=f"upgrade_json_{quiz_id}")],
                     [InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")],
                     [InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")],
@@ -797,7 +824,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             status = f"⏳ بعد <b>{days} يوم</b>"
 
         stage_labels = ["أولى", "ثانية", "ثالثة", "رابعة", "خامسة"]
-        stage_label = stage_labels[stage] if stage < len(stage_labels) else str(stage)
+        current_stage_label = stage_labels[stage] if stage < len(stage_labels) else str(stage)
 
         # Compute the next date string after completing this stage
         next_interval = REVIEW_INTERVALS[stage + 1] if stage + 1 < len(REVIEW_INTERVALS) else None
@@ -805,7 +832,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         text = (
             f"🛠 <b>تعديل موعد المراجعة</b>\n"
             f"📚 {q_name}\n\n"
-            f"🗓 المرحلة: <b>ال{stage_label}</b>\n"
+            f"🗓 المرحلة: <b>ال{current_stage_label}</b>\n"
             f"📅 موعدها: <b>{next_date}</b> — {status}\n"
         )
         if next_interval is not None:

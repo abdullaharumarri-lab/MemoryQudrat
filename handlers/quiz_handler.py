@@ -23,20 +23,56 @@ def format_progress(current: int, total: int, correct: int) -> str:
     return f"{bar}\n❓ {current}/{total} | ✅ {correct} صح"
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+def truncate_text(text: str, max_len: int = 3800) -> str:
+    """Safely truncate text to avoid Telegram 4096 char limit."""
+    if not text or len(text) <= max_len:
+        return text
+    return text[:max_len - 30] + "\n\n...(تم اختصار النص لطوله)"
+
 async def safe_edit_html(query, text, reply_markup=None, context=None):
+    if not query:
+        return
+    text = truncate_text(text, 3800)
     try:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
-    except Exception:
+        return
+    except Exception as e:
+        if "Message is not modified" in str(e):
+            return
+        logger.warning("safe_edit_html HTML edit failed: %s", e)
+    
+    # Try editing without HTML
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+        return
+    except Exception as e:
+        if "Message is not modified" in str(e):
+            return
+        logger.warning("safe_edit_html plain edit failed: %s", e)
+
+    # Fallback: send message
+    if context and query.message:
         try:
-            if context:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+        except Exception:
+            try:
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=text,
-                    reply_markup=reply_markup,
-                    parse_mode="HTML"
+                    reply_markup=reply_markup
                 )
-        except Exception:
-            pass
+            except Exception as e2:
+                logger.error("safe_edit_html fallback send_message failed: %s", e2)
+
 
 
 async def start_quiz_session(
@@ -140,46 +176,84 @@ async def start_quiz_session(
 async def send_next_question(query, context, session):
     q_id = session["question_ids"][session["current_index"]]
     question = db.get_question(q_id)
+    if not question:
+        # Question missing or deleted, skip ahead safely
+        logger.warning("Question ID %s not found in DB, skipping...", q_id)
+        new_index = session["current_index"] + 1
+        db.update_session(new_index, session["correct_count"], session["wrong_ids"])
+        session["current_index"] = new_index
+        if session["current_index"] >= len(session["question_ids"]):
+            await finish_session(query._update if hasattr(query, "_update") else None, context, session)
+        else:
+            await send_next_question(query, context, session)
+        return
 
+    options = question.get("options") or []
     letters = ["أ", "ب", "ج", "د", "هـ", "و"]
     options_text = ""
-    for idx, opt in enumerate(question["options"]):
+    for idx, opt in enumerate(options):
         letter = letters[idx] if idx < len(letters) else str(idx+1)
-        options_text += f"\n<b>{letter})</b> {html.escape(opt)}\n"
+        options_text += f"\n<b>{letter})</b> {html.escape(str(opt))}\n"
+
+    q_text = str(question.get("question_text", ""))
+    if len(q_text) > 3200:
+        q_text = q_text[:3170] + "\n...(تم اختصار نص السؤال لطوله)"
 
     text = (
         f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
-        f"<b>{html.escape(question['question_text'])}</b>\n"
+        f"<b>{html.escape(q_text)}</b>\n"
         f"{options_text}"
     )
 
-    kb = build_question_keyboard(question["options"], q_id, session["session_type"])
+    kb = build_question_keyboard(options, q_id, session["session_type"])
     await safe_edit_html(query, text, kb, context=context)
 
 
 async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    session = db.get_session()
-    if not session: return
+    query = update.callback_query if update else None
+    try:
+        session = db.get_session()
+        if not session:
+            if query:
+                await safe_edit_html(
+                    query,
+                    "⚠️ انتهت الجلسة أو لا توجد جلسة نشطة.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
+                    context=context
+                )
+            return
 
-    if session["current_index"] >= len(session["question_ids"]):
-        await finish_session(update, context, session)
-        return
+        if session["current_index"] >= len(session["question_ids"]):
+            await finish_session(update, context, session)
+            return
 
-    await send_next_question(update.callback_query, context, session)
+        await send_next_question(query, context, session)
+    except Exception as e:
+        logger.exception("Error in show_next_question: %s", e)
+        if query:
+            await safe_edit_html(
+                query,
+                f"❌ حدث خطأ أثناء تحميل السؤال.\nيرجى العودة للقائمة الرئيسية.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
+                context=context
+            )
 
 
 async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await asyncio.wait_for(query.answer(), timeout=1.0)
+    except Exception:
+        pass
 
     data = query.data
     parts = data.split("_", 3)
-    if len(parts) < 4: return
+    if len(parts) < 4:
+        return
 
     _, session_type, q_id_str, opt_idx_str = parts
-    q_id = int(q_id_str)
-
     try:
+        q_id = int(q_id_str)
         opt_idx = int(opt_idx_str)
     except ValueError:
         return
@@ -194,25 +268,33 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
-    if session["current_index"] >= len(session["question_ids"]): return
-    current_q_id = session["question_ids"][session["current_index"]]
-    if q_id != current_q_id: return
-
-    question = db.get_question(q_id)
-    if not question: return
-
-    try:
-        user_answer = question["options"][opt_idx]
-    except IndexError:
+    if session["current_index"] >= len(session["question_ids"]):
+        await finish_session(update, context, session)
         return
 
-    correct = question["correct_answer"]
-    is_correct = user_answer.strip() == correct.strip()
+    current_q_id = session["question_ids"][session["current_index"]]
+    if q_id != current_q_id:
+        return
+
+    question = db.get_question(q_id)
+    if not question:
+        new_index = session["current_index"] + 1
+        db.update_session(new_index, session["correct_count"], session["wrong_ids"])
+        await show_next_question(update, context)
+        return
+
+    options = question.get("options") or []
+    if opt_idx < 0 or opt_idx >= len(options):
+        return
+
+    user_answer = str(options[opt_idx]).strip()
+    correct = str(question.get("correct_answer", "")).strip()
+    is_correct = user_answer == correct
 
     new_correct = session["correct_count"] + (1 if is_correct else 0)
-    new_wrong = session["wrong_ids"]
+    new_wrong = list(session.get("wrong_ids", []))
     if not is_correct and q_id not in new_wrong:
-        new_wrong = new_wrong + [q_id]
+        new_wrong.append(q_id)
 
     new_index = session["current_index"] + 1
     db.update_session(new_index, new_correct, new_wrong)
@@ -223,16 +305,18 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         feedback = f"❌ <b>إجابة خاطئة!</b>\n\nالصواب: <b>{correct_safe}</b>\n\n"
 
-    if question.get("explanation"):
-        expl_safe = html.escape(question['explanation'])
+    explanation = question.get("explanation")
+    if explanation:
+        expl_safe = html.escape(str(explanation))
         feedback += f"💡 {expl_safe}\n\n"
 
     feedback += "<i>جاري تحميل السؤال التالي...</i>"
 
     await safe_edit_html(query, feedback, context=context)
 
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1.0)
     await show_next_question(update, context)
+
 
 
 async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, session: dict):

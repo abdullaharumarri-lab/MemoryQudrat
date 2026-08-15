@@ -25,23 +25,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# DNS Patch
-TELEGRAM_IPS = ["149.154.167.220","149.154.167.197","91.108.56.180","149.154.166.110"]
-_orig = socket.getaddrinfo
-
-def _patched(host, port, family=0, type=0, proto=0, flags=0):
-    h = host.decode("utf-8") if isinstance(host, bytes) else str(host)
-    if "telegram.org" in h:
-        for ip in TELEGRAM_IPS:
-            try:
-                r = _orig(ip, port, socket.AF_INET, type, proto, flags)
-                if r: return r
-            except Exception: continue
-    return _orig(host, port, family, type, proto, flags)
-
-socket.getaddrinfo = _patched
-
-
 def schedule_reminder(job_queue, chat_id: int):
     if job_queue is None: return
     for job in job_queue.get_jobs_by_name(f"reminder_{chat_id}"):
@@ -124,7 +107,18 @@ async def post_init(application):
 
 def main():
     db.init_db()
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .post_init(post_init)
+        .connect_timeout(15.0)
+        .read_timeout(30.0)
+        .write_timeout(20.0)
+        .get_updates_read_timeout(40.0)
+        .pool_timeout(10.0)
+        .connection_pool_size(100)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", main_menu_handler))
