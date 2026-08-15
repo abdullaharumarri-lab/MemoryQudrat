@@ -242,7 +242,8 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
-        await asyncio.wait_for(query.answer(), timeout=1.0)
+        import asyncio
+        asyncio.create_task(query.answer())
     except Exception:
         pass
 
@@ -314,7 +315,7 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await safe_edit_html(query, feedback, context=context)
 
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(0.3)
     await show_next_question(update, context)
 
 

@@ -269,7 +269,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
         import asyncio
-        await asyncio.wait_for(query.answer(), timeout=1.0)
+        asyncio.create_task(query.answer())
     except Exception:
         pass
     data = query.data
