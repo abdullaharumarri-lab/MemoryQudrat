@@ -713,38 +713,46 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         cursor = conn.cursor()
         lines = [f"📅 <b>جدول المراجعة</b> (صفحة {page} من {total_pages})", ""]
 
-        for quiz in page_quizzes:
-            questions_count = len(db.get_questions(quiz["id"]))
-            cursor.execute("SELECT stage, next_review_date FROM quiz_reviews WHERE quiz_id = ?", (quiz["id"],))
-            review = cursor.fetchone()
-            cursor.execute("SELECT COUNT(*) FROM weak_questions WHERE quiz_id = ?", (quiz["id"],))
-            weak_count = cursor.fetchone()[0]
-            cursor.execute(
-                "SELECT COUNT(*) FROM weak_questions WHERE quiz_id = ? AND next_review_date <= date('now')",
-                (quiz["id"],)
-            )
-            weak_due = cursor.fetchone()[0]
+        quiz_ids = [str(q["id"]) for q in page_quizzes]
+        placeholders = ",".join(quiz_ids)
+        cursor.execute(f"""
+            SELECT 
+                q.id, q.name,
+                (SELECT COUNT(*) FROM questions WHERE quiz_id = q.id) as questions_count,
+                qr.stage, qr.next_review_date,
+                (SELECT COUNT(*) FROM weak_questions WHERE quiz_id = q.id) as weak_count,
+                (SELECT COUNT(*) FROM weak_questions WHERE quiz_id = q.id AND next_review_date <= date('now')) as weak_due
+            FROM quizzes q
+            LEFT JOIN quiz_reviews qr ON qr.quiz_id = q.id
+            WHERE q.id IN ({placeholders})
+            ORDER BY q.id DESC
+        """)
+        results = [dict(r) for r in cursor.fetchall()]
+        conn.close()
 
-            name_safe = html.escape(quiz["name"])
+        for item in results:
+            name_safe = html.escape(item.get("name", "كويز"))
             lines.append("──────────────────")
             lines.append(f"📚 <b>{name_safe}</b>")
-            lines.append(f"📝 {questions_count} سؤال")
+            lines.append(f"📝 {item['questions_count']} سؤال")
 
-            if review:
-                days = days_until(review["next_review_date"])
-                lbl = stage_label(review["stage"])
+            if item["next_review_date"]:
+                days = days_until(item["next_review_date"])
+                lbl = stage_label(item["stage"] or 0)
                 if days <= 0:
                     lines.append(f"🔁 {lbl}: <b>مستحقة!</b> ⚠️")
                 elif days == 1:
                     lines.append(f"🔁 {lbl}: غداً")
                 else:
                     lines.append(f"🔁 {lbl}: بعد {days} يوم")
-                stages_done = review["stage"]
+                stages_done = item["stage"] or 0
                 bar = "✅" * stages_done + "◻️" * (5 - stages_done)
                 lines.append(f"📊 التقدم: {bar} ({stages_done}/5)")
             else:
                 lines.append("✅ اكتملت جميع مراجعات الكويز")
 
+            weak_count = item["weak_count"]
+            weak_due = item["weak_due"]
             if weak_count > 0:
                 if weak_due > 0:
                     lines.append(f"❌ {weak_count} سؤال ضعيف — <b>{weak_due} مستحقة اليوم</b> ⚠️")
@@ -753,8 +761,6 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 lines.append("🌟 لا توجد أسئلة ضعيفة")
             lines.append("")
-
-        conn.close()
         
         # Pagination buttons
         nav_row = []

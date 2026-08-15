@@ -15,12 +15,15 @@ def get_first_review_date() -> str:
         return (date.today() + timedelta(days=1)).isoformat()
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20.0)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    """Initialize all database tables for SQLite."""
+    """Initialize all database tables and indexes for SQLite."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -94,6 +97,13 @@ def init_db():
         )
     """)
 
+    # Indexes for fast querying
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_quiz_id ON questions(quiz_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_quiz_reviews_quiz_id ON quiz_reviews(quiz_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_quiz_reviews_due ON quiz_reviews(next_review_date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_weak_questions_quiz_id ON weak_questions(quiz_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_weak_questions_due ON weak_questions(next_review_date)")
+
     # Auto-migrate: Add url column to quizzes if it doesn't exist
     try:
         cursor.execute("ALTER TABLE quizzes ADD COLUMN url TEXT")
@@ -112,6 +122,7 @@ def init_db():
             session_date DATE DEFAULT (date('now'))
         )
     """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_log_quiz ON quiz_sessions_log(quiz_id)")
 
     conn.commit()
     conn.close()
