@@ -1,33 +1,33 @@
 import html
 import pytz
 import logging
+import re
+import httpx
+from datetime import datetime, date, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
 from spaced_repetition import days_until, stage_label, REVIEW_INTERVALS
-from datetime import datetime, date, timedelta
-from utils import send_clean_message
+from utils import send_clean_message, safe_edit, strip_html_tags
 
-
-import urllib.request
-import re
 
 # ─── URL Text Handler ────────────────────────────────────────────────────────
 
-def get_page_title(url: str) -> str:
+async def get_page_title(url: str) -> str:
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            html_content = response.read().decode('utf-8')
-            match = re.search(r'<title>(.*?)</title>', html_content, re.IGNORECASE)
-            if match:
-                title = match.group(1).strip()
-                title = title.replace(" - Google Forms", "").replace(" - نماذج Google", "").strip()
-                return title
-    except Exception:
-        pass
+        async with httpx.AsyncClient(timeout=3.5, follow_redirects=True) as client:
+            resp = await client.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+            if resp.status_code == 200:
+                match = re.search(r'<title>(.*?)</title>', resp.text, re.IGNORECASE | re.DOTALL)
+                if match:
+                    title = match.group(1).strip()
+                    title = html.unescape(title)
+                    title = title.replace(" - Google Forms", "").replace(" - نماذج Google", "").strip()
+                    return title
+    except Exception as e:
+        logging.debug("get_page_title failed for %s: %s", url, e)
     return ""
 
 async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -43,8 +43,8 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["waiting_for_url"] = False
             url = msg
             
-            # Try to extract title
-            extracted_title = get_page_title(url)
+            # Try to extract title asynchronously
+            extracted_title = await get_page_title(url)
             
             if extracted_title:
                 quiz_id = db.save_quiz_url(extracted_title, url)
@@ -156,44 +156,6 @@ def weak_quizzes_keyboard(quizzes_with_weak: list):
         )])
     kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
     return InlineKeyboardMarkup(kb)
-
-
-# ─── Safe edit helper ──────────────────────────────────────────────────────────
-
-def truncate_text(text: str, max_len: int = 3800) -> str:
-    """Safely truncate text to avoid Telegram 4096 char limit."""
-    if not text or len(text) <= max_len:
-        return text
-    return text[:max_len - 30] + "\n\n...(تم اختصار النص لطوله)"
-
-async def safe_edit(query, text, reply_markup=None, parse_mode="HTML"):
-    """Edit message, fall back to plain text or sending message on failure."""
-    if not query:
-        return
-    text = truncate_text(text, 3800)
-    try:
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-        return
-    except Exception as e:
-        if "Message is not modified" in str(e):
-            return
-        logging.warning("safe_edit HTML edit failed: %s", e)
-    
-    # Try editing without HTML parse_mode
-    try:
-        await query.edit_message_text(text, reply_markup=reply_markup)
-        return
-    except Exception as e:
-        if "Message is not modified" in str(e):
-            return
-        logging.warning("safe_edit plain edit failed: %s", e)
-
-    # Fallback to reply_text if editing failed completely
-    try:
-        if query.message:
-            await query.message.reply_text(text, reply_markup=reply_markup)
-    except Exception as e:
-        logging.error("safe_edit fallback reply_text failed: %s", e)
 
 
 # ─── Handlers ─────────────────────────────────────────────────────────────────

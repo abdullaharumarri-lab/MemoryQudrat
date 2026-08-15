@@ -24,54 +24,12 @@ def format_progress(current: int, total: int, correct: int) -> str:
 
 
 import logging
+from utils import safe_edit, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
-def truncate_text(text: str, max_len: int = 3800) -> str:
-    """Safely truncate text to avoid Telegram 4096 char limit."""
-    if not text or len(text) <= max_len:
-        return text
-    return text[:max_len - 30] + "\n\n...(تم اختصار النص لطوله)"
-
-async def safe_edit_html(query, text, reply_markup=None, context=None):
-    if not query:
-        return
-    text = truncate_text(text, 3800)
-    try:
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
-        return
-    except Exception as e:
-        if "Message is not modified" in str(e):
-            return
-        logger.warning("safe_edit_html HTML edit failed: %s", e)
-    
-    # Try editing without HTML
-    try:
-        await query.edit_message_text(text, reply_markup=reply_markup)
-        return
-    except Exception as e:
-        if "Message is not modified" in str(e):
-            return
-        logger.warning("safe_edit_html plain edit failed: %s", e)
-
-    # Fallback: send message
-    if context and query.message:
-        try:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode="HTML"
-            )
-        except Exception:
-            try:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=text,
-                    reply_markup=reply_markup
-                )
-            except Exception as e2:
-                logger.error("safe_edit_html fallback send_message failed: %s", e2)
+# Alias for backward compatibility within quiz_handler
+safe_edit_html = safe_edit
 
 
 

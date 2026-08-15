@@ -1,5 +1,6 @@
 import json
 import os
+import asyncio
 from google import genai
 from google.genai import types
 from config import GEMINI_API_KEY, GEMINI_MODEL
@@ -35,40 +36,41 @@ async def extract_questions_from_pdf(pdf_path: str) -> dict:
     """
     Upload a PDF to Gemini and extract questions as structured JSON.
     Returns dict with 'quiz_name' and 'questions' list.
+    Runs synchronous genai calls in a separate thread so event loop is not blocked.
     """
-    # Upload the PDF file
-    with open(pdf_path, "rb") as f:
-        pdf_bytes = f.read()
+    def _extract_sync():
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
 
-    uploaded_file = client.files.upload(
-        file=pdf_bytes,
-        config=types.UploadFileConfig(
-            mime_type="application/pdf",
-            display_name="quiz_pdf",
-        ),
-    )
-
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[
-            types.Part.from_uri(
-                file_uri=uploaded_file.uri,
+        uploaded_file = client.files.upload(
+            file=pdf_bytes,
+            config=types.UploadFileConfig(
                 mime_type="application/pdf",
+                display_name="quiz_pdf",
             ),
-            EXTRACTION_PROMPT,
-        ],
-        config=types.GenerateContentConfig(
-            temperature=0.1,
-            max_output_tokens=8192,
-        ),
-    )
+        )
 
-    # Clean the response
-    raw = response.text.strip()
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        # Remove first and last lines (``` markers)
-        raw = "\n".join(lines[1:-1]).strip()
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[
+                types.Part.from_uri(
+                    file_uri=uploaded_file.uri,
+                    mime_type="application/pdf",
+                ),
+                EXTRACTION_PROMPT,
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                max_output_tokens=8192,
+            ),
+        )
 
-    data = json.loads(raw)
-    return data
+        raw = response.text.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1]).strip()
+
+        return json.loads(raw)
+
+    return await asyncio.to_thread(_extract_sync)
+
