@@ -35,6 +35,22 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = msg.strip()
     chat_id = update.effective_chat.id
     
+    # Check if we are editing a question text
+    q_id_edit = context.user_data.get("editing_q_text")
+    if q_id_edit:
+        conn = db.get_connection()
+        conn.execute("UPDATE questions SET question_text = ? WHERE id = ?", (msg, q_id_edit))
+        conn.commit()
+        conn.close()
+        
+        quiz_id = context.user_data.get("editing_q_quiz")
+        context.user_data.pop("editing_q_text", None)
+        context.user_data.pop("editing_q_quiz", None)
+        
+        kb = [[InlineKeyboardButton("🔙 العودة للسؤال", callback_data=f"fixstage_qedit_{quiz_id}_{q_id_edit}")]]
+        await context.bot.send_message(chat_id, "✅ تم تحديث نص السؤال بنجاح!", reply_markup=InlineKeyboardMarkup(kb))
+        return
+
     # If it's a URL, process it regardless of state
     is_url = msg and (msg.startswith("http://") or msg.startswith("https://"))
     
@@ -344,6 +360,31 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"{review_text}",
                 quiz_menu_keyboard(quiz_id)
             )
+
+    # ── Set Category ──
+    elif data.startswith("setcat_"):
+        parts = data.split("_")
+        quiz_id = int(parts[1])
+        cat_id = int(parts[2])
+        
+        conn = db.get_connection()
+        conn.execute("UPDATE quizzes SET category_id = ? WHERE id = ?", (cat_id, quiz_id))
+        conn.commit()
+        conn.close()
+        
+        quiz = db.get_quiz(quiz_id)
+        name_safe = html.escape(quiz.get('name', 'كويز')) if quiz else "كويز"
+        
+        text = (
+            f"✅ تم تعيين القسم بنجاح!\n\n"
+            f"📋 <b>{name_safe}</b>\n\n"
+            f"متى تريد أن تبدأ أول مراجعة لهذا الكويز؟"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📅 اليوم (الساعة 6 م)", callback_data=f"sched_today_{quiz_id}")],
+            [InlineKeyboardButton("📅 غداً (الساعة 6 م)", callback_data=f"sched_tomorrow_{quiz_id}")],
+        ])
+        await safe_edit(query, text, keyboard)
 
     # ── Schedule review ──
     elif data.startswith("sched_today_"):
@@ -818,11 +859,150 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🔵 بعد 7 أيام", callback_data=f"fixdate_{quiz_id}_7"),
              InlineKeyboardButton("🔵 بعد 14 يوم", callback_data=f"fixdate_{quiz_id}_14")],
             [InlineKeyboardButton("✅ تم الحل (إكمال المراجعة)", callback_data=f"fixstage_done_{review['id']}_{quiz_id}")],
+            [InlineKeyboardButton("🛠 تعديل أسئلة الكويز", callback_data=f"fixstage_qlist_{quiz_id}_0")],
             [InlineKeyboardButton("🔙 رجوع", callback_data="fixstage_page_1")]
         ]
         await safe_edit(query, text, InlineKeyboardMarkup(kb))
 
     # ── Fixstage done (mark review as completed) ──
+    elif data.startswith("fixstage_done_"):
+        parts = data.split("_")
+        review_id = int(parts[2])
+        quiz_id = int(parts[3])
+
+        db.advance_quiz_review(review_id)
+        await query.answer("✅ تم تحديث المراجعة وتسجيلها كمكتملة!")
+        # reload menu
+        query.data = f"fixstage_menu_{quiz_id}"
+        await main_menu_handler(update, context)
+
+    # ── Fixstage List Questions ──
+    elif data.startswith("fixstage_qlist_"):
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        page = int(parts[3])
+        
+        questions = db.get_questions(quiz_id)
+        if not questions:
+            await safe_edit(query, "❌ لا توجد أسئلة.", InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=f"fixstage_menu_{quiz_id}")]]))
+            return
+            
+        ITEMS_PER_PAGE = 10
+        total_pages = (len(questions) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        if page >= total_pages: page = total_pages - 1
+        if page < 0: page = 0
+        
+        start_idx = page * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        page_qs = questions[start_idx:end_idx]
+        
+        kb = []
+        for idx, q in enumerate(page_qs):
+            q_num = start_idx + idx + 1
+            q_text = str(q.get("question_text", ""))
+            if len(q_text) > 40:
+                q_text = q_text[:37] + "..."
+            kb.append([InlineKeyboardButton(f"سؤال {q_num}: {q_text}", callback_data=f"fixstage_qedit_{quiz_id}_{q['id']}")])
+            
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"fixstage_qlist_{quiz_id}_{page-1}"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"fixstage_qlist_{quiz_id}_{page+1}"))
+        if nav_row:
+            kb.append(nav_row)
+            
+        kb.append([InlineKeyboardButton("🔙 رجوع لإعدادات الكويز", callback_data=f"fixstage_menu_{quiz_id}")])
+        
+        quiz = db.get_quiz(quiz_id)
+        q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
+        
+        text = f"🛠 <b>تعديل أسئلة الكويز</b>\n📚 {q_name}\n\nاختر السؤال المراد تعديله:"
+        await safe_edit_html(query, text, InlineKeyboardMarkup(kb), context=context)
+
+    # ── Edit Question Menu ──
+    elif data.startswith("fixstage_qedit_"):
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        q_id = int(parts[3])
+        
+        question = db.get_question(q_id)
+        if not question:
+            await safe_edit(query, "❌ السؤال غير موجود.", InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=f"fixstage_qlist_{quiz_id}_0")]]))
+            return
+            
+        q_text = html.escape(str(question.get("question_text", "")))
+        options = question.get("options", [])
+        correct = html.escape(str(question.get("correct_answer", "")))
+        
+        text = f"📝 <b>السؤال:</b>\n{q_text}\n\n<b>الخيارات:</b>\n"
+        for i, opt in enumerate(options):
+            opt_safe = html.escape(str(opt))
+            if str(opt).strip() == correct.strip():
+                text += f"✅ {opt_safe}\n"
+            else:
+                text += f"🔘 {opt_safe}\n"
+                
+        text += "\nاختر ماذا تريد أن تفعل:"
+        
+        kb = []
+        kb.append([InlineKeyboardButton("✏️ تعديل نص السؤال", callback_data=f"fixstg_edittext_{quiz_id}_{q_id}")])
+        for i, opt in enumerate(options):
+            kb.append([InlineKeyboardButton(f"✅ جعل الخيار '{str(opt)[:20]}' الإجابة الصحيحة", callback_data=f"fixstg_setans_{quiz_id}_{q_id}_{i}")])
+            
+        kb.append([InlineKeyboardButton("🗑 حذف السؤال نهائياً", callback_data=f"fixstg_qdel_{quiz_id}_{q_id}")])
+        kb.append([InlineKeyboardButton("🔙 رجوع لقائمة الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")])
+        
+        await safe_edit_html(query, text, InlineKeyboardMarkup(kb), context=context)
+
+    # ── Edit Text Mode ──
+    elif data.startswith("fixstg_edittext_"):
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        q_id = int(parts[3])
+        context.user_data["editing_q_text"] = q_id
+        context.user_data["editing_q_quiz"] = quiz_id
+        await query.answer()
+        await context.bot.send_message(
+            update.effective_chat.id, 
+            "✍️ الرجاء إرسال النص الجديد للسؤال الآن:\n(لإلغاء العملية، اضغط /menu)"
+        )
+
+    # ── Set Correct Answer ──
+    elif data.startswith("fixstg_setans_"):
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        q_id = int(parts[3])
+        opt_idx = int(parts[4])
+        
+        question = db.get_question(q_id)
+        if question:
+            options = question.get("options", [])
+            if 0 <= opt_idx < len(options):
+                new_correct = options[opt_idx]
+                conn = db.get_connection()
+                conn.execute("UPDATE questions SET correct_answer = ? WHERE id = ?", (new_correct, q_id))
+                conn.commit()
+                conn.close()
+                await query.answer("✅ تم تحديث الإجابة الصحيحة!")
+                
+        query.data = f"fixstage_qedit_{quiz_id}_{q_id}"
+        await main_menu_handler(update, context)
+
+    # ── Delete Question ──
+    elif data.startswith("fixstg_qdel_"):
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        q_id = int(parts[3])
+        
+        conn = db.get_connection()
+        conn.execute("DELETE FROM questions WHERE id = ?", (q_id,))
+        conn.commit()
+        conn.close()
+        
+        await query.answer("🗑 تم حذف السؤال!")
+        query.data = f"fixstage_qlist_{quiz_id}_0"
+        await main_menu_handler(update, context)
     elif data.startswith("fixstage_done_"):
         parts = data.split("_")
         review_id = int(parts[2])

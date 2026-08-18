@@ -28,13 +28,24 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
+    # Categories table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            intervals_json TEXT NOT NULL DEFAULT '[1, 3, 7, 14, 30]'
+        )
+    """)
+
     # Quizzes table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS quizzes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             url TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            category_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
         )
     """)
 
@@ -86,7 +97,8 @@ def init_db():
             question_ids TEXT NOT NULL,
             current_index INTEGER DEFAULT 0,
             correct_count INTEGER DEFAULT 0,
-            wrong_ids TEXT DEFAULT '[]'
+            wrong_ids TEXT DEFAULT '[]',
+            poll_id TEXT
         )
     """)
 
@@ -111,6 +123,18 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # Column already exists
 
+    # Auto-migrate: Add category_id column to quizzes if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE quizzes ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    # Auto-migrate: Add poll_id column to active_session if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE active_session ADD COLUMN poll_id TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     # Quiz sessions log for weekly stats
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS quiz_sessions_log (
@@ -125,16 +149,55 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_log_quiz ON quiz_sessions_log(quiz_id)")
 
+    # Default category
+    cursor.execute("SELECT COUNT(*) FROM categories")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO categories (name, intervals_json) VALUES ('عام', '[1, 3, 7, 14, 30]')")
+
+    conn.commit()
+    conn.close()
+
+# ─── Categories ───────────────────────────────────────────────────────────────
+
+def create_category(name: str, intervals_json: str = "[1, 3, 7, 14, 30]") -> int:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO categories (name, intervals_json) VALUES (?, ?)", (name, intervals_json))
+    cat_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return cat_id
+
+def get_categories() -> list:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM categories ORDER BY name")
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def get_category(cat_id: int) -> dict | None:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM categories WHERE id = ?", (cat_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_category_intervals(cat_id: int, intervals_json: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE categories SET intervals_json = ? WHERE id = ?", (intervals_json, cat_id))
     conn.commit()
     conn.close()
 
 # ─── Quizzes ──────────────────────────────────────────────────────────────────
 
-def save_quiz_without_review(name: str, questions: list) -> int:
+def save_quiz_without_review(name: str, questions: list, category_id: int = None) -> int:
     """Save quiz and questions only — no review scheduled yet."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO quizzes (name) VALUES (?)", (name,))
+    cursor.execute("INSERT INTO quizzes (name, category_id) VALUES (?, ?)", (name, category_id))
     quiz_id = cursor.lastrowid
     for q in questions:
         cursor.execute(
@@ -153,11 +216,11 @@ def save_quiz_without_review(name: str, questions: list) -> int:
     return quiz_id
 
 
-def save_quiz_url(name: str, url: str) -> int:
+def save_quiz_url(name: str, url: str, category_id: int = None) -> int:
     """Save quiz with a URL and smart first review date."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO quizzes (name, url) VALUES (?, ?)", (name, url))
+    cursor.execute("INSERT INTO quizzes (name, url, category_id) VALUES (?, ?, ?)", (name, url, category_id))
     quiz_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -185,9 +248,9 @@ def schedule_first_review(quiz_id: int, start_today: bool = True):
     conn.close()
 
 
-def save_quiz(name: str, questions: list) -> int:
+def save_quiz(name: str, questions: list, category_id: int = None) -> int:
     """Save quiz with smart first review date (today if before 6 PM, else tomorrow)."""
-    quiz_id = save_quiz_without_review(name, questions)
+    quiz_id = save_quiz_without_review(name, questions, category_id)
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     now_riyadh = datetime.now(riyadh_tz)
     start_today = now_riyadh.hour < 18
@@ -291,23 +354,39 @@ def get_all_quiz_reviews() -> list:
 
 def advance_quiz_review(review_id: int):
     """Move to next stage or delete if completed all stages."""
-    from spaced_repetition import next_review_date, REVIEW_INTERVALS
+    from spaced_repetition import next_review_date, DEFAULT_REVIEW_INTERVALS
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM quiz_reviews WHERE id = ?", (review_id,))
+    cursor.execute("""
+        SELECT qr.*, q.category_id 
+        FROM quiz_reviews qr 
+        JOIN quizzes q ON qr.quiz_id = q.id 
+        WHERE qr.id = ?
+    """, (review_id,))
     row = cursor.fetchone()
     if not row:
         conn.close()
         return
         
     review = dict(row)
+    
+    intervals = DEFAULT_REVIEW_INTERVALS
+    if review.get("category_id"):
+        cursor.execute("SELECT intervals_json FROM categories WHERE id = ?", (review["category_id"],))
+        cat_row = cursor.fetchone()
+        if cat_row:
+            try:
+                intervals = json.loads(cat_row["intervals_json"])
+            except Exception:
+                pass
+
     new_stage = review["stage"] + 1
 
-    if new_stage >= len(REVIEW_INTERVALS):
+    if new_stage >= len(intervals):
         cursor.execute("DELETE FROM quiz_reviews WHERE id = ?", (review_id,))
     else:
-        new_date_str = next_review_date(new_stage, review["next_review_date"])
+        new_date_str = next_review_date(new_stage, review["next_review_date"], intervals=intervals)
         cursor.execute(
             "UPDATE quiz_reviews SET stage = ?, next_review_date = ? WHERE id = ?",
             (new_stage, new_date_str, review_id),
@@ -403,23 +482,39 @@ def get_weak_questions_by_quiz(quiz_id: int) -> list:
 
 def advance_weak_question(weak_id: int):
     """Move weak question to next stage or delete if mastered."""
-    from spaced_repetition import next_review_date, REVIEW_INTERVALS
+    from spaced_repetition import next_review_date, DEFAULT_REVIEW_INTERVALS
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM weak_questions WHERE id = ?", (weak_id,))
+    cursor.execute("""
+        SELECT wq.*, q.category_id 
+        FROM weak_questions wq 
+        JOIN quizzes q ON wq.quiz_id = q.id 
+        WHERE wq.id = ?
+    """, (weak_id,))
     row = cursor.fetchone()
     if not row:
         conn.close()
         return
         
     wq = dict(row)
+    
+    intervals = DEFAULT_REVIEW_INTERVALS
+    if wq.get("category_id"):
+        cursor.execute("SELECT intervals_json FROM categories WHERE id = ?", (wq["category_id"],))
+        cat_row = cursor.fetchone()
+        if cat_row:
+            try:
+                intervals = json.loads(cat_row["intervals_json"])
+            except Exception:
+                pass
+
     new_stage = wq["stage"] + 1
 
-    if new_stage >= len(REVIEW_INTERVALS):
+    if new_stage >= len(intervals):
         cursor.execute("DELETE FROM weak_questions WHERE id = ?", (weak_id,))
     else:
-        new_date_str = next_review_date(new_stage, wq["next_review_date"])
+        new_date_str = next_review_date(new_stage, wq["next_review_date"], intervals=intervals)
         cursor.execute(
             "UPDATE weak_questions SET stage = ?, next_review_date = ? WHERE id = ?",
             (new_stage, new_date_str, weak_id),
@@ -439,14 +534,14 @@ def remove_weak_question(weak_id: int):
 
 def save_session(session_type: str, quiz_id: int, review_id: int | None,
                  question_ids: list, current_index: int = 0,
-                 correct_count: int = 0, wrong_ids: list = None):
+                 correct_count: int = 0, wrong_ids: list = None, poll_id: str = None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM active_session")
     cursor.execute(
         """INSERT INTO active_session
-           (id, session_type, quiz_id, review_id, question_ids, current_index, correct_count, wrong_ids)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?)""",
+           (id, session_type, quiz_id, review_id, question_ids, current_index, correct_count, wrong_ids, poll_id)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             session_type,
             quiz_id,
@@ -455,6 +550,7 @@ def save_session(session_type: str, quiz_id: int, review_id: int | None,
             current_index,
             correct_count,
             json.dumps(wrong_ids or []),
+            poll_id,
         ),
     )
     conn.commit()
@@ -473,14 +569,14 @@ def get_session() -> dict | None:
         return row
     return None
 
-def update_session(current_index: int, correct_count: int, wrong_ids: list):
+def update_session(current_index: int, correct_count: int, wrong_ids: list, poll_id: str = None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
         """UPDATE active_session
-           SET current_index = ?, correct_count = ?, wrong_ids = ?
+           SET current_index = ?, correct_count = ?, wrong_ids = ?, poll_id = ?
            WHERE id = 1""",
-        (current_index, correct_count, json.dumps(wrong_ids)),
+        (current_index, correct_count, json.dumps(wrong_ids), poll_id),
     )
     conn.commit()
     conn.close()

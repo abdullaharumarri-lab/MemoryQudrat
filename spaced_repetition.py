@@ -1,17 +1,20 @@
 import datetime
 import pytz
 
-REVIEW_INTERVALS = [0, 3, 7, 14, 30]
+DEFAULT_REVIEW_INTERVALS = [0, 3, 7, 14, 30]
 
-def next_review_date(stage: int, previous_date_str: str) -> str:
+def next_review_date(stage: int, previous_date_str: str, intervals: list = None) -> str:
+    if intervals is None:
+        intervals = DEFAULT_REVIEW_INTERVALS
+
     try:
         stg = int(stage)
     except (ValueError, TypeError):
         stg = 0
-    if stg < 0 or stg >= len(REVIEW_INTERVALS):
-        stg = len(REVIEW_INTERVALS) - 1
+    if stg < 0 or stg >= len(intervals):
+        stg = len(intervals) - 1
         
-    days_to_add = REVIEW_INTERVALS[stg]
+    days_to_add = intervals[stg]
     try:
         prev_date = datetime.date.fromisoformat(str(previous_date_str))
     except Exception:

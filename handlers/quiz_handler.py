@@ -138,7 +138,7 @@ async def send_next_question(query, context, session):
         # Question missing or deleted, skip ahead safely
         logger.warning("Question ID %s not found in DB, skipping...", q_id)
         new_index = session["current_index"] + 1
-        db.update_session(new_index, session["correct_count"], session["wrong_ids"])
+        db.update_session(new_index, session["correct_count"], session["wrong_ids"], session.get("poll_id"))
         session["current_index"] = new_index
         if session["current_index"] >= len(session["question_ids"]):
             await finish_session(query._update if hasattr(query, "_update") else None, context, session)
@@ -147,24 +147,83 @@ async def send_next_question(query, context, session):
         return
 
     options = question.get("options") or []
-    letters = ["أ", "ب", "ج", "د", "هـ", "و"]
-    options_text = ""
+    if not options:
+        options = ["نعم", "لا"]
+    
+    # Determine correct index
+    correct_str = str(question.get("correct_answer", "")).strip()
+    correct_idx = 0
     for idx, opt in enumerate(options):
-        letter = letters[idx] if idx < len(letters) else str(idx+1)
-        options_text += f"\n<b>{letter})</b> {html.escape(str(opt))}\n"
+        if str(opt).strip() == correct_str:
+            correct_idx = idx
+            break
 
     q_text = str(question.get("question_text", ""))
-    if len(q_text) > 3200:
-        q_text = q_text[:3170] + "\n...(تم اختصار نص السؤال لطوله)"
+    explanation = str(question.get("explanation", ""))
+    if len(explanation) > 195:
+        explanation = explanation[:195] + "..."
 
-    text = (
-        f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
-        f"<b>{html.escape(q_text)}</b>\n"
-        f"{options_text}"
+    chat_id = None
+    if query and hasattr(query, "message") and query.message:
+        chat_id = query.message.chat_id
+    elif context.user_data.get("chat_id"):
+        chat_id = context.user_data["chat_id"]
+    else:
+        # Try to infer chat_id from an update object passed instead of query
+        try:
+            chat_id = query.effective_chat.id
+        except:
+            pass
+            
+    if not chat_id:
+        logger.error("Could not determine chat_id to send poll.")
+        return
+
+    # Check Telegram Poll limits
+    needs_context_message = False
+    if len(q_text) > 290:
+        needs_context_message = True
+
+    for opt in options:
+        if len(str(opt)) > 95:
+            needs_context_message = True
+            break
+
+    poll_options = []
+    letters = ["أ", "ب", "ج", "د", "هـ", "و"]
+    if needs_context_message:
+        context_text = f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
+        context_text += f"<b>{html.escape(q_text)}</b>\n"
+        for idx, opt in enumerate(options):
+            letter = letters[idx] if idx < len(letters) else str(idx+1)
+            context_text += f"\n<b>{letter})</b> {html.escape(str(opt))}"
+            poll_options.append(letter)
+        
+        poll_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة من الرسالة أعلاه):"
+        await context.bot.send_message(chat_id=chat_id, text=context_text, parse_mode="HTML")
+    else:
+        poll_question = q_text
+        poll_options = [str(o) for o in options]
+
+    # Limit options length just in case
+    poll_options = [opt[:99] for opt in poll_options]
+
+    poll_msg = await context.bot.send_poll(
+        chat_id=chat_id,
+        question=poll_question,
+        options=poll_options,
+        type="quiz",
+        correct_option_id=correct_idx,
+        explanation=explanation,
+        is_anonymous=False, # Must be False to track who answered in PollAnswerHandler
     )
 
-    kb = build_question_keyboard(options, q_id, session["session_type"])
-    await safe_edit_html(query, text, kb, context=context)
+    db.update_session(
+        session["current_index"], 
+        session["correct_count"], 
+        session["wrong_ids"], 
+        poll_msg.poll.id
+    )
 
 
 async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -197,58 +256,40 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
 
 
-async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        import asyncio
-        asyncio.create_task(query.answer())
-    except Exception:
-        pass
-
-    data = query.data
-    parts = data.split("_", 3)
-    if len(parts) < 4:
-        return
-
-    _, session_type, q_id_str, opt_idx_str = parts
-    try:
-        q_id = int(q_id_str)
-        opt_idx = int(opt_idx_str)
-    except ValueError:
-        return
+async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = update.poll_answer
+    poll_id = answer.poll_id
+    selected_options = answer.option_ids
 
     session = db.get_session()
-    if not session or session["session_type"] != session_type:
-        await safe_edit_html(
-            query,
-            "⚠️ لا توجد جلسة نشطة.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
-            context=context
-        )
+    if not session or session.get("poll_id") != poll_id:
         return
 
     if session["current_index"] >= len(session["question_ids"]):
         await finish_session(update, context, session)
         return
 
-    current_q_id = session["question_ids"][session["current_index"]]
-    if q_id != current_q_id:
-        return
-
+    q_id = session["question_ids"][session["current_index"]]
     question = db.get_question(q_id)
     if not question:
         new_index = session["current_index"] + 1
-        db.update_session(new_index, session["correct_count"], session["wrong_ids"])
+        db.update_session(new_index, session["correct_count"], session["wrong_ids"], None)
         await show_next_question(update, context)
         return
 
     options = question.get("options") or []
-    if opt_idx < 0 or opt_idx >= len(options):
-        return
+    if not options:
+        options = ["نعم", "لا"]
 
-    user_answer = str(options[opt_idx]).strip()
-    correct = str(question.get("correct_answer", "")).strip()
-    is_correct = user_answer == correct
+    correct_str = str(question.get("correct_answer", "")).strip()
+    correct_idx = 0
+    for idx, opt in enumerate(options):
+        if str(opt).strip() == correct_str:
+            correct_idx = idx
+            break
+
+    user_option_id = selected_options[0] if selected_options else -1
+    is_correct = user_option_id == correct_idx
 
     new_correct = session["correct_count"] + (1 if is_correct else 0)
     new_wrong = list(session.get("wrong_ids", []))
@@ -256,24 +297,11 @@ async def quiz_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         new_wrong.append(q_id)
 
     new_index = session["current_index"] + 1
-    db.update_session(new_index, new_correct, new_wrong)
+    db.update_session(new_index, new_correct, new_wrong, None)
 
-    correct_safe = html.escape(correct)
-    if is_correct:
-        feedback = "✅ <b>إجابة صحيحة!</b>\n\n"
-    else:
-        feedback = f"❌ <b>إجابة خاطئة!</b>\n\nالصواب: <b>{correct_safe}</b>\n\n"
-
-    explanation = question.get("explanation")
-    if explanation:
-        expl_safe = html.escape(str(explanation))
-        feedback += f"💡 {expl_safe}\n\n"
-
-    feedback += "<i>جاري تحميل السؤال التالي...</i>"
-
-    await safe_edit_html(query, feedback, context=context)
-
-    await asyncio.sleep(0.3)
+    # Delay slightly to let the user see the poll result
+    import asyncio
+    await asyncio.sleep(1.0)
     await show_next_question(update, context)
 
 
@@ -349,6 +377,24 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         keyboard.insert(0, [
             InlineKeyboardButton("❌ راجع الأسئلة الخاطئة", callback_data=f"start_weak_{quiz_id}")
         ])
+    if session_type != "weakall" and quiz_id != 0:
+        keyboard.insert(0, [
+            InlineKeyboardButton("🛠 تعديل أسئلة الكويز", callback_data=f"fixstage_qlist_{quiz_id}_0")
+        ])
 
     db.clear_session()
-    await safe_edit_html(query, result_text, InlineKeyboardMarkup(keyboard), context=context)
+    chat_id = None
+    if update and hasattr(update, "effective_chat") and update.effective_chat:
+        chat_id = update.effective_chat.id
+    elif context.user_data.get("chat_id"):
+        chat_id = context.user_data["chat_id"]
+        
+    if chat_id:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=result_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    elif query:
+        await safe_edit_html(query, result_text, InlineKeyboardMarkup(keyboard), context=context)

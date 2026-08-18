@@ -160,7 +160,10 @@ def main():
         filters.TEXT & ~filters.COMMAND, url_text_handler
     ))
 
-    app.add_handler(CallbackQueryHandler(quiz_answer_handler, pattern=r"^ans_"))
+    from telegram.ext import PollAnswerHandler
+    from handlers.quiz_handler import poll_answer_handler
+
+    app.add_handler(PollAnswerHandler(poll_answer_handler))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     app.add_error_handler(error_handler)

@@ -167,13 +167,15 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
                 f"📋 <b>{name_safe}</b>\n"
                 f"📝 {len(data['questions'])} سؤال{wrong_note}\n\n"
-                f"متى تريد أن تبدأ أول مراجعة لهذا الكويز؟"
+                f"في أي قسم تريد وضع هذا الكويز؟"
             )
 
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📅 اليوم (الساعة 6 م)", callback_data=f"sched_today_{quiz_id}")],
-                [InlineKeyboardButton("📅 غداً (الساعة 6 م)", callback_data=f"sched_tomorrow_{quiz_id}")],
-            ])
+            cats = db.get_categories()
+            kb = []
+            for c in cats:
+                kb.append([InlineKeyboardButton(f"📁 {c['name']}", callback_data=f"setcat_{quiz_id}_{c['id']}")])
+            
+            keyboard = InlineKeyboardMarkup(kb)
 
         if msg_id:
             await context.bot.edit_message_text(
