@@ -404,8 +404,13 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
 
 async def cleanup_quiz_messages(chat_id, context):
     msg_ids = context.user_data.pop("cleanup_message_ids", [])
-    for msg_id in msg_ids:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except Exception as e:
-            logger.warning(f"Could not delete message {msg_id}: {e}")
+    if not msg_ids:
+        return
+        
+    try:
+        # delete_messages can take up to 100 ids at a time
+        for i in range(0, len(msg_ids), 100):
+            chunk = msg_ids[i:i+100]
+            await context.bot.delete_messages(chat_id=chat_id, message_ids=chunk)
+    except Exception as e:
+        logger.warning(f"Could not delete messages: {e}")
