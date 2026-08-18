@@ -131,7 +131,7 @@ async def start_quiz_session(
     await show_next_question(update, context)
 
 
-async def send_next_question(query, context, session):
+async def send_next_question(update, context, session):
     q_id = session["question_ids"][session["current_index"]]
     question = db.get_question(q_id)
     if not question:
@@ -141,9 +141,9 @@ async def send_next_question(query, context, session):
         db.update_session(new_index, session["correct_count"], session["wrong_ids"], session.get("poll_id"))
         session["current_index"] = new_index
         if session["current_index"] >= len(session["question_ids"]):
-            await finish_session(query._update if hasattr(query, "_update") else None, context, session)
+            await finish_session(update, context, session)
         else:
-            await send_next_question(query, context, session)
+            await send_next_question(update, context, session)
         return
 
     options = question.get("options") or []
@@ -164,20 +164,18 @@ async def send_next_question(query, context, session):
         explanation = explanation[:195] + "..."
 
     chat_id = None
-    if query and hasattr(query, "message") and query.message:
-        chat_id = query.message.chat_id
+    if update and hasattr(update, "effective_chat") and update.effective_chat:
+        chat_id = update.effective_chat.id
+    elif update and update.poll_answer and update.poll_answer.user:
+        chat_id = update.poll_answer.user.id
     elif context.user_data.get("chat_id"):
         chat_id = context.user_data["chat_id"]
-    else:
-        # Try to infer chat_id from an update object passed instead of query
-        try:
-            chat_id = query.effective_chat.id
-        except:
-            pass
             
     if not chat_id:
         logger.error("Could not determine chat_id to send poll.")
         return
+    else:
+        context.user_data["chat_id"] = chat_id
 
     # Check Telegram Poll limits
     needs_context_message = False
@@ -244,7 +242,7 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await finish_session(update, context, session)
             return
 
-        await send_next_question(query, context, session)
+        await send_next_question(update, context, session)
     except Exception as e:
         logger.exception("Error in show_next_question: %s", e)
         if query:
