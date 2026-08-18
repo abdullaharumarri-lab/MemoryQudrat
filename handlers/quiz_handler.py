@@ -181,6 +181,7 @@ async def send_next_question(update, context, session):
 
     poll_options = []
     letters = ["أ", "ب", "ج", "د", "هـ", "و"]
+    msg_ids = session.get("session_message_ids", [])
     
     if long_question or long_options:
         context_text = f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
@@ -196,7 +197,8 @@ async def send_next_question(update, context, session):
             poll_question = f"السؤال {session['current_index'] + 1} (نص السؤال في الرسالة أعلاه):"
             poll_options = [str(o) for o in options]
             
-        await context.bot.send_message(chat_id=chat_id, text=context_text, parse_mode="HTML")
+        ctx_msg = await context.bot.send_message(chat_id=chat_id, text=context_text, parse_mode="HTML")
+        msg_ids.append(ctx_msg.message_id)
     else:
         poll_question = q_text
         poll_options = [str(o) for o in options]
@@ -213,12 +215,14 @@ async def send_next_question(update, context, session):
         explanation=explanation,
         is_anonymous=False, # Must be False to track who answered in PollAnswerHandler
     )
+    msg_ids.append(poll_msg.message_id)
 
     db.update_session(
         session["current_index"], 
         session["correct_count"], 
         session["wrong_ids"], 
-        poll_msg.poll.id
+        poll_msg.poll.id,
+        msg_ids
     )
 
 
@@ -269,7 +273,7 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     question = db.get_question(q_id)
     if not question:
         new_index = session["current_index"] + 1
-        db.update_session(new_index, session["correct_count"], session["wrong_ids"], None)
+        db.update_session(new_index, session["correct_count"], session["wrong_ids"], None, session.get("session_message_ids", []))
         await show_next_question(update, context)
         return
 
@@ -293,7 +297,7 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         new_wrong.append(q_id)
 
     new_index = session["current_index"] + 1
-    db.update_session(new_index, new_correct, new_wrong, None)
+    db.update_session(new_index, new_correct, new_wrong, None, session.get("session_message_ids", []))
 
     # Delay slightly to let the user see the poll result
     import asyncio
@@ -386,11 +390,22 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         chat_id = context.user_data["chat_id"]
         
     if chat_id:
-        await context.bot.send_message(
+        result_msg = await context.bot.send_message(
             chat_id=chat_id,
             text=result_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
+        session_message_ids = session.get("session_message_ids", [])
+        if session_message_ids:
+            context.user_data["cleanup_message_ids"] = session_message_ids
     elif query:
         await safe_edit_html(query, result_text, InlineKeyboardMarkup(keyboard), context=context)
+
+async def cleanup_quiz_messages(chat_id, context):
+    msg_ids = context.user_data.pop("cleanup_message_ids", [])
+    for msg_id in msg_ids:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception as e:
+            logger.warning(f"Could not delete message {msg_id}: {e}")

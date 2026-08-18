@@ -98,7 +98,8 @@ def init_db():
             current_index INTEGER DEFAULT 0,
             correct_count INTEGER DEFAULT 0,
             wrong_ids TEXT DEFAULT '[]',
-            poll_id TEXT
+            poll_id TEXT,
+            session_message_ids TEXT DEFAULT '[]'
         )
     """)
 
@@ -132,6 +133,12 @@ def init_db():
     # Auto-migrate: Add poll_id column to active_session if it doesn't exist
     try:
         cursor.execute("ALTER TABLE active_session ADD COLUMN poll_id TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    # Auto-migrate: Add session_message_ids column to active_session if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE active_session ADD COLUMN session_message_ids TEXT DEFAULT '[]'")
     except sqlite3.OperationalError:
         pass  # Column already exists
 
@@ -534,14 +541,14 @@ def remove_weak_question(weak_id: int):
 
 def save_session(session_type: str, quiz_id: int, review_id: int | None,
                  question_ids: list, current_index: int = 0,
-                 correct_count: int = 0, wrong_ids: list = None, poll_id: str = None):
+                 correct_count: int = 0, wrong_ids: list = None, poll_id: str = None, session_message_ids: list = None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM active_session")
     cursor.execute(
         """INSERT INTO active_session
-           (id, session_type, quiz_id, review_id, question_ids, current_index, correct_count, wrong_ids, poll_id)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           (id, session_type, quiz_id, review_id, question_ids, current_index, correct_count, wrong_ids, poll_id, session_message_ids)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             session_type,
             quiz_id,
@@ -551,6 +558,7 @@ def save_session(session_type: str, quiz_id: int, review_id: int | None,
             correct_count,
             json.dumps(wrong_ids or []),
             poll_id,
+            json.dumps(session_message_ids or []),
         ),
     )
     conn.commit()
@@ -566,18 +574,31 @@ def get_session() -> dict | None:
         row = dict(row)
         row["question_ids"] = json.loads(row["question_ids"])
         row["wrong_ids"] = json.loads(row["wrong_ids"])
+        try:
+            row["session_message_ids"] = json.loads(row.get("session_message_ids") or "[]")
+        except:
+            row["session_message_ids"] = []
         return row
     return None
 
-def update_session(current_index: int, correct_count: int, wrong_ids: list, poll_id: str = None):
+def update_session(current_index: int, correct_count: int, wrong_ids: list, poll_id: str = None, session_message_ids: list = None):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """UPDATE active_session
-           SET current_index = ?, correct_count = ?, wrong_ids = ?, poll_id = ?
-           WHERE id = 1""",
-        (current_index, correct_count, json.dumps(wrong_ids), poll_id),
-    )
+    if session_message_ids is None:
+        # Keep old session_message_ids if not provided (though we will provide it)
+        cursor.execute(
+            """UPDATE active_session
+               SET current_index = ?, correct_count = ?, wrong_ids = ?, poll_id = ?
+               WHERE id = 1""",
+            (current_index, correct_count, json.dumps(wrong_ids), poll_id),
+        )
+    else:
+        cursor.execute(
+            """UPDATE active_session
+               SET current_index = ?, correct_count = ?, wrong_ids = ?, poll_id = ?, session_message_ids = ?
+               WHERE id = 1""",
+            (current_index, correct_count, json.dumps(wrong_ids), poll_id, json.dumps(session_message_ids)),
+        )
     conn.commit()
     conn.close()
 

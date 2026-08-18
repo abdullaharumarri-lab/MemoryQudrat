@@ -269,6 +269,8 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Main menu ──
     if data == "main_menu":
+        from handlers.quiz_handler import cleanup_quiz_messages
+        await cleanup_quiz_messages(update.effective_chat.id, context)
         await main_menu_handler(update, context)
 
     # ── Upload JSON ──
