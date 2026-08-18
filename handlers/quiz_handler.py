@@ -154,8 +154,12 @@ async def send_next_question(update, context, session):
         return
 
     options = question.get("options") or []
-    if not options:
-        options = ["نعم", "لا"]
+    if len(options) < 2:
+        options = options + ["(خيار فارغ)"] * (2 - len(options))
+        if not options[0]:
+            options = ["نعم", "لا"]
+    if len(options) > 10:
+        options = options[:10]
     
     # Determine correct index
     correct_str = str(question.get("correct_answer", "")).strip()
@@ -165,7 +169,10 @@ async def send_next_question(update, context, session):
             correct_idx = idx
             break
 
-    q_text = str(question.get("question_text", ""))
+    q_text = str(question.get("question_text", "")).strip()
+    if not q_text:
+        q_text = "سؤال بدون نص"
+        
     explanation = str(question.get("explanation", ""))
     if len(explanation) > 195:
         explanation = explanation[:195] + "..."
@@ -212,8 +219,20 @@ async def send_next_question(update, context, session):
         poll_question = q_text
         poll_options = [str(o) for o in options]
 
-    # Limit options length just in case
-    poll_options = [str(opt)[:99] for opt in poll_options]
+    # Limit options length just in case and ensure uniqueness
+    seen = set()
+    unique_poll_options = []
+    for opt in poll_options:
+        opt_str = str(opt)[:99]
+        new_opt = opt_str
+        counter = 1
+        while new_opt in seen:
+            suffix = f" {counter}"
+            new_opt = opt_str[:99-len(suffix)] + suffix
+            counter += 1
+        seen.add(new_opt)
+        unique_poll_options.append(new_opt)
+    poll_options = unique_poll_options
 
     poll_msg = await context.bot.send_poll(
         chat_id=chat_id,
@@ -256,13 +275,16 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await send_next_question(update, context, session)
     except Exception as e:
         logger.exception("Error in show_next_question: %s", e)
+        err_text = f"❌ حدث خطأ أثناء تحميل السؤال التالي.\nيمكنك استكمال الكويز من القائمة الرئيسية."
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
         if query:
-            await safe_edit_html(
-                query,
-                f"❌ حدث خطأ أثناء تحميل السؤال.\nيرجى العودة للقائمة الرئيسية.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
-                context=context
-            )
+            await safe_edit_html(query, err_text, reply_markup=reply_markup, context=context)
+        else:
+            chat_id = context.user_data.get("chat_id")
+            if chat_id:
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=reply_markup)
+                except: pass
 
 
 async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
