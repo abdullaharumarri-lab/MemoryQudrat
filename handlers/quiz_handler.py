@@ -120,13 +120,11 @@ async def start_quiz_session(
         wrong_ids=[],
     )
 
-    quiz = db.get_quiz(quiz_id)
-    title_safe = html.escape(quiz.get('name', 'كويز')) if quiz else "كويز"
-    await safe_edit_html(
-        query,
-        f"{title}\n📋 <b>{title_safe}</b>\n📝 {len(question_ids)} سؤال\n\nجاري تحميل أول سؤال...",
-        context=context
-    )
+    try:
+        if query and query.message:
+            await query.message.delete()
+    except:
+        pass
 
     await show_next_question(update, context)
 
@@ -178,33 +176,33 @@ async def send_next_question(update, context, session):
         context.user_data["chat_id"] = chat_id
 
     # Check Telegram Poll limits
-    needs_context_message = False
-    if len(q_text) > 290:
-        needs_context_message = True
-
-    for opt in options:
-        if len(str(opt)) > 95:
-            needs_context_message = True
-            break
+    long_question = len(q_text) > 290
+    long_options = any(len(str(opt)) > 95 for opt in options)
 
     poll_options = []
     letters = ["أ", "ب", "ج", "د", "هـ", "و"]
-    if needs_context_message:
+    
+    if long_question or long_options:
         context_text = f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
         context_text += f"<b>{html.escape(q_text)}</b>\n"
-        for idx, opt in enumerate(options):
-            letter = letters[idx] if idx < len(letters) else str(idx+1)
-            context_text += f"\n<b>{letter})</b> {html.escape(str(opt))}"
-            poll_options.append(letter)
         
-        poll_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة من الرسالة أعلاه):"
+        if long_options:
+            for idx, opt in enumerate(options):
+                letter = letters[idx] if idx < len(letters) else str(idx+1)
+                context_text += f"\n<b>{letter})</b> {html.escape(str(opt))}"
+                poll_options.append(letter)
+            poll_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة من الرسالة أعلاه):"
+        else:
+            poll_question = f"السؤال {session['current_index'] + 1} (نص السؤال في الرسالة أعلاه):"
+            poll_options = [str(o) for o in options]
+            
         await context.bot.send_message(chat_id=chat_id, text=context_text, parse_mode="HTML")
     else:
         poll_question = q_text
         poll_options = [str(o) for o in options]
 
     # Limit options length just in case
-    poll_options = [opt[:99] for opt in poll_options]
+    poll_options = [str(opt)[:99] for opt in poll_options]
 
     poll_msg = await context.bot.send_poll(
         chat_id=chat_id,
