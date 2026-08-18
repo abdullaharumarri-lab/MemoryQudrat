@@ -16,7 +16,6 @@ import database as db
 from config import TELEGRAM_BOT_TOKEN
 from handlers.main_menu import main_menu_handler, button_handler, url_text_handler, fixstage_command
 from handlers.pdf_handler import json_document_handler, template_command
-from handlers.quiz_handler import quiz_answer_handler
 from utils import send_clean_message
 
 logging.basicConfig(

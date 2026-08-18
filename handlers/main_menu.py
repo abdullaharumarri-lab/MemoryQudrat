@@ -9,7 +9,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
-from spaced_repetition import days_until, stage_label, REVIEW_INTERVALS
+from spaced_repetition import days_until, stage_label, DEFAULT_REVIEW_INTERVALS
 from utils import send_clean_message, safe_edit, strip_html_tags
 
 
@@ -836,7 +836,18 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         current_stage_label = stage_labels[stage] if stage < len(stage_labels) else str(stage)
 
         # Compute the next date string after completing this stage
-        next_interval = REVIEW_INTERVALS[stage + 1] if stage + 1 < len(REVIEW_INTERVALS) else None
+        # To get the custom category intervals, we should fetch from db, or fallback to default
+        intervals = DEFAULT_REVIEW_INTERVALS
+        if quiz.get("category_id"):
+            conn = db.get_connection()
+            c = conn.execute("SELECT intervals_json FROM categories WHERE id = ?", (quiz["category_id"],))
+            row = c.fetchone()
+            if row:
+                try: intervals = json.loads(row[0])
+                except: pass
+            conn.close()
+
+        next_interval = intervals[stage + 1] if stage + 1 < len(intervals) else None
 
         text = (
             f"🛠 <b>تعديل موعد المراجعة</b>\n"
