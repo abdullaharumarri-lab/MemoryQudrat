@@ -405,6 +405,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
 async def cleanup_quiz_messages(chat_id, context):
     msg_ids = context.user_data.pop("cleanup_message_ids", [])
     if not msg_ids:
+        logger.info("No messages to clean up.")
         return
         
     try:
@@ -412,5 +413,11 @@ async def cleanup_quiz_messages(chat_id, context):
         for i in range(0, len(msg_ids), 100):
             chunk = msg_ids[i:i+100]
             await context.bot.delete_messages(chat_id=chat_id, message_ids=chunk)
+        logger.info(f"Successfully deleted batch messages: {msg_ids}")
     except Exception as e:
-        logger.warning(f"Could not delete messages: {e}")
+        logger.warning(f"Could not delete_messages: {e}, falling back to single deletions")
+        for msg_id in msg_ids:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception as ex:
+                pass
