@@ -41,6 +41,15 @@ async def start_quiz_session(
     review_id: int = None,
 ):
     query = update.callback_query
+    
+    chat_id = None
+    if update and hasattr(update, "effective_chat") and update.effective_chat:
+        chat_id = update.effective_chat.id
+    elif context.user_data.get("chat_id"):
+        chat_id = context.user_data["chat_id"]
+        
+    if chat_id:
+        await cleanup_quiz_messages(chat_id, context)
 
     if session_type == "weakall":
         # ALL weak questions from ALL quizzes, newest first (not just due)
