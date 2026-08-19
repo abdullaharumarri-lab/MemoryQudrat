@@ -161,15 +161,18 @@ def init_db():
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO categories (name, intervals_json) VALUES ('عام', '[1, 3, 7, 14, 30]')")
 
-    # Auto-schedule missing quizzes
-    cursor.execute("SELECT id FROM quizzes WHERE id NOT IN (SELECT quiz_id FROM quiz_reviews)")
+    # Auto-schedule missing quizzes intelligently (5 quizzes per day to avoid overload)
+    cursor.execute("SELECT id FROM quizzes WHERE id NOT IN (SELECT quiz_id FROM quiz_reviews) ORDER BY id ASC")
     missing_quizzes = cursor.fetchall()
     if missing_quizzes:
-        today_str = date.today().isoformat()
-        for row in missing_quizzes:
+        base_date = date.today()
+        for idx, row in enumerate(missing_quizzes):
+            # 5 quizzes per day
+            days_offset = idx // 5
+            assigned_date = (base_date + timedelta(days=days_offset)).isoformat()
             cursor.execute(
                 "INSERT INTO quiz_reviews (quiz_id, review_stage, next_review_date, status) VALUES (?, 0, ?, 'pending')",
-                (row["id"], today_str)
+                (row["id"], assigned_date)
             )
 
     conn.commit()
