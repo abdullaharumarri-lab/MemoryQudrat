@@ -6,10 +6,10 @@ from config import DB_PATH
 
 
 def get_first_review_date() -> str:
-    """Smart first review: before 4:30 AM Riyadh → today, after 4:30 AM → tomorrow."""
+    """Smart first review: before 6 PM Riyadh → today, after 6 PM → tomorrow."""
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     now_riyadh = datetime.now(riyadh_tz)
-    if now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30):
+    if now_riyadh.hour < 18:
         return date.today().isoformat()
     else:
         return (date.today() + timedelta(days=1)).isoformat()
@@ -161,20 +161,6 @@ def init_db():
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO categories (name, intervals_json) VALUES ('عام', '[1, 3, 7, 14, 30]')")
 
-    # Auto-schedule missing quizzes intelligently (5 quizzes per day to avoid overload)
-    cursor.execute("SELECT id FROM quizzes WHERE id NOT IN (SELECT quiz_id FROM quiz_reviews) ORDER BY id ASC")
-    missing_quizzes = cursor.fetchall()
-    if missing_quizzes:
-        base_date = date.today()
-        for idx, row in enumerate(missing_quizzes):
-            # 5 quizzes per day
-            days_offset = idx // 5
-            assigned_date = (base_date + timedelta(days=days_offset)).isoformat()
-            cursor.execute(
-                "INSERT INTO quiz_reviews (quiz_id, review_stage, next_review_date, status) VALUES (?, 0, ?, 'pending')",
-                (row["id"], assigned_date)
-            )
-
     conn.commit()
     conn.close()
 
@@ -248,7 +234,7 @@ def save_quiz_url(name: str, url: str, category_id: int = None) -> int:
     
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     now_riyadh = datetime.now(riyadh_tz)
-    start_today = now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30)
+    start_today = now_riyadh.hour < 18
     schedule_first_review(quiz_id, start_today=start_today)
     return quiz_id
 
@@ -270,11 +256,11 @@ def schedule_first_review(quiz_id: int, start_today: bool = True):
 
 
 def save_quiz(name: str, questions: list, category_id: int = None) -> int:
-    """Save quiz with smart first review date (today if before 4:30 AM, else tomorrow)."""
+    """Save quiz with smart first review date (today if before 6 PM, else tomorrow)."""
     quiz_id = save_quiz_without_review(name, questions, category_id)
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     now_riyadh = datetime.now(riyadh_tz)
-    start_today = now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30)
+    start_today = now_riyadh.hour < 18
     schedule_first_review(quiz_id, start_today=start_today)
     return quiz_id
 
