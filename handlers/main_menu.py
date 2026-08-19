@@ -464,10 +464,10 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         overdue_reviews = [r for r in reviews if r["next_review_date"] < today_date]
-        due_today_reviews = [r for r in reviews if r["next_review_date"] >= today_date]
+        due_today_reviews = [r for r in reviews if r["next_review_date"] == today_date]
 
         if now.hour > 4 or (now.hour == 4 and now.minute >= 30):
-            open_reviews = reviews
+            open_reviews = overdue_reviews + due_today_reviews
             locked_reviews = []
         else:
             open_reviews = overdue_reviews

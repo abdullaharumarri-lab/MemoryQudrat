@@ -161,6 +161,17 @@ def init_db():
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO categories (name, intervals_json) VALUES ('عام', '[1, 3, 7, 14, 30]')")
 
+    # Auto-schedule missing quizzes
+    cursor.execute("SELECT id FROM quizzes WHERE id NOT IN (SELECT quiz_id FROM quiz_reviews)")
+    missing_quizzes = cursor.fetchall()
+    if missing_quizzes:
+        today_str = date.today().isoformat()
+        for row in missing_quizzes:
+            cursor.execute(
+                "INSERT INTO quiz_reviews (quiz_id, review_stage, next_review_date, status) VALUES (?, 0, ?, 'pending')",
+                (row["id"], today_str)
+            )
+
     conn.commit()
     conn.close()
 
