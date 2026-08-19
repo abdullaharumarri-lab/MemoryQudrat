@@ -6,10 +6,10 @@ from config import DB_PATH
 
 
 def get_first_review_date() -> str:
-    """Smart first review: before 6 PM Riyadh → today, after 6 PM → tomorrow."""
+    """Smart first review: before 4:30 AM Riyadh → today, after 4:30 AM → tomorrow."""
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     now_riyadh = datetime.now(riyadh_tz)
-    if now_riyadh.hour < 18:
+    if now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30):
         return date.today().isoformat()
     else:
         return (date.today() + timedelta(days=1)).isoformat()
@@ -234,7 +234,7 @@ def save_quiz_url(name: str, url: str, category_id: int = None) -> int:
     
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     now_riyadh = datetime.now(riyadh_tz)
-    start_today = now_riyadh.hour < 18
+    start_today = now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30)
     schedule_first_review(quiz_id, start_today=start_today)
     return quiz_id
 
@@ -256,11 +256,11 @@ def schedule_first_review(quiz_id: int, start_today: bool = True):
 
 
 def save_quiz(name: str, questions: list, category_id: int = None) -> int:
-    """Save quiz with smart first review date (today if before 6 PM, else tomorrow)."""
+    """Save quiz with smart first review date (today if before 4:30 AM, else tomorrow)."""
     quiz_id = save_quiz_without_review(name, questions, category_id)
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     now_riyadh = datetime.now(riyadh_tz)
-    start_today = now_riyadh.hour < 18
+    start_today = now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30)
     schedule_first_review(quiz_id, start_today=start_today)
     return quiz_id
 

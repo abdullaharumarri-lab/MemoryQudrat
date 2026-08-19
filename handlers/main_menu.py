@@ -383,8 +383,8 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             f"متى تريد أن تبدأ أول مراجعة لهذا الكويز؟"
         )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📅 اليوم (الساعة 6 م)", callback_data=f"sched_today_{quiz_id}")],
-            [InlineKeyboardButton("📅 غداً (الساعة 6 م)", callback_data=f"sched_tomorrow_{quiz_id}")],
+            [InlineKeyboardButton("📅 اليوم (الساعة 4:30 فجراً)", callback_data=f"sched_today_{quiz_id}")],
+            [InlineKeyboardButton("📅 غداً (الساعة 4:30 فجراً)", callback_data=f"sched_tomorrow_{quiz_id}")],
         ])
         await safe_edit(query, text, keyboard)
 
@@ -396,7 +396,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         name_safe = html.escape(quiz["name"]) if quiz else "الكويز"
         await safe_edit(
             query,
-            f"✅ <b>تم!</b> ستصلك مراجعة <b>{name_safe}</b> اليوم الساعة 6 المساء. 🔔",
+            f"✅ <b>تم!</b> ستصلك مراجعة <b>{name_safe}</b> اليوم الساعة 4:30 الفجر. 🔔",
             InlineKeyboardMarkup([
                 [InlineKeyboardButton("▶️ ابدأ الكويز (تجربة)", callback_data=f"start_practice_{quiz_id}")],
                 [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
@@ -410,7 +410,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         name_safe = html.escape(quiz["name"]) if quiz else "الكويز"
         await safe_edit(
             query,
-            f"✅ <b>تم!</b> ستصلك مراجعة <b>{name_safe}</b> غداً الساعة 6 المساء. 🔔",
+            f"✅ <b>تم!</b> ستصلك مراجعة <b>{name_safe}</b> غداً الساعة 4:30 الفجر. 🔔",
             InlineKeyboardMarkup([
                 [InlineKeyboardButton("▶️ ابدأ الكويز (تجربة)", callback_data=f"start_practice_{quiz_id}")],
                 [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
@@ -466,7 +466,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         overdue_reviews = [r for r in reviews if r["next_review_date"] < today_date]
         due_today_reviews = [r for r in reviews if r["next_review_date"] == today_date]
 
-        if now.hour >= 18:
+        if now.hour > 4 or (now.hour == 4 and now.minute >= 30):
             open_reviews = overdue_reviews + due_today_reviews
             locked_reviews = []
         else:
@@ -484,7 +484,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             if open_reviews:
                 text += "──────────────\n\n"
             text += f"🔒 <b>مراجعات مجدولة لليوم</b> — ({len(locked_reviews)} مراجعة)\n"
-            text += "ستتاح لك الساعة 6 مساءً بتوقيت الرياض."
+            text += "ستتاح لك الساعة 4:30 فجراً بتوقيت الرياض."
 
         if not kb:
             kb = back_btn

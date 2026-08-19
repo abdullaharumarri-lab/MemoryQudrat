@@ -31,7 +31,7 @@ def schedule_reminder(job_queue, chat_id: int):
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     job_queue.run_daily(
         daily_reminder,
-        time=time(18, 0, tzinfo=riyadh_tz),
+        time=time(4, 30, tzinfo=riyadh_tz),
         data=chat_id,
         name=f"reminder_{chat_id}",
     )
