@@ -519,7 +519,12 @@ def advance_weak_question(weak_id: int):
     new_stage = wq["stage"] + 1
 
     if new_stage >= len(intervals):
-        cursor.execute("DELETE FROM weak_questions WHERE id = ?", (weak_id,))
+        # Never delete weak questions. Once they finish spaced repetition, keep them on a 1-day interval.
+        next_date = date.today() + timedelta(days=1)
+        cursor.execute(
+            "UPDATE weak_questions SET next_review_date = ? WHERE id = ?",
+            (next_date.isoformat(), weak_id)
+        )
     else:
         new_date_str = next_review_date(new_stage, wq["next_review_date"], intervals=intervals)
         cursor.execute(

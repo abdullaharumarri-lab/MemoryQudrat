@@ -931,7 +931,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
         
         text = f"🛠 <b>تعديل أسئلة الكويز</b>\n📚 {q_name}\n\nاختر السؤال المراد تعديله:"
-        await safe_edit_html(query, text, InlineKeyboardMarkup(kb), context=context)
+        await safe_edit(query, text, InlineKeyboardMarkup(kb), context=context)
 
     # ── Edit Question Menu ──
     elif data.startswith("fixstage_qedit_"):
@@ -966,7 +966,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         kb.append([InlineKeyboardButton("🗑 حذف السؤال نهائياً", callback_data=f"fixstg_qdel_{quiz_id}_{q_id}")])
         kb.append([InlineKeyboardButton("🔙 رجوع لقائمة الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")])
         
-        await safe_edit_html(query, text, InlineKeyboardMarkup(kb), context=context)
+        await safe_edit(query, text, InlineKeyboardMarkup(kb), context=context)
 
     # ── Edit Text Mode ──
     elif data.startswith("fixstg_edittext_"):
