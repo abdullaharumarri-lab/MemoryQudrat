@@ -2,6 +2,8 @@ import html
 import pytz
 import logging
 import re
+import time as _time
+import collections
 import httpx
 from datetime import datetime, date, timedelta
 
@@ -9,8 +11,26 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
+from config import is_admin
 from spaced_repetition import days_until, stage_label, DEFAULT_REVIEW_INTERVALS
 from utils import send_clean_message, safe_edit, strip_html_tags
+
+logger = logging.getLogger(__name__)
+
+# ─── Rate Limiter ─────────────────────────────────────────────────────────────
+# Tracks the last N timestamps per user_id to detect flood/spam
+_user_request_times: dict = collections.defaultdict(list)
+_RATE_LIMIT_MAX = 12        # max requests
+_RATE_LIMIT_WINDOW = 6.0    # within this many seconds
+
+def _is_rate_limited(user_id: int) -> bool:
+    """Return True if the user has exceeded the rate limit."""
+    now = _time.monotonic()
+    times = _user_request_times[user_id]
+    # Remove timestamps outside the window
+    _user_request_times[user_id] = [t for t in times if now - t < _RATE_LIMIT_WINDOW]
+    _user_request_times[user_id].append(now)
+    return len(_user_request_times[user_id]) > _RATE_LIMIT_MAX
 
 
 # ─── URL Text Handler ────────────────────────────────────────────────────────
@@ -34,7 +54,12 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text or update.message.caption or ""
     msg = msg.strip()
     chat_id = update.effective_chat.id
-    
+    user = update.effective_user
+
+    # ── Rate limiting guard ───────────────────────────────────────────────────
+    if user and _is_rate_limited(user.id):
+        return  # Silently ignore flood
+
     # Check if we are editing a question text
     q_id_edit = context.user_data.get("editing_q_text")
     if q_id_edit:
@@ -200,6 +225,16 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+    # ── Admin-only command ────────────────────────────────────────────────────
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        if update.message:
+            await update.message.reply_text("❌ هذا الأمر متاح للمشرف فقط.")
+        elif update.callback_query:
+            await update.callback_query.answer("❌ غير مصرح.", show_alert=True)
+        logger.warning("Unauthorized fixstage attempt by user_id=%s", user.id if user else "unknown")
+        return
+
     reviews = db.get_all_quiz_reviews()
     if not reviews:
         text = "لا توجد كويزات مجدولة."
@@ -253,6 +288,16 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user = update.effective_user
+
+    # ── Rate limiting guard ───────────────────────────────────────────────────
+    if user and _is_rate_limited(user.id):
+        try:
+            await query.answer("⏳ أرسلت طلبات كثيرة. انتظر لحظة ثم حاول مرة أخرى.", show_alert=False)
+        except Exception:
+            pass
+        return
+
     try:
         import asyncio
         asyncio.create_task(query.answer())
@@ -263,7 +308,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await _handle_button_click(update, context, query, data)
     except Exception as e:
-        logging.exception("Error in button_handler for data=%s: %s", data, e)
+        logger.exception("Error in button_handler for data=%s: %s", data, e)
         back_btn = [[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]
         await safe_edit(
             query,

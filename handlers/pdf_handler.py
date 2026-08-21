@@ -1,5 +1,7 @@
 import json
+import logging
 import os
+import re
 import tempfile
 import html
 
@@ -7,8 +9,10 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
-from ai_extractor import extract_questions_from_pdf
 from utils import send_clean_message
+from config import MAX_JSON_FILE_SIZE_BYTES, MAX_QUESTIONS_PER_QUIZ
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Template Command ─────────────────────────────────────────────────────────
@@ -52,6 +56,48 @@ async def template_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.unlink(tmp_path)
 
 
+# ─── Input Validation Helpers ─────────────────────────────────────────────────
+
+def _validate_json_upload(doc, data: dict) -> None:
+    """
+    Raises ValueError with an Arabic-friendly message if the uploaded
+    JSON file or its contents fail any security / format check.
+    """
+    # 1. File size guard
+    if doc.file_size and doc.file_size > MAX_JSON_FILE_SIZE_BYTES:
+        size_kb = doc.file_size // 1024
+        raise ValueError(
+            f"حجم الملف ({size_kb} KB) يتجاوز الحد المسموح ({MAX_JSON_FILE_SIZE_BYTES // 1024} KB). "
+            "قسّم الكويز إلى ملفات أصغر."
+        )
+
+    # 2. Required top-level keys
+    if "quiz_name" not in data and "name" not in data:
+        raise ValueError("الملف لا يحتوي على 'quiz_name' أو 'name'.")
+    if "questions" not in data or not isinstance(data["questions"], list):
+        raise ValueError("الملف لا يحتوي على 'questions' بصيغة قائمة.")
+
+    # 3. Question count guard
+    if len(data["questions"]) == 0:
+        raise ValueError("الملف لا يحتوي على أي أسئلة.")
+    if len(data["questions"]) > MAX_QUESTIONS_PER_QUIZ:
+        raise ValueError(
+            f"عدد الأسئلة ({len(data['questions'])}) يتجاوز الحد المسموح ({MAX_QUESTIONS_PER_QUIZ} سؤال). "
+            "قسّم الكويز إلى ملفات أصغر."
+        )
+
+    # 4. Per-question validation
+    for i, q in enumerate(data["questions"], start=1):
+        if not isinstance(q, dict):
+            raise ValueError(f"السؤال رقم {i} ليس بصيغة صحيحة.")
+        if "question" not in q:
+            raise ValueError(f"السؤال رقم {i} لا يحتوي على حقل 'question'.")
+        if "options" not in q or not isinstance(q.get("options"), list) or len(q["options"]) < 2:
+            raise ValueError(f"السؤال رقم {i} يحتاج حقل 'options' بقائمة تحتوي خيارَين على الأقل.")
+        if "answer" not in q:
+            raise ValueError(f"السؤال رقم {i} لا يحتوي على حقل 'answer'.")
+
+
 # ─── JSON Handler ─────────────────────────────────────────────────────────────
 
 async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -59,6 +105,22 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if not msg_obj or not msg_obj.document: return
 
     doc = msg_obj.document
+
+    # ── Early size check before downloading ──────────────────────────────────
+    if doc.file_size and doc.file_size > MAX_JSON_FILE_SIZE_BYTES:
+        size_kb = doc.file_size // 1024
+        await send_clean_message(
+            context=context,
+            chat_id=update.effective_chat.id,
+            update=update,
+            text=(
+                f"❌ <b>حجم الملف كبير جداً</b> ({size_kb} KB).\n"
+                f"الحد المسموح هو <b>{MAX_JSON_FILE_SIZE_BYTES // 1024} KB</b>.\n"
+                "قسّم الكويز إلى ملفات أصغر وأرفعها بشكل منفصل."
+            )
+        )
+        return
+
     msg_id = await send_clean_message(
         context=context,
         chat_id=update.effective_chat.id,
@@ -76,14 +138,8 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
         with open(tmp_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        if "quiz_name" not in data and "name" not in data:
-            raise ValueError("الملف لا يحتوي على 'quiz_name' أو 'name'.")
-        if "questions" not in data:
-            raise ValueError("الملف لا يحتوي على 'questions'.")
-
-        for q in data["questions"]:
-            if "question" not in q or "options" not in q or "answer" not in q:
-                raise ValueError("تأكد من وجود question, options, answer في كل سؤال.")
+        # ── Centralised security + format validation ──────────────────────────
+        _validate_json_upload(doc, data)
 
         quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
 
