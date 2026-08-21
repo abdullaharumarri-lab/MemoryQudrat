@@ -726,6 +726,32 @@ def get_all_weak_questions(user_id: int = None) -> list:
     return [dict(r) for r in rows]
 
 
+def get_due_all_weak_questions_sorted(user_id: int = None) -> list:
+    """Returns all due weak questions sorted: newest added (highest id) first."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if user_id is not None:
+        cursor.execute(
+            """SELECT wq.*, q.name as quiz_name
+               FROM weak_questions wq
+               JOIN quizzes q ON wq.quiz_id = q.id
+               WHERE wq.user_id = ? AND wq.next_review_date <= date('now')
+               ORDER BY wq.id DESC""",
+            (user_id,),
+        )
+    else:
+        cursor.execute(
+            """SELECT wq.*, q.name as quiz_name
+               FROM weak_questions wq
+               JOIN quizzes q ON wq.quiz_id = q.id
+               WHERE wq.next_review_date <= date('now')
+               ORDER BY wq.id DESC"""
+        )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_all_weak_questions_sorted_for_practice(user_id: int = None) -> list:
     """Returns ALL weak questions sorted newest first, for practice."""
     conn = get_connection()
