@@ -185,16 +185,16 @@ def public_bank_view(cat_id: int = None, page: int = 1, user_id: int = None):
     Builds the message text and inline keyboard for browsing the public bank by category/folder.
     """
     subcats = db.get_categories(parent_id=cat_id)
-    quizzes = db.get_quizzes_by_category(category_id=cat_id, is_public=1)
-    
     cur_cat = db.get_category(cat_id) if cat_id else None
     
     if cur_cat:
         title_icon = cur_cat.get("icon", "📁")
         title_name = cur_cat["name"]
-        header_text = f"📂 <b>{title_icon} {html.escape(title_name)}</b>\n\nاختر مجلداً فرعياً أو كويزاً للبدء:\n"
+        header_text = f"📂 <b>{title_icon} {html.escape(title_name)}</b>\n\nاختر كويزاً للبدء أو تصفح المجلدات الفرعية:\n"
+        quizzes = db.get_quizzes_by_category(category_id=cat_id, is_public=1)
     else:
-        header_text = "📚 <b>بنك كويزات القدرات العام</b>\n\nتصفح الأقسام والمجلدات وابدأ التدريب الذكي 🧠:\n"
+        header_text = "📚 <b>بنك كويزات القدرات العام</b>\n\nاختر القسم الذي تريد التدرب عليه 🧠:\n"
+        quizzes = []  # Root screen shows ONLY folders!
 
     kb = []
 
@@ -239,7 +239,7 @@ def public_bank_view(cat_id: int = None, page: int = 1, user_id: int = None):
     # 4. Back navigation
     if cur_cat:
         parent_id = cur_cat.get("parent_id")
-        kb.append([InlineKeyboardButton("🔙 رجوع للمجلد السابق", callback_data=f"bank_cat_{parent_id or 0}_1")])
+        kb.append([InlineKeyboardButton("🔙 رجوع للأقسام", callback_data=f"bank_cat_{parent_id}_1" if parent_id else "public_bank_root")])
     else:
         kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
 
