@@ -502,10 +502,12 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif update.callback_query:
         cb_msg_id = update.callback_query.message.message_id if update.callback_query.message else None
-        # Clean all other messages in chat history leaving ONLY this edited Main Menu
-        if chat_id:
-            await clean_entire_chat(context, chat_id, keep_message_id=cb_msg_id)
+        # Instant smooth in-place edit (0ms latency, buttery smooth)
         await safe_edit(update.callback_query, text, kb)
+        # Clean all other messages in chat history in background
+        if chat_id:
+            import asyncio
+            asyncio.create_task(clean_entire_chat(context, chat_id, keep_message_id=cb_msg_id))
 
 
 async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
