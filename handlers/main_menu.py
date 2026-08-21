@@ -60,6 +60,33 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user and _is_rate_limited(user.id):
         return  # Silently ignore flood
 
+    # ── Admin Folder Handlers ─────────────────────────────────────────────────
+    if context.user_data.get("waiting_for_new_folder") is not None:
+        parent_id = context.user_data.pop("waiting_for_new_folder")
+        if user and is_admin(user.id):
+            cat_name = msg.strip()
+            cat_id = db.create_category(name=cat_name, parent_id=parent_id if parent_id != 0 else None)
+            await send_clean_message(
+                context, chat_id,
+                f"✅ تم إنشاء المجلد <b>{html.escape(cat_name)}</b> بنجاح!",
+                update=update,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📂 فتح المجلد", callback_data=f"bank_cat_{cat_id}_1")]])
+            )
+            return
+
+    if context.user_data.get("waiting_for_rename_folder") is not None:
+        cat_id = context.user_data.pop("waiting_for_rename_folder")
+        if user and is_admin(user.id):
+            new_name = msg.strip()
+            db.update_category_name(cat_id, new_name)
+            await send_clean_message(
+                context, chat_id,
+                f"✅ تم تغيير اسم المجلد إلى <b>{html.escape(new_name)}</b> بنجاح!",
+                update=update,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📂 العودة للمجلد", callback_data=f"bank_cat_{cat_id}_1")]])
+            )
+            return
+
     # Check if we are editing a question text
     q_id_edit = context.user_data.get("editing_q_text")
     if q_id_edit:
@@ -128,8 +155,8 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ─── Keyboards ────────────────────────────────────────────────────────────────
 
-def main_menu_keyboard():
-    session = db.get_session()
+def main_menu_keyboard(user_id: int = None):
+    session = db.get_session(user_id=user_id) if user_id else db.get_session()
     rows = []
     if session and session.get("question_ids") and session.get("current_index", 0) < len(session["question_ids"]):
         cur_q = session.get("current_index", 0) + 1
@@ -137,17 +164,87 @@ def main_menu_keyboard():
         rows.append([InlineKeyboardButton(f"▶️ استكمال الكويز ({cur_q}/{tot_q})", callback_data="resume_quiz")])
 
     rows.extend([
-        [InlineKeyboardButton("📋 رفع كويز JSON", callback_data="upload_json"),
-         InlineKeyboardButton("🔗 إضافة كويز كرابط", callback_data="upload_url")],
-        [InlineKeyboardButton("📚 كويزاتي", callback_data="my_quizzes")],
+        [
+            InlineKeyboardButton("📚 بنك الكويزات (العام)", callback_data="public_bank_root"),
+            InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes"),
+        ],
         [
             InlineKeyboardButton("🔁 مراجعات اليوم", callback_data="due_reviews"),
             InlineKeyboardButton("❌ الأسئلة الضعيفة", callback_data="weak_questions"),
         ],
         [InlineKeyboardButton("📅 جدول المراجعة", callback_data="review_schedule"),
          InlineKeyboardButton("📊 إحصائياتي", callback_data="weekly_stats")],
+        [InlineKeyboardButton("📋 رفع كويز JSON", callback_data="upload_json"),
+         InlineKeyboardButton("🔗 إضافة كويز كرابط", callback_data="upload_url")],
     ])
     return InlineKeyboardMarkup(rows)
+
+
+def public_bank_view(cat_id: int = None, page: int = 1, user_id: int = None):
+    """
+    Builds the message text and inline keyboard for browsing the public bank by category/folder.
+    """
+    subcats = db.get_categories(parent_id=cat_id)
+    quizzes = db.get_quizzes_by_category(category_id=cat_id, is_public=1)
+    
+    cur_cat = db.get_category(cat_id) if cat_id else None
+    
+    if cur_cat:
+        title_icon = cur_cat.get("icon", "📁")
+        title_name = cur_cat["name"]
+        header_text = f"📂 <b>{title_icon} {html.escape(title_name)}</b>\n\nاختر مجلداً فرعياً أو كويزاً للبدء:\n"
+    else:
+        header_text = "📚 <b>بنك كويزات القدرات العام</b>\n\nتصفح الأقسام والمجلدات وابدأ التدريب الذكي 🧠:\n"
+
+    kb = []
+
+    # 1. Subfolders (if any)
+    for sc in subcats:
+        count = db.get_category_quizzes_count(sc["id"])
+        icon = sc.get("icon", "📁")
+        kb.append([InlineKeyboardButton(f"{icon} {sc['name']} ({count} كويز)", callback_data=f"bank_cat_{sc['id']}_1")])
+
+    # 2. Quizzes inside this category with pagination
+    ITEMS_PER_PAGE = 10
+    total_q = len(quizzes)
+    if total_q > 0:
+        total_pages = (total_q + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        page = max(1, min(page, total_pages))
+        start = (page - 1) * ITEMS_PER_PAGE
+        end = start + ITEMS_PER_PAGE
+        page_quizzes = quizzes[start:end]
+
+        for q in page_quizzes:
+            kb.append([InlineKeyboardButton(f"📝 {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
+
+        # Pagination controls
+        nav_row = []
+        if page > 1:
+            nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"bank_cat_{cat_id or 0}_{page - 1}"))
+        if page < total_pages:
+            nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"bank_cat_{cat_id or 0}_{page + 1}"))
+        if nav_row:
+            kb.append(nav_row)
+
+    if not subcats and not quizzes:
+        header_text += "\n📭 هذا المجلد لا يحتوي على كويزات حالياً."
+
+    # 3. Admin Tools (if user is admin)
+    if user_id and is_admin(user_id):
+        admin_row = [InlineKeyboardButton("➕ إضافة مجلد هنا", callback_data=f"admin_add_cat_{cat_id or 0}")]
+        if cur_cat:
+            admin_row.append(InlineKeyboardButton("✏️ إدارة المجلد", callback_data=f"admin_edit_cat_{cat_id}"))
+        kb.append(admin_row)
+
+    # 4. Back navigation
+    if cur_cat:
+        parent_id = cur_cat.get("parent_id")
+        kb.append([InlineKeyboardButton("🔙 رجوع للمجلد السابق", callback_data=f"bank_cat_{parent_id or 0}_1")])
+    else:
+        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+
+    return header_text, InlineKeyboardMarkup(kb)
+
 
 
 def quizzes_keyboard(quizzes: list, page: int = 1):
@@ -210,18 +307,24 @@ def weak_quizzes_keyboard(quizzes_with_weak: list):
 # ─── Handlers ─────────────────────────────────────────────────────────────────
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id if user else None
+    if user:
+        db.save_or_update_user(user.id, user.username, user.full_name)
+
     text = (
         "👋 أهلاً بك في <b>MemoryQudrat</b>!\n\n"
         "نظام مراجعة ذكي باستخدام التكرار المتباعد 🧠\n"
         "اختر ما تريد:"
     )
+    kb = main_menu_keyboard(user_id=user_id)
     if update.message:
         await send_clean_message(
             context, update.effective_chat.id, text,
-            update=update, reply_markup=main_menu_keyboard()
+            update=update, reply_markup=kb
         )
     elif update.callback_query:
-        await safe_edit(update.callback_query, text, main_menu_keyboard())
+        await safe_edit(update.callback_query, text, kb)
 
 
 async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
@@ -332,6 +435,182 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         from handlers.quiz_handler import show_next_question
         await show_next_question(update, context)
 
+    # ── Public Bank Navigation ──
+    elif data == "public_bank_root" or data.startswith("bank_cat_"):
+        parts = data.split("_")
+        if data == "public_bank_root":
+            cat_id = None
+            page = 1
+        else:
+            raw_cat_id = int(parts[2])
+            cat_id = raw_cat_id if raw_cat_id != 0 else None
+            page = int(parts[3]) if len(parts) > 3 else 1
+
+        user = update.effective_user
+        text, kb = public_bank_view(cat_id=cat_id, page=page, user_id=user.id if user else None)
+        await safe_edit(query, text, kb)
+
+    # ── Public Bank Quiz Details ──
+    elif data.startswith("bank_quiz_"):
+        quiz_id = int(data.split("_")[-1])
+        quiz = db.get_quiz(quiz_id)
+        if not quiz:
+            await safe_edit(query, "❌ الكويز غير موجود.", InlineKeyboardMarkup(back_btn))
+            return
+
+        questions = db.get_questions(quiz_id)
+        cat = db.get_category(quiz.get("category_id")) if quiz.get("category_id") else None
+        cat_name = cat["name"] if cat else "عام"
+        user = update.effective_user
+
+        # Check if user already scheduled this quiz
+        reviews = db.get_all_quiz_reviews(user_id=user.id if user else 6099429826)
+        user_review = next((r for r in reviews if r["quiz_id"] == quiz_id), None)
+
+        status_text = "غير مضاف لجدول المراجعة اليومية ⚪"
+        if user_review:
+            days = days_until(user_review.get("next_review_date"))
+            lbl = stage_label(user_review.get("stage", 0))
+            status_text = f"مجدول ({lbl}) — موعده: {'اليوم!' if days <= 0 else f'بعد {days} يوم'} 🟢"
+
+        text = (
+            f"📋 <b>{html.escape(quiz['name'])}</b>\n\n"
+            f"📁 القسم: <b>{html.escape(cat_name)}</b>\n"
+            f"📝 عدد الأسئلة: <b>{len(questions)} سؤال</b>\n"
+            f"🧠 حالة التكرار المتباعد: <b>{status_text}</b>\n\n"
+            f"اختر ما تريد:"
+        )
+
+        kb = [
+            [InlineKeyboardButton("▶️ ابدأ الكويز (تجربة فورية)", callback_data=f"start_practice_{quiz_id}")],
+        ]
+        if not user_review:
+            kb.append([InlineKeyboardButton("🔁 إضافة لجدول مراجعاتي اليومية", callback_data=f"sched_pub_quiz_{quiz_id}")])
+        else:
+            kb.append([InlineKeyboardButton("▶️ بدء مراجعة مجدولة", callback_data=f"start_quiz_{quiz_id}")])
+
+        if user and is_admin(user.id):
+            kb.append([
+                InlineKeyboardButton("📂 نقل لمجلد", callback_data=f"admin_move_quiz_{quiz_id}"),
+                InlineKeyboardButton("🗑️ حذف من البنك", callback_data=f"delete_quiz_{quiz_id}")
+            ])
+
+        parent_cat_id = quiz.get("category_id") or 0
+        kb.append([InlineKeyboardButton("🔙 رجوع للمجلد", callback_data=f"bank_cat_{parent_cat_id}_1")])
+
+        await safe_edit(query, text, InlineKeyboardMarkup(kb))
+
+    # ── Schedule Public Quiz for User ──
+    elif data.startswith("sched_pub_quiz_"):
+        quiz_id = int(data.split("_")[-1])
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        riyadh_tz = pytz.timezone("Asia/Riyadh")
+        now_riyadh = datetime.now(riyadh_tz)
+        start_today = now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30)
+        db.schedule_first_review(quiz_id, user_id=u_id, start_today=start_today)
+
+        quiz = db.get_quiz(quiz_id)
+        name_safe = html.escape(quiz["name"]) if quiz else "الكويز"
+        timing_str = "اليوم الساعة 4:30 الفجر" if start_today else "غداً الساعة 4:30 الفجر"
+        await safe_edit(
+            query,
+            f"✅ <b>تمت إضافة الكويز لجدول مراجعاتك بنجاح!</b>\n\n"
+            f"📋 <b>{name_safe}</b>\n"
+            f"🔔 أول مراجعة ستصلك: <b>{timing_str}</b>\n\n"
+            f"يمكنك البدء بحله الآن كتجربة أولى أو العودة للقائمة.",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("▶️ ابدأ الكويز الآن", callback_data=f"start_practice_{quiz_id}")],
+                [InlineKeyboardButton("🔙 العودة للمجلد", callback_data=f"bank_cat_{quiz.get('category_id') or 0}_1")],
+            ])
+        )
+
+    # ── Admin Folder Actions ──
+    elif data.startswith("admin_add_cat_"):
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("❌ غير مصرح.", show_alert=True)
+            return
+        parent_id = int(data.split("_")[-1])
+        context.user_data["waiting_for_new_folder"] = parent_id
+        await safe_edit(
+            query,
+            "✍️ <b>إنشاء مجلد جديد</b>\n\nأرسل اسم المجلد الجديد الآن في رسالة نصية:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"bank_cat_{parent_id}_1")]])
+        )
+
+    elif data.startswith("admin_edit_cat_"):
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("❌ غير مصرح.", show_alert=True)
+            return
+        cat_id = int(data.split("_")[-1])
+        cat = db.get_category(cat_id)
+        cat_name = cat["name"] if cat else "المجلد"
+        await safe_edit(
+            query,
+            f"⚙️ <b>إدارة المجلد: {html.escape(cat_name)}</b>\n\nاختر الإجراء المطلوب:",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("✏️ تغيير اسم المجلد", callback_data=f"admin_rename_cat_{cat_id}")],
+                [InlineKeyboardButton("🗑️ حذف المجلد", callback_data=f"admin_del_cat_{cat_id}")],
+                [InlineKeyboardButton("🔙 رجوع للمجلد", callback_data=f"bank_cat_{cat_id}_1")],
+            ])
+        )
+
+    elif data.startswith("admin_rename_cat_"):
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("❌ غير مصرح.", show_alert=True)
+            return
+        cat_id = int(data.split("_")[-1])
+        context.user_data["waiting_for_rename_folder"] = cat_id
+        await safe_edit(
+            query,
+            "✍️ <b>تغيير اسم المجلد</b>\n\nأرسل الاسم الجديد للمجلد في رسالة نصية:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"bank_cat_{cat_id}_1")]])
+        )
+
+    elif data.startswith("admin_del_cat_"):
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("❌ غير مصرح.", show_alert=True)
+            return
+        cat_id = int(data.split("_")[-1])
+        db.delete_category(cat_id)
+        await safe_edit(
+            query,
+            "🗑️ تم حذف المجلد بنجاح.",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🔙 البنك العام", callback_data="public_bank_root")]])
+        )
+
+    elif data.startswith("admin_move_quiz_"):
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("❌ غير مصرح.", show_alert=True)
+            return
+        quiz_id = int(data.split("_")[-1])
+        cats = db.get_categories()
+        kb = []
+        for c in cats:
+            kb.append([InlineKeyboardButton(f"{c.get('icon', '📁')} {c['name']}", callback_data=f"admin_domove_{quiz_id}_{c['id']}")])
+        kb.append([InlineKeyboardButton("❌ إلغاء", callback_data=f"bank_quiz_{quiz_id}")])
+        await safe_edit(query, "📂 <b>اختر المجلد الذي تريد نقل هذا الكويز إليه:</b>", InlineKeyboardMarkup(kb))
+
+    elif data.startswith("admin_domove_"):
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("❌ غير مصرح.", show_alert=True)
+            return
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        cat_id = int(parts[3])
+        db.move_quiz_to_category(quiz_id, cat_id)
+        await safe_edit(
+            query,
+            "✅ تم نقل الكويز للمجلد بنجاح!",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عرض الكويز", callback_data=f"bank_quiz_{quiz_id}")]])
+        )
+
     # ── Upload JSON ──
     elif data == "upload_json":
         await safe_edit(
@@ -357,16 +636,30 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         if data.startswith("my_quizzes_page_"):
             page = int(data.split("_")[-1])
 
-        quizzes = db.get_all_quizzes()
+        user = update.effective_user
+        if user and is_admin(user.id):
+            quizzes = db.get_all_quizzes()
+            title_text = f"📚 <b>جميع الكويزات (لوحة الأدمن)</b> — {len(quizzes)} كويز"
+        else:
+            quizzes = db.get_user_private_quizzes(user.id if user else 0)
+            title_text = f"📁 <b>كويزاتي الخاصة</b> — {len(quizzes)} كويز"
+
         if not quizzes:
-            await safe_edit(query,
-                "📭 لا يوجد كويزات بعد!\n\nارفع ملف JSON لإنشاء أول كويز.",
-                InlineKeyboardMarkup(back_btn)
+            empty_msg = (
+                "📭 <b>لا توجد لديك كويزات خاصة بعد!</b>\n\n"
+                "• يمكنك تصفح <b>بنك الكويزات العام</b> لحل نماذج وتجميعات القدرات الجاهزة 📚\n"
+                "• أو رفع ملف JSON / رابط لإضافة كويزك الخاص 📋"
             )
+            empty_kb = [
+                [InlineKeyboardButton("📚 تصفح بنك الكويزات العام", callback_data="public_bank_root")],
+                [InlineKeyboardButton("📋 رفع كويز JSON", callback_data="upload_json")],
+                back_btn[0]
+            ]
+            await safe_edit(query, empty_msg, InlineKeyboardMarkup(empty_kb))
         else:
             keyboard, cur_page, total_pages = quizzes_keyboard(quizzes, page)
             await safe_edit(query,
-                f"📚 <b>كويزاتي</b> — {len(quizzes)} كويز (صفحة {cur_page}/{total_pages})",
+                f"{title_text} (صفحة {cur_page}/{total_pages})",
                 keyboard
             )
 

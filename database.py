@@ -347,10 +347,77 @@ def get_category(cat_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def update_category_intervals(cat_id: int, intervals_json: str):
+def update_category_name(cat_id: int, name: str, icon: str = None):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE categories SET intervals_json = ? WHERE id = ?", (intervals_json, cat_id))
+    if icon is not None:
+        cursor.execute("UPDATE categories SET name = ?, icon = ? WHERE id = ?", (name, icon, cat_id))
+    else:
+        cursor.execute("UPDATE categories SET name = ? WHERE id = ?", (name, cat_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_category(cat_id: int):
+    """Delete category and move its child quizzes to uncategorized / root."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE quizzes SET category_id = NULL WHERE category_id = ?", (cat_id,))
+    cursor.execute("UPDATE categories SET parent_id = NULL WHERE parent_id = ?", (cat_id,))
+    cursor.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_quizzes_by_category(category_id: int = None, user_id: int = None, is_public: int = 1) -> list:
+    """Returns quizzes belonging to a specific category."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if category_id is not None:
+        if user_id is not None:
+            cursor.execute(
+                """SELECT * FROM quizzes
+                   WHERE category_id = ? AND (is_public = ? OR owner_id = ?)
+                   ORDER BY id DESC""",
+                (category_id, is_public, user_id),
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM quizzes WHERE category_id = ? AND is_public = ? ORDER BY id DESC",
+                (category_id, is_public),
+            )
+    else:
+        # Uncategorized quizzes
+        if user_id is not None:
+            cursor.execute(
+                """SELECT * FROM quizzes
+                   WHERE category_id IS NULL AND (is_public = ? OR owner_id = ?)
+                   ORDER BY id DESC""",
+                (is_public, user_id),
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM quizzes WHERE category_id IS NULL AND is_public = ? ORDER BY id DESC",
+                (is_public,),
+            )
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_category_quizzes_count(category_id: int) -> int:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND is_public = 1", (category_id,))
+    cnt = cursor.fetchone()["cnt"]
+    conn.close()
+    return cnt
+
+
+def move_quiz_to_category(quiz_id: int, new_category_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE quizzes SET category_id = ? WHERE id = ?", (new_category_id, quiz_id))
     conn.commit()
     conn.close()
 

@@ -63,6 +63,10 @@ async def daily_reminder(context):
 
 async def start_command(update: Update, context):
     chat_id = update.effective_chat.id
+    user = update.effective_user
+    user_id = user.id if user else None
+    if user:
+        db.save_or_update_user(user.id, user.username, user.full_name)
     db.save_chat_id(chat_id)
     schedule_reminder(context.job_queue, chat_id)
     text = (
@@ -73,7 +77,7 @@ async def start_command(update: Update, context):
     from handlers.main_menu import main_menu_keyboard
     await send_clean_message(
         context, chat_id, text, update=update,
-        reply_markup=main_menu_keyboard()
+        reply_markup=main_menu_keyboard(user_id=user_id)
     )
 
 

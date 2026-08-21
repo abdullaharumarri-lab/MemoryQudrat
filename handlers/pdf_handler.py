@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 import database as db
 from utils import send_clean_message
-from config import MAX_JSON_FILE_SIZE_BYTES, MAX_QUESTIONS_PER_QUIZ
+from config import MAX_JSON_FILE_SIZE_BYTES, MAX_QUESTIONS_PER_QUIZ, is_admin
 
 logger = logging.getLogger(__name__)
 
@@ -190,8 +190,11 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
             
         else:
+            user = update.effective_user
+            is_pub = 1 if (user and is_admin(user.id)) else 0
+            owner_id = user.id if user else None
             quiz_name = data.get("quiz_name") or data.get("name", "كويز بدون اسم")
-            quiz_id = db.save_quiz_without_review(quiz_name, data["questions"])
+            quiz_id = db.save_quiz_without_review(quiz_name, data["questions"], owner_id=owner_id, is_public=is_pub)
             quiz = db.get_quiz(quiz_id)
             name_safe = html.escape(quiz.get('name', quiz_name)) if quiz else html.escape(quiz_name)
 
