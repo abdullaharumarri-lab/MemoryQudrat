@@ -510,6 +510,159 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asyncio.create_task(clean_entire_chat(context, chat_id, keep_message_id=cb_msg_id))
 
 
+async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils import clean_entire_chat, send_clean_message
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    u_id = user.id if user else 6099429826
+    reviews = db.get_due_quiz_reviews(user_id=u_id)
+    text = (
+        f"🔁 <b>مراجعات اليوم المستحقة</b> 🧠\n\n"
+        f"عدد الكويزات المستحقة لمراجعتها اليوم: <b>{len(reviews)}</b>\n\n"
+        f"المراجعة اليومية تضمن ترسيخ القوانين والنماذج في الذاكرة طويلة المدى 💪."
+    )
+    if not reviews:
+        kb = [[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]
+    else:
+        kb = [[InlineKeyboardButton(f"🔁 {r['quiz_name']} — {stage_label(r['stage'])}", callback_data=f"start_review_{r['id']}_{r['quiz_id']}")] for r in reviews]
+        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+    await clean_entire_chat(context, chat_id, extra_ids=[update.message.message_id] if update.message else None)
+    await send_clean_message(context, chat_id, text, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def weak_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils import clean_entire_chat, send_clean_message
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    u_id = user.id if user else 6099429826
+    weak_qs = db.get_all_weak_questions_sorted_for_practice(user_id=u_id)
+    kb = []
+    if weak_qs:
+        kb.append([InlineKeyboardButton(f"🔥 مراجعة كل الأسئلة الضعيفة ({len(weak_qs)})", callback_data="start_weak_all")])
+    kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+    text = f"❌ <b>بنك الأسئلة الضعيفة</b>\n\nإجمالي الأسئلة الضعيفة المسجلة: <b>{len(weak_qs)}</b> سؤال."
+    await clean_entire_chat(context, chat_id, extra_ids=[update.message.message_id] if update.message else None)
+    await send_clean_message(context, chat_id, text, reply_markup=InlineKeyboardMarkup(kb))
+
+
+def render_schedule_view(user_id: int, page: int = 1) -> tuple[str, InlineKeyboardMarkup]:
+    user_reviews = db.get_all_quiz_reviews(user_id=user_id)
+    back_btn = [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
+    if not user_reviews:
+        text = (
+            "📅 <b>جدول المراجعات فارغ حالياً!</b>\n\n"
+            "تصفح <b>بنك الكويزات العام</b> واختر أي كويز ترغب بجدولته في نظام التكرار المتباعد 🧠."
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📚 تصفح بنك الكويزات العام", callback_data="public_bank_root")],
+            back_btn
+        ])
+        return text, kb
+
+    ITEMS_PER_PAGE = 8
+    total_pages = (len(user_reviews) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(1, min(page, total_pages))
+    
+    start_idx = (page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_reviews = user_reviews[start_idx:end_idx]
+
+    lines = [
+        f"📅 <b>جدول مراجعاتي</b> (صفحة {page} من {total_pages})",
+        f"إجمالي الكويزات المجدولة: <b>{len(user_reviews)}</b> كويز",
+        "────────────────────"
+    ]
+
+    for item in page_reviews:
+        name_safe = html.escape(item.get("quiz_name", "كويز"))
+        stage = item.get("stage", 0) or 0
+        bar = "✅" * stage + "◻️" * (5 - stage)
+        
+        lines.append(f"📚 <b>{name_safe}</b>")
+        lines.append(f"📊 التقدم: {bar} ({stage}/5)")
+
+        if item.get("next_review_date"):
+            days = days_until(item["next_review_date"])
+            lbl = stage_label(stage)
+            if days <= 0:
+                lines.append(f"🔁 <b>{lbl}</b> — 🔴 <b>مستحقة اليوم!</b> ⚠️")
+            elif days == 1:
+                lines.append(f"🔁 <b>{lbl}</b> — 🟡 غداً 🔔")
+            else:
+                lines.append(f"🔁 <b>{lbl}</b> — ⏳ بعد {days} يوم")
+        else:
+            lines.append("✅ <b>اكتملت جميع مراحل المراجعة</b> 🎉")
+
+        lines.append("────────────────────")
+
+    kb = []
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"review_schedule_page_{page-1}"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"review_schedule_page_{page+1}"))
+    if nav_row:
+        kb.append(nav_row)
+
+    kb.append(back_btn)
+    return "\n".join(lines), InlineKeyboardMarkup(kb)
+
+
+async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils import clean_entire_chat, send_clean_message
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    u_id = user.id if user else 6099429826
+    text, kb = render_schedule_view(user_id=u_id, page=1)
+    await clean_entire_chat(context, chat_id, extra_ids=[update.message.message_id] if update.message else None)
+    await send_clean_message(context, chat_id, text, reply_markup=kb)
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils import clean_entire_chat, send_clean_message
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    u_id = user.id if user else 6099429826
+    stats = db.get_my_stats(user_id=u_id)
+    t = stats["total"]
+    c = stats["correct"]
+    w = stats["wrong"]
+    s = stats["sessions"]
+    pct = int((c / t) * 100) if t > 0 else 0
+
+    medal = "🏆" if pct >= 80 else ("👍" if pct >= 60 else "💪")
+    text = (
+        f"📊 <b>إحصائياتي الشخصية</b>\n\n"
+        f"📖 عدد الجلسات: <b>{s}</b>\n"
+        f"📝 إجمالي الأسئلة: <b>{t}</b>\n"
+        f"✅ صحيح: <b>{c}</b>  |  ❌ خطأ: <b>{w}</b>\n"
+        f"{medal} النسبة العامة: <b>{pct}%</b>\n"
+        f"❌ الأسئلة الضعيفة الحالية: <b>{stats['total_weak']}</b>"
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+    await clean_entire_chat(context, chat_id, extra_ids=[update.message.message_id] if update.message else None)
+    await send_clean_message(context, chat_id, text, reply_markup=kb)
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils import clean_entire_chat, send_clean_message
+    chat_id = update.effective_chat.id
+    text = (
+        "💡 <b>كيف يعمل نظام التكرار المتباعد في ذاكرة القدرات؟</b>\n\n"
+        "التكرار المتباعد (Spaced Repetition) هو تقنية علمية مثبتة لترسيخ المعلومات في الذاكرة طويلة المدى.\n\n"
+        "📅 <b>مراحل المراجعة الذكية:</b>\n"
+        "• <b>المرحلة 1:</b> بعد يوم واحد من حل الكويز.\n"
+        "• <b>المرحلة 2:</b> بعد 3 أيام.\n"
+        "• <b>المرحلة 3:</b> بعد 7 أيام (أسبوع).\n"
+        "• <b>المرحلة 4:</b> بعد 14 يوماً (أسبوعين).\n"
+        "• <b>المرحلة 5:</b> بعد 30 يوماً (شهر).\n\n"
+        "🌟 عند إتقانك للمرحلة الخامسة، تكون المعلومة قد ثبتت في ذاكرتك الدائمة!"
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+    await clean_entire_chat(context, chat_id, extra_ids=[update.message.message_id] if update.message else None)
+    await send_clean_message(context, chat_id, text, reply_markup=kb)
+
+
 async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     # ── Admin-only command ────────────────────────────────────────────────────
     user = update.effective_user

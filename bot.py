@@ -141,6 +141,25 @@ async def post_init(application):
             scheduled.add(chat_id)
     logger.info("Personalized reminders restored for %s users.", len(scheduled))
 
+    # ── Telegram Menu Button (≡) & Commands Setup ─────────────────────────────
+    from telegram import BotCommand, MenuButtonCommands
+    commands = [
+        BotCommand("start", "🏠 القائمة الرئيسية"),
+        BotCommand("menu", "📋 فتح القائمة الرئيسية"),
+        BotCommand("today", "🔁 مراجعات اليوم المستحقة"),
+        BotCommand("weak", "❌ الأسئلة الضعيفة"),
+        BotCommand("schedule", "📅 جدول مراجعاتي"),
+        BotCommand("stats", "📊 إحصائياتي وتقدمي"),
+        BotCommand("help", "💡 شرح نظام التكرار المتباعد"),
+        BotCommand("admin", "👑 لوحة تحكم المشرف (للأدمن)"),
+    ]
+    try:
+        await application.bot.set_my_commands(commands)
+        await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Bot commands and ≡ Menu button set successfully.")
+    except Exception as e:
+        logger.warning("Could not set bot commands: %s", e)
+
 
 def main():
     db.init_db()
@@ -182,9 +201,15 @@ def main():
     )
 
     from handlers.admin_handler import admin_command, admin_broadcast_command
+    from handlers.main_menu import today_command, weak_command, schedule_command, stats_command, help_command
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", main_menu_handler))
+    app.add_handler(CommandHandler("today", today_command))
+    app.add_handler(CommandHandler("weak", weak_command))
+    app.add_handler(CommandHandler("schedule", schedule_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("template", template_command))
     app.add_handler(CommandHandler("fixstage", fixstage_command))
     app.add_handler(CommandHandler("admin", admin_command))
@@ -197,7 +222,7 @@ def main():
         filters.Document.FileExtension("json"), json_document_handler
     ))
 
-    from handlers.creation_handler import handle_media_upload
+    from handlers.creation_handler import handle_media_upload, handle_incoming_poll
     app.add_handler(MessageHandler(
         filters.PHOTO, handle_media_upload
     ))
@@ -205,6 +230,11 @@ def main():
         filters.Document.ALL & ~filters.Document.MimeType("application/json") & ~filters.Document.FileExtension("json"), handle_media_upload
     ))
     
+    # ── Native Telegram Poll / Quiz Handler ──────────────────────────────────
+    app.add_handler(MessageHandler(
+        filters.POLL, handle_incoming_poll
+    ))
+
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, url_text_handler
     ))
