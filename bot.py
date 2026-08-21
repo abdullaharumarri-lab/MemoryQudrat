@@ -96,6 +96,8 @@ async def start_command(update: Update, context):
         f"اختر ما تريد من القائمة بالأسفل:"
     )
     from handlers.main_menu import main_menu_keyboard
+    from utils import clean_entire_chat
+    clean_entire_chat(context, chat_id)
     await send_clean_message(
         context, chat_id, text, update=update,
         reply_markup=main_menu_keyboard(user_id=user_id)

@@ -248,6 +248,17 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_weak_questions_user_due ON weak_questions(user_id, next_review_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_log_user ON quiz_sessions_log(user_id, session_date)")
 
+    # ── 10. Chat History IDs Table for Complete Chat Cleaning ──
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_history_ids (
+            chat_id INTEGER,
+            message_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chat_id, message_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_chat_id ON chat_history_ids(chat_id)")
+
     # ── Default categories setup (only if table is completely empty) ──
     cursor.execute("SELECT COUNT(*) FROM categories")
     if cursor.fetchone()[0] == 0:
@@ -1286,3 +1297,57 @@ def get_all_chat_ids() -> list:
     rows = cursor.fetchall()
     conn.close()
     return [int(row["value"]) for row in rows]
+
+
+# ─── Chat Message Tracking & Bulk Cleaning ────────────────────────────────────
+
+def track_chat_message(chat_id: int, message_id: int):
+    """Record a message_id (user or bot) for this chat so it can be cleaned up later."""
+    if not chat_id or not message_id:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT OR IGNORE INTO chat_history_ids (chat_id, message_id) VALUES (?, ?)",
+            (chat_id, message_id),
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def get_and_clear_chat_messages(chat_id: int, keep_message_id: int = None) -> list[int]:
+    """Retrieve all tracked message IDs for this chat (except keep_message_id) and clear them from DB."""
+    if not chat_id:
+        return []
+    conn = get_connection()
+    cursor = conn.cursor()
+    if keep_message_id:
+        cursor.execute("SELECT message_id FROM chat_history_ids WHERE chat_id = ? AND message_id != ?", (chat_id, keep_message_id))
+    else:
+        cursor.execute("SELECT message_id FROM chat_history_ids WHERE chat_id = ?", (chat_id,))
+    rows = cursor.fetchall()
+    msg_ids = [row["message_id"] for row in rows]
+    
+    if keep_message_id:
+        cursor.execute("DELETE FROM chat_history_ids WHERE chat_id = ? AND message_id != ?", (chat_id, keep_message_id))
+    else:
+        cursor.execute("DELETE FROM chat_history_ids WHERE chat_id = ?", (chat_id,))
+    conn.commit()
+    conn.close()
+    return msg_ids
+
+
+def clear_chat_history(chat_id: int):
+    """Clear all tracked message IDs for a chat."""
+    if not chat_id:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM chat_history_ids WHERE chat_id = ?", (chat_id,))
+    conn.commit()
+    conn.close()
+

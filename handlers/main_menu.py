@@ -475,22 +475,32 @@ def weak_quizzes_keyboard(quizzes_with_weak: list):
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    chat_id = update.effective_chat.id if update.effective_chat else (user.id if user else None)
     user_id = user.id if user else None
     if user:
         db.save_or_update_user(user.id, user.username, user.full_name)
 
     text = (
         "👋 أهلاً بك في بوت <b>ذاكرة القدرات</b>!\n\n"
-        "نظام مراجعة ذكي باستخدام التكرار المتباعد 🧠\n"
+        "نظام مراجعة ذكي باستخدام التكرار المتباعد 📚\n"
         "اختر ما تريد:"
     )
     kb = main_menu_keyboard(user_id=user_id)
+    
+    from utils import clean_entire_chat
+
     if update.message:
+        # Delete user command message immediately & wipe all other messages
+        clean_entire_chat(context, chat_id)
         await send_clean_message(
-            context, update.effective_chat.id, text,
+            context, chat_id, text,
             update=update, reply_markup=kb
         )
     elif update.callback_query:
+        cb_msg_id = update.callback_query.message.message_id if update.callback_query.message else None
+        # Clean all other messages in chat history leaving ONLY this edited Main Menu
+        if chat_id:
+            clean_entire_chat(context, chat_id, keep_message_id=cb_msg_id)
         await safe_edit(update.callback_query, text, kb)
 
 
