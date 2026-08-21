@@ -971,7 +971,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         await safe_edit(query, text, kb)
 
     # ── Manual Quiz Builder Callbacks ──
-    elif data in ("create_manual_quiz", "manual_add_q", "manual_dashboard", "manual_save_quiz") or data.startswith("manual_set_correct_"):
+    elif data.startswith("manual_") or data == "create_manual_quiz":
         from handlers.creation_handler import handle_manual_quiz_callback
         await handle_manual_quiz_callback(update, context)
 

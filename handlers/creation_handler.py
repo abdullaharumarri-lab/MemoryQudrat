@@ -96,19 +96,8 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
     elif data == "manual_cancel":
         context.user_data.pop("manual_quiz", None)
         context.user_data.pop("manual_state", None)
-        chat_id = update.effective_chat.id
-        try:
-            # Remove custom reply keyboard
-            rm_msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text="تم إلغاء منشئ الكويزات.",
-                reply_markup=ReplyKeyboardRemove()
-            )
-            asyncio.create_task(rm_msg.delete())
-        except Exception:
-            pass
-        from handlers.main_menu import main_menu_handler
-        await main_menu_handler(update, context)
+        text, kb = build_create_upload_menu()
+        await safe_edit(query, text, kb)
 
     elif data == "manual_save_quiz":
         manual_quiz = context.user_data.pop("manual_quiz", None)
