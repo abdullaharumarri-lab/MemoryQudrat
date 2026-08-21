@@ -141,9 +141,11 @@ async def post_init(application):
             scheduled.add(chat_id)
     logger.info("Personalized reminders restored for %s users.", len(scheduled))
 
-    # ── Telegram Menu Button (≡) & Commands Setup ─────────────────────────────
-    from telegram import BotCommand, MenuButtonCommands
-    commands = [
+    # ── Telegram Menu Button (≡) & Commands Setup with Admin Scoping ──────────
+    from telegram import BotCommand, MenuButtonCommands, BotCommandScopeDefault, BotCommandScopeChat
+    from config import ADMIN_USER_IDS
+
+    public_commands = [
         BotCommand("start", "🏠 القائمة الرئيسية"),
         BotCommand("menu", "📋 فتح القائمة الرئيسية"),
         BotCommand("today", "🔁 مراجعات اليوم المستحقة"),
@@ -151,12 +153,25 @@ async def post_init(application):
         BotCommand("schedule", "📅 جدول مراجعاتي"),
         BotCommand("stats", "📊 إحصائياتي وتقدمي"),
         BotCommand("help", "💡 شرح نظام التكرار المتباعد"),
-        BotCommand("admin", "👑 لوحة تحكم المشرف (للأدمن)"),
     ]
+
+    admin_commands = public_commands + [
+        BotCommand("admin", "👑 لوحة تحكم المشرف"),
+    ]
+
     try:
-        await application.bot.set_my_commands(commands)
+        # 1. Default commands for all regular users (WITHOUT /admin)
+        await application.bot.set_my_commands(public_commands, scope=BotCommandScopeDefault())
+
+        # 2. Admin-only commands with /admin visible ONLY in admin private chats
+        for admin_id in ADMIN_USER_IDS:
+            try:
+                await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
+            except Exception as e:
+                logger.debug("Could not set admin commands for %s: %s", admin_id, e)
+
         await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-        logger.info("Bot commands and ≡ Menu button set successfully.")
+        logger.info("Bot commands with admin scoping and ≡ Menu button set successfully.")
     except Exception as e:
         logger.warning("Could not set bot commands: %s", e)
 

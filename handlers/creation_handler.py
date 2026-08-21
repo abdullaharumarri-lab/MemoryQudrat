@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def get_poll_keyboard() -> ReplyKeyboardMarkup:
     """Returns the native Telegram quiz creation keyboard."""
     return ReplyKeyboardMarkup(
-        [[KeyboardButton("📝 إنشاء سؤال (الواجهة الرسمية)", request_poll=KeyboardButtonPollType(type="quiz"))]],
+        [[KeyboardButton("📝 إنشاء سؤال", request_poll=KeyboardButtonPollType(type="quiz"))]],
         resize_keyboard=True,
         one_time_keyboard=False,
     )
@@ -31,13 +31,13 @@ def build_create_upload_menu() -> tuple[str, InlineKeyboardMarkup]:
     text = (
         "➕ <b>إنشاء ورفع كويز / مادة تدريبية</b> 🧠\n\n"
         "اختر الطريقة التي تفضلها لإضافة كويز أو مادة للمراجعة في التكرار المتباعد:\n\n"
-        "1️⃣ <b>إنشاء كويز يدوياً (الواجهة الرسمية):</b> كتابة الأسئلة والخيارات مباشرة عبر واجهة تيليجرام ✍️\n"
+        "1️⃣ <b>إنشاء كويز يدوياً:</b> كتابة الأسئلة والخيارات مباشرة ✍️\n"
         "2️⃣ <b>رفع ملف JSON:</b> استيراد كويز جاهز بصيغة JSON 📋\n"
         "3️⃣ <b>إضافة رابط اختبار:</b> إدراج رابط Google Forms أو منصة أخرى 🔗\n"
         "4️⃣ <b>إدراج ملف / صورة / مذكرة:</b> تكرار ملخصات، صور قوانين، أو مستندات 📁\n"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✍️ 1- إنشاء كويز يدوياً (الواجهة الرسمية)", callback_data="create_manual_quiz")],
+        [InlineKeyboardButton("✍️ 1- إنشاء كويز يدوياً", callback_data="create_manual_quiz")],
         [InlineKeyboardButton("📋 2- رفع كويز عبر ملف JSON", callback_data="upload_json")],
         [InlineKeyboardButton("🔗 3- إضافة كويز كرابط (Forms)", callback_data="upload_url")],
         [InlineKeyboardButton("📁 4- إدراج صورة / ملف / ملخص للتكرار", callback_data="upload_media_note")],
@@ -54,7 +54,7 @@ def build_manual_quiz_dashboard(context: ContextTypes.DEFAULT_TYPE) -> tuple[str
     questions = manual_quiz.get("questions", [])
     
     text = (
-        f"✍️ <b>منشئ الكويزات الذكي (الواجهة الرسمية)</b>\n\n"
+        f"✍️ <b>منشئ الكويزات</b>\n\n"
         f"📌 اسم الكويز: <b>{html.escape(name)}</b>\n"
         f"📝 عدد الأسئلة المضافة: <b>{len(questions)}</b> سؤال\n\n"
     )
@@ -67,7 +67,7 @@ def build_manual_quiz_dashboard(context: ContextTypes.DEFAULT_TYPE) -> tuple[str
 
     text += (
         "👇 <b>كيف تضيف سؤالاً؟</b>\n"
-        "اضغط على زر <b>[📝 إنشاء سؤال]</b> بالأسفل لفتح نافذة تيليجرام الرسمية لكتابة السؤال وخياراته وتحديد الإجابة الصحيحة مباشرة! ✨"
+        "اضغط على زر <b>[📝 إنشاء سؤال]</b> بالأسفل لفتح نافذة تيليجرام لكتابة السؤال وخياراته وتحديد الإجابة الصحيحة مباشرة! ✨"
     )
 
     buttons = []
@@ -292,7 +292,7 @@ async def handle_creation_text_input(update: Update, context: ContextTypes.DEFAU
         poll_kb = get_poll_keyboard()
         poll_prompt = await context.bot.send_message(
             chat_id=chat_id,
-            text="👇 <b>اضغط على زر [📝 إنشاء سؤال (الواجهة الرسمية)] بالأسفل لبدء إضافة الأسئلة:</b>",
+            text="👇 <b>اضغط على زر [📝 إنشاء سؤال] بالأسفل لبدء إضافة الأسئلة:</b>",
             reply_markup=poll_kb,
             parse_mode="HTML"
         )
