@@ -56,6 +56,9 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
 
+    if update.message:
+        db.track_chat_message(chat_id, update.message.message_id)
+
     # ── Rate limiting guard ───────────────────────────────────────────────────
     if user and _is_rate_limited(user.id):
         return  # Silently ignore flood
@@ -487,20 +490,21 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     kb = main_menu_keyboard(user_id=user_id)
     
-    from utils import clean_entire_chat
+    from utils import clean_entire_chat, send_clean_message, safe_edit
 
     if update.message:
-        # Delete user command message immediately & wipe all other messages
-        clean_entire_chat(context, chat_id)
+        user_msg_id = update.message.message_id
+        # Delete user command message immediately & wipe all previous messages
+        await clean_entire_chat(context, chat_id, extra_ids=[user_msg_id])
         await send_clean_message(
             context, chat_id, text,
-            update=update, reply_markup=kb
+            reply_markup=kb
         )
     elif update.callback_query:
         cb_msg_id = update.callback_query.message.message_id if update.callback_query.message else None
         # Clean all other messages in chat history leaving ONLY this edited Main Menu
         if chat_id:
-            clean_entire_chat(context, chat_id, keep_message_id=cb_msg_id)
+            await clean_entire_chat(context, chat_id, keep_message_id=cb_msg_id)
         await safe_edit(update.callback_query, text, kb)
 
 

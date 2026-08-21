@@ -121,9 +121,13 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
+    chat_id = update.effective_chat.id
+    if update.message:
+        db.track_chat_message(chat_id, update.message.message_id)
+
     msg_id = await send_clean_message(
         context=context,
-        chat_id=update.effective_chat.id,
+        chat_id=chat_id,
         update=update,
         text="⏳ جاري معالجة الملف..."
     )

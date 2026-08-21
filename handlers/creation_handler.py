@@ -154,6 +154,9 @@ async def handle_media_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
     u_id = user.id if user else 6099429826
     msg = update.message
 
+    if msg:
+        db.track_chat_message(chat_id, msg.message_id)
+
     if msg.photo:
         file_id = msg.photo[-1].file_id
         caption = msg.caption or "صورة مراجعة وتلخيص 📸"
