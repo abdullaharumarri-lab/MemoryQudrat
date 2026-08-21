@@ -24,17 +24,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def schedule_reminder(job_queue, chat_id: int):
+def schedule_reminder(job_queue, chat_id: int, hour: int = None, minute: int = None):
     if job_queue is None: return
     for job in job_queue.get_jobs_by_name(f"reminder_{chat_id}"):
         job.schedule_removal()
+
+    if hour is None or minute is None:
+        user = db.get_user(chat_id)
+        if user:
+            hour = user.get("reminder_hour", 4)
+            minute = user.get("reminder_minute", 30)
+        else:
+            hour = 4
+            minute = 30
+
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     job_queue.run_daily(
         daily_reminder,
-        time=time(4, 30, tzinfo=riyadh_tz),
+        time=time(hour, minute, tzinfo=riyadh_tz),
         data=chat_id,
         name=f"reminder_{chat_id}",
     )
+    logger.info("Scheduled daily reminder for chat_id=%s at %02d:%02d Riyadh time", chat_id, hour, minute)
 
 
 async def daily_reminder(context):
@@ -70,10 +81,17 @@ async def start_command(update: Update, context):
         db.save_or_update_user(user.id, user.username, user.full_name)
     db.save_chat_id(chat_id)
     schedule_reminder(context.job_queue, chat_id)
+
+    user_name = user.first_name if user and user.first_name else "صديقنا"
     text = (
-        "👋 أهلاً بك في <b>MemoryQudrat</b>!\n\n"
-        "نظام مراجعة ذكي باستخدام التكرار المتباعد 🧠\n"
-        "اختر ما تريد:"
+        f"👋 أهلاً بك يا <b>{html.escape(user_name)}</b> في <b>MemoryQudrat</b>! 🌟\n\n"
+        f"منصتك الذكية للتدريب على اختبار <b>القدرات (كمي ولفظي)</b> باستخدام تقنية <b>التكرار المتباعد</b> لترسيخ الأفكار والقوانين في الذاكرة طويلة المدى 🧠.\n\n"
+        f"✨ <b>كيف تبدأ؟</b>\n"
+        f"1️⃣ اضغط <b>«📚 بنك الكويزات (العام)»</b> لاختيار نموذج والبدء بالتدريب.\n"
+        f"2️⃣ اضغط <b>«🔁 إضافة لجدول مراجعاتي»</b> ليتولى البوت تذكيرك بالموعد المناسب لتثبيت حفظك.\n"
+        f"3️⃣ أخطاؤك تُحفظ تلقائياً في <b>«❌ الأسئلة الضعيفة»</b> لتكرارها حتى تتقنها.\n"
+        f"4️⃣ يمكنك تخصيص وقت تذكيرك اليومي من <b>«⚙️ الإعدادات»</b>.\n\n"
+        f"اختر ما تريد من القائمة بالأسفل:"
     )
     from handlers.main_menu import main_menu_keyboard
     await send_clean_message(
@@ -103,10 +121,20 @@ async def error_handler(update, context):
 
 async def post_init(application):
     db.clear_session()
-    logger.info("Cleared stale session.")
+    logger.info("Cleared stale sessions.")
+    users = db.get_all_users()
+    scheduled = set()
+    for u in users:
+        uid = u["user_id"]
+        h = u.get("reminder_hour", 4)
+        m = u.get("reminder_minute", 30)
+        schedule_reminder(application.job_queue, uid, hour=h, minute=m)
+        scheduled.add(uid)
     for chat_id in db.get_all_chat_ids():
-        schedule_reminder(application.job_queue, chat_id)
-    logger.info("Reminders restored.")
+        if chat_id not in scheduled:
+            schedule_reminder(application.job_queue, chat_id)
+            scheduled.add(chat_id)
+    logger.info("Personalized reminders restored for %s users.", len(scheduled))
 
 
 def main():

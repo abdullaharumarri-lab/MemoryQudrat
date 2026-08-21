@@ -87,6 +87,54 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+    # Check if waiting for custom reminder time
+    if context.user_data.get("waiting_for_custom_reminder"):
+        context.user_data.pop("waiting_for_custom_reminder", None)
+        user = update.effective_user
+        u_id = user.id if user else chat_id
+        
+        # Match HH:MM format
+        m = re.match(r"^(\d{1,2})[:.](\d{2})$", msg.strip())
+        if m:
+            hour = int(m.group(1))
+            minute = int(m.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                db.update_user_reminder(u_id, hour, minute)
+                from bot import schedule_reminder
+                schedule_reminder(context.job_queue, u_id, hour=hour, minute=minute)
+                
+                period = "ص" if hour < 12 else "م"
+                disp_h = hour if 1 <= hour <= 12 else (hour - 12 if hour > 12 else 12)
+                time_str = f"{disp_h}:{minute:02d} {period}"
+                
+                text = (
+                    f"✅ <b>تم تحديث وقت التذكير اليومي بنجاح!</b>\n\n"
+                    f"⏰ الموعد الجديد: <b>{time_str}</b> (بتوقيت الرياض 🇸🇦)\n"
+                    f"سيصلك تذكيرك اليومي بمراجعاتك في هذا الموعد يومياً."
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings_menu")],
+                    [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+                ])
+                await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
+                return
+        
+        # Invalid format
+        text = (
+            "❌ <b>صيغة الوقت غير صحيحة!</b>\n\n"
+            "يرجى إرسال الوقت بصيغة <code>HH:MM</code> بنظام 24 ساعة.\n"
+            "أمثلة:\n"
+            "• <code>06:00</code> (الساعة 6 صباحاً)\n"
+            "• <code>18:30</code> (الساعة 6:30 مساءً)\n"
+            "• <code>21:00</code> (الساعة 9 مساءً)"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✍️ إعادة المحاولة", callback_data="set_rem_custom")],
+            [InlineKeyboardButton("🔙 الإعدادات", callback_data="settings_menu")],
+        ])
+        await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
+        return
+
     # Check if we are editing a question text
     q_id_edit = context.user_data.get("editing_q_text")
     if q_id_edit:
@@ -172,10 +220,14 @@ def main_menu_keyboard(user_id: int = None):
             InlineKeyboardButton("🔁 مراجعات اليوم", callback_data="due_reviews"),
             InlineKeyboardButton("❌ الأسئلة الضعيفة", callback_data="weak_questions"),
         ],
-        [InlineKeyboardButton("📅 جدول المراجعة", callback_data="review_schedule"),
-         InlineKeyboardButton("📊 إحصائياتي", callback_data="weekly_stats")],
-        [InlineKeyboardButton("📋 رفع كويز JSON", callback_data="upload_json"),
-         InlineKeyboardButton("🔗 إضافة كويز كرابط", callback_data="upload_url")],
+        [
+            InlineKeyboardButton("📅 جدول المراجعة", callback_data="review_schedule"),
+            InlineKeyboardButton("📊 إحصائياتي", callback_data="weekly_stats"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings_menu"),
+            InlineKeyboardButton("📋 رفع كويز JSON", callback_data="upload_json"),
+        ],
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -662,6 +714,118 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"{title_text} (صفحة {cur_page}/{total_pages})",
                 keyboard
             )
+
+    # ── Settings Menu ──
+    elif data == "settings_menu":
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        user_row = db.get_user(u_id)
+        h = user_row.get("reminder_hour", 4) if user_row else 4
+        m = user_row.get("reminder_minute", 30) if user_row else 30
+        
+        period = "ص" if h < 12 else "م"
+        disp_h = h if 1 <= h <= 12 else (h - 12 if h > 12 else 12)
+        time_str = f"{disp_h}:{m:02d} {period}"
+        name_safe = html.escape(user.full_name if user else "صديقنا")
+        
+        text = (
+            f"⚙️ <b>إعدادات الحساب والتذكير</b>\n\n"
+            f"👤 الطالب: <b>{name_safe}</b>\n"
+            f"🆔 المعرّف: <code>{u_id}</code>\n"
+            f"⏰ موعد التذكير اليومي: <b>{time_str}</b> (بتوقيت الرياض 🇸🇦)\n\n"
+            f"اختر الإجراء المطلوب:"
+        )
+        kb = [
+            [InlineKeyboardButton("⏰ تغيير وقت التذكير اليومي", callback_data="settings_reminder_time")],
+            [InlineKeyboardButton("🧠 كيف يعمل التكرار المتباعد؟", callback_data="settings_how_it_works")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        ]
+        await safe_edit(query, text, InlineKeyboardMarkup(kb))
+
+    # ── Settings: Choose Reminder Time ──
+    elif data == "settings_reminder_time":
+        text = (
+            "⏰ <b>تخصيص وقت التذكير اليومي</b>\n\n"
+            "اختر أحد المواعيد المقترحة أو حدد وقتاً مخصصاً يناسب جدولك اليومي:\n"
+            "<i>(جميع المواعيد محسوبة بتوقيت الرياض 🇸🇦)</i>"
+        )
+        kb = [
+            [
+                InlineKeyboardButton("🌅 الفجر (4:30 ص)", callback_data="set_rem_4_30"),
+                InlineKeyboardButton("☀️ الظهر (2:00 م)", callback_data="set_rem_14_0"),
+            ],
+            [
+                InlineKeyboardButton("🌇 العصر (5:00 م)", callback_data="set_rem_17_0"),
+                InlineKeyboardButton("🌙 المساء (9:00 م)", callback_data="set_rem_21_0"),
+            ],
+            [
+                InlineKeyboardButton("✍️ تحديد وقت مخصص آخر", callback_data="set_rem_custom"),
+            ],
+            [
+                InlineKeyboardButton("🔙 الإعدادات", callback_data="settings_menu"),
+            ]
+        ]
+        await safe_edit(query, text, InlineKeyboardMarkup(kb))
+
+    # ── Settings: Set Preset Reminder Time ──
+    elif data.startswith("set_rem_") and data != "set_rem_custom":
+        parts = data.split("_")
+        hour = int(parts[2])
+        minute = int(parts[3])
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        
+        db.update_user_reminder(u_id, hour, minute)
+        from bot import schedule_reminder
+        schedule_reminder(context.job_queue, u_id, hour=hour, minute=minute)
+        
+        period = "ص" if hour < 12 else "م"
+        disp_h = hour if 1 <= hour <= 12 else (hour - 12 if hour > 12 else 12)
+        time_str = f"{disp_h}:{minute:02d} {period}"
+        
+        text = (
+            f"✅ <b>تم ضبط وقت التذكير اليومي بنجاح!</b>\n\n"
+            f"⏰ موعدك الجديد: <b>{time_str}</b> (بتوقيت الرياض 🇸🇦)\n"
+            f"سنقوم بتذكيرك يومياً بمراجعاتك وأسئلتك الضعيفة في هذا الموعد لتثبيت حفظك 💪"
+        )
+        kb = [
+            [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings_menu")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        ]
+        await safe_edit(query, text, InlineKeyboardMarkup(kb))
+
+    # ── Settings: Custom Time Prompt ──
+    elif data == "set_rem_custom":
+        context.user_data["waiting_for_custom_reminder"] = True
+        text = (
+            "✍️ <b>تحديد وقت تذكير مخصص</b>\n\n"
+            "أرسل الوقت الذي يناسبك بنظام 24 ساعة في رسالة نصية (مثال: <code>06:00</code> أو <code>16:45</code> أو <code>22:30</code>):\n\n"
+            "<i>(بتوقيت الرياض 🇸🇦)</i>"
+        )
+        kb = [[InlineKeyboardButton("❌ إلغاء", callback_data="settings_reminder_time")]]
+        await safe_edit(query, text, InlineKeyboardMarkup(kb))
+
+    # ── Settings: How Spaced Repetition Works ──
+    elif data == "settings_how_it_works":
+        text = (
+            "🧠 <b>كيف يعمل نظام التكرار المتباعد في MemoryQudrat؟</b>\n\n"
+            "يعتمد البوت على <b>منحنى النسيان العلمي (Ebbinghaus Forgetting Curve)</b>:\n\n"
+            "📅 <b>مراحل تكرار الكويزات:</b>\n"
+            "• <b>المرحلة 1:</b> بعد يوم واحد (1 day)\n"
+            "• <b>المرحلة 2:</b> بعد 3 أيام (3 days)\n"
+            "• <b>المرحلة 3:</b> بعد أسبوع (7 days)\n"
+            "• <b>المرحلة 4:</b> بعد أسبوعين (14 days)\n"
+            "• <b>المرحلة 5:</b> بعد شهر (30 days)\n\n"
+            "❌ <b>نظام معالجة نقاط الضعف:</b>\n"
+            "كل سؤال تخطئ فيه يتم إدراجه فوراً في <b>«❌ الأسئلة الضعيفة»</b> ويتكرر تلقائياً حتى تجيبه بشكل صحيح ويتقدم في المراحل ليثبت تماماً في ذاكرتك.\n\n"
+            "🎯 <b>سر الحصول على 95+ :</b>\n"
+            "التزم بحل «🔁 مراجعات اليوم» أولاً بأول ولا تدع المراجعات تتراكم!"
+        )
+        kb = [
+            [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings_menu")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        ]
+        await safe_edit(query, text, InlineKeyboardMarkup(kb))
 
     # ── Quiz menu ──
     elif data.startswith("quiz_menu_"):
