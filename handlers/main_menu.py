@@ -1232,9 +1232,12 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         await start_quiz_session(update, context, quiz_id, session_type="weakpractice")
 
     # ── Review schedule ──
-    elif data.startswith("review_schedule"):
-        parts = data.split("_")
-        page = int(parts[2]) if len(parts) > 2 else 1
+    elif data == "review_schedule" or data.startswith("review_schedule_"):
+        try:
+            page = int(data.split("_")[-1])
+        except (ValueError, TypeError):
+            page = 1
+
         user = update.effective_user
         u_id = user.id if user else 6099429826
         
@@ -1251,33 +1254,42 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return
 
-        ITEMS_PER_PAGE = 10
+        ITEMS_PER_PAGE = 8
         total_pages = (len(user_reviews) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-        if page > total_pages: page = total_pages
-        if page < 1: page = 1
+        page = max(1, min(page, total_pages))
         
         start_idx = (page - 1) * ITEMS_PER_PAGE
         end_idx = start_idx + ITEMS_PER_PAGE
         page_reviews = user_reviews[start_idx:end_idx]
 
-        lines = [f"📅 <b>جدول مراجعاتي</b> (صفحة {page} من {total_pages})", ""]
+        lines = [
+            f"📅 <b>جدول مراجعاتي</b> (صفحة {page} من {total_pages})",
+            f"إجمالي الكويزات المجدولة: <b>{len(user_reviews)}</b> كويز",
+            "────────────────────"
+        ]
 
         for item in page_reviews:
             name_safe = html.escape(item.get("quiz_name", "كويز"))
-            lines.append("──────────────────")
+            stage = item.get("stage", 0) or 0
+            bar = "✅" * stage + "◻️" * (5 - stage)
+            
             lines.append(f"📚 <b>{name_safe}</b>")
+            lines.append(f"📊 التقدم: {bar} ({stage}/5)")
 
             if item.get("next_review_date"):
                 days = days_until(item["next_review_date"])
-                lbl = stage_label(item.get("stage", 0))
+                lbl = stage_label(stage)
                 if days <= 0:
-                    lines.append(f"🔁 {lbl}: <b>مستحقة اليوم!</b> ⚠️")
+                    lines.append(f"🔁 <b>{lbl}</b> — 🔴 <b>مستحقة اليوم!</b> ⚠️")
                 elif days == 1:
-                    lines.append(f"🔁 {lbl}: غداً 🔔")
+                    lines.append(f"🔁 <b>{lbl}</b> — 🟡 غداً 🔔")
                 else:
-                    lines.append(f"🔁 {lbl}: بعد {days} يوم ⏳")
+                    lines.append(f"🔁 <b>{lbl}</b> — ⏳ بعد {days} يوم")
+            else:
+                lines.append("✅ <b>اكتملت جميع مراحل المراجعة</b> 🎉")
 
-        lines.append("──────────────────")
+            lines.append("────────────────────")
+
         kb = []
         nav_row = []
         if page > 1:
