@@ -1,6 +1,7 @@
 import socket
 import logging
 import pytz
+import html
 from datetime import time
 
 from telegram import Update
