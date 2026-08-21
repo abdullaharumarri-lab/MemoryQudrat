@@ -483,7 +483,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         for qid in correct_ids:
             if qid in all_weak_map:
                 db.advance_weak_question(all_weak_map[qid]["id"])
-        sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
+        sr_text = f"✅ تم تثبيت إجاباتك وجدولة التكرار اليومي لـ {len(correct_ids)} سؤال (محفوظة دائماً وتتكرر يومياً)."
 
     elif session_type == "practice":
         sr_text = "🎮 وضع التجربة — لم يتم احتساب هذه الجلسة في المراجعات."

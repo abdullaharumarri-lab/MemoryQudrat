@@ -981,50 +981,25 @@ def get_quizzes_with_weak_questions(user_id: int = None) -> list:
 
 
 def advance_weak_question(weak_id: int):
-    """Move weak question to next stage or keep daily looping."""
-    from spaced_repetition import next_review_date, DEFAULT_REVIEW_INTERVALS
+    """Advance weak question for daily spaced repetition (repeats daily, never deleted)."""
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT wq.*, q.category_id 
-        FROM weak_questions wq 
-        JOIN quizzes q ON wq.quiz_id = q.id 
-        WHERE wq.id = ?
-    """, (weak_id,))
+    cursor.execute("SELECT * FROM weak_questions WHERE id = ?", (weak_id,))
     row = cursor.fetchone()
     if not row:
         conn.close()
         return
         
     wq = dict(row)
-    
-    intervals = DEFAULT_REVIEW_INTERVALS
-    if wq.get("category_id"):
-        cursor.execute("SELECT intervals_json FROM categories WHERE id = ?", (wq["category_id"],))
-        cat_row = cursor.fetchone()
-        if cat_row:
-            try:
-                intervals = json.loads(cat_row["intervals_json"])
-            except Exception:
-                pass
+    new_stage = (wq.get("stage", 0) or 0) + 1
+    # Schedule for tomorrow so weak questions repeat daily
+    next_date = (date.today() + timedelta(days=1)).isoformat()
 
-    new_stage = wq["stage"] + 1
-
-    if new_stage >= len(intervals):
-        # Never delete weak questions. Once they finish spaced repetition, keep them on a 1-day interval.
-        next_date = date.today() + timedelta(days=1)
-        cursor.execute(
-            "UPDATE weak_questions SET next_review_date = ? WHERE id = ?",
-            (next_date.isoformat(), weak_id),
-        )
-    else:
-        new_date_str = next_review_date(new_stage, wq["next_review_date"], intervals=intervals)
-        cursor.execute(
-            "UPDATE weak_questions SET stage = ?, next_review_date = ? WHERE id = ?",
-            (new_stage, new_date_str, weak_id),
-        )
-
+    cursor.execute(
+        "UPDATE weak_questions SET stage = ?, next_review_date = ? WHERE id = ?",
+        (new_stage, next_date, weak_id),
+    )
     conn.commit()
     conn.close()
 
