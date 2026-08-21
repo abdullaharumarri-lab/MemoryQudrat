@@ -631,6 +631,51 @@ def get_quiz(quiz_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def copy_quiz_to_user(quiz_id: int, user_id: int) -> int:
+    """Clone a public quiz and its questions to the user's private library."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,))
+    orig = cursor.fetchone()
+    if not orig:
+        conn.close()
+        return 0
+
+    orig_dict = dict(orig)
+    name = orig_dict["name"]
+    url = orig_dict.get("url")
+
+    # Insert new private quiz for this user
+    cursor.execute(
+        "INSERT INTO quizzes (name, url, category_id, owner_id, is_public) VALUES (?, ?, NULL, ?, 0)",
+        (name, url, user_id),
+    )
+    new_quiz_id = cursor.lastrowid
+
+    # Copy questions if it's not a URL/media quiz
+    cursor.execute("SELECT * FROM questions WHERE quiz_id = ?", (quiz_id,))
+    questions = cursor.fetchall()
+    for q in questions:
+        q_dict = dict(q)
+        cursor.execute(
+            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                new_quiz_id,
+                q_dict["question_text"],
+                q_dict["options"],
+                q_dict["correct_answer"],
+                q_dict.get("explanation", ""),
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    # Schedule first review for this user
+    schedule_first_review(new_quiz_id, user_id=user_id, start_today=True)
+    return new_quiz_id
+
+
 def delete_quiz(quiz_id: int, user_id: int = None):
     """
     Delete a quiz. If user_id is provided and user is not admin,

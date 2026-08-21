@@ -328,30 +328,42 @@ def public_bank_view(cat_id: int = None, page: int = 1, user_id: int = None):
     return header_text, InlineKeyboardMarkup(kb)
 
 
-def my_quizzes_view(folder_id: int = None, page: int = 1, user_id: int = None):
+def my_quizzes_view(folder_id: int = None, page: int = 1, user_id: int = None, show_all: bool = False):
     """
     Builds the message text and keyboard for browsing personal private quizzes and personal folders.
     """
-    subfolders = db.get_categories(parent_id=folder_id, user_id=user_id, is_public=0)
-    cur_folder = db.get_category(folder_id) if folder_id else None
-    
-    if cur_folder:
-        title_name = cur_folder.get("name", "مجلد")
-        header_text = f"📂 <b>مجلد: {html.escape(title_name)}</b>\n\nاختر كويزاً للبدء أو تصفح المجلدات الفرعية:\n"
-        quizzes = db.get_quizzes_by_category(category_id=folder_id, user_id=user_id, is_public=0)
+    if show_all:
+        quizzes = db.get_user_private_quizzes(user_id) if user_id else []
+        subfolders = []
+        cur_folder = None
+        header_text = f"📚 <b>جميع كويزاتي الخاصة</b> — ({len(quizzes)} كويز)\n\nاختر أي كويز للبدء أو نقله لأحد مجلداتك:\n"
     else:
-        header_text = "📁 <b>كويزاتي ومجلداتي الخاصة</b> 🧠\n\nتصفح مجلداتك وكويزاتك الخاصة، أو أنشئ مجلداً جديداً:\n"
-        quizzes = db.get_quizzes_by_category(category_id=None, user_id=user_id, is_public=0)
+        subfolders = db.get_categories(parent_id=folder_id, user_id=user_id, is_public=0)
+        cur_folder = db.get_category(folder_id) if folder_id else None
+        
+        if cur_folder:
+            title_name = cur_folder.get("name", "مجلد")
+            header_text = f"📂 <b>مجلد: {html.escape(title_name)}</b>\n\nاختر كويزاً للبدء أو تصفح المجلدات الفرعية:\n"
+            quizzes = db.get_quizzes_by_category(category_id=folder_id, user_id=user_id, is_public=0)
+        else:
+            header_text = "📁 <b>كويزاتي ومجلداتي الخاصة</b> 🧠\n\nتصفح مجلداتك وكويزاتك الخاصة، أو أنشئ مجلداً جديداً:\n"
+            quizzes = db.get_quizzes_by_category(category_id=None, user_id=user_id, is_public=0)
 
     kb = []
 
-    # 1. Subfolders
+    # 1. Top Button for All Quizzes (in Root)
+    if not show_all and folder_id is None and user_id:
+        all_private = db.get_user_private_quizzes(user_id)
+        if all_private:
+            kb.append([InlineKeyboardButton(f"📚 كل كويزاتي الخاصة ({len(all_private)} كويز)", callback_data="my_all_quizzes_1")])
+
+    # 2. Subfolders
     for sf in subfolders:
         count = db.get_category_quizzes_count(sf["id"], user_id=user_id)
         icon = sf.get("icon", "📁")
         kb.append([InlineKeyboardButton(f"{icon} {sf['name']} ({count} كويز)", callback_data=f"my_cat_{sf['id']}_1")])
 
-    # 2. Quizzes inside this folder with pagination
+    # 3. Quizzes inside this view with pagination
     ITEMS_PER_PAGE = 8
     total_q = len(quizzes)
     if total_q > 0:
@@ -365,31 +377,35 @@ def my_quizzes_view(folder_id: int = None, page: int = 1, user_id: int = None):
             kb.append([InlineKeyboardButton(f"📝 {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
 
         nav_row = []
+        page_prefix = "my_all_quizzes_" if show_all else f"my_cat_{folder_id or 0}_"
         if page > 1:
-            nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"my_cat_{folder_id or 0}_{page - 1}"))
+            nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"{page_prefix}{page - 1}"))
         if page < total_pages:
-            nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"my_cat_{folder_id or 0}_{page + 1}"))
+            nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"{page_prefix}{page + 1}"))
         if nav_row:
             kb.append(nav_row)
 
     if not subfolders and not quizzes:
-        header_text += "\n📭 لا توجد كويزات في هذا المجلد حالياً.\n• اضغط (➕ إنشاء مجلد خاص) لإنشاء تصنيف جديد.\n• أو (➕ إنشاء / رفع كويز) لإضافة كويز جديد."
+        header_text += "\n📭 لا توجد كويزات هنا حالياً.\n• اضغط (➕ إنشاء مجلد خاص) لإنشاء تصنيف جديد.\n• أو (➕ إنشاء / رفع كويز) لإضافة كويز جديد."
 
-    # 3. Action Buttons
-    action_row = [
-        InlineKeyboardButton("➕ إنشاء مجلد خاص", callback_data=f"my_new_folder_{folder_id or 0}"),
-        InlineKeyboardButton("➕ إنشاء / رفع كويز", callback_data="create_upload_menu"),
-    ]
-    kb.append(action_row)
+    # 4. Action Buttons
+    if not show_all:
+        action_row = [
+            InlineKeyboardButton("➕ إنشاء مجلد خاص", callback_data=f"my_new_folder_{folder_id or 0}"),
+            InlineKeyboardButton("➕ إنشاء / رفع كويز", callback_data="create_upload_menu"),
+        ]
+        kb.append(action_row)
 
-    if cur_folder:
-        kb.append([
-            InlineKeyboardButton("✏️ إعادة تسمية المجلد", callback_data=f"my_rename_folder_{folder_id}"),
-            InlineKeyboardButton("🗑️ حذف هذا المجلد", callback_data=f"my_del_folder_{folder_id}"),
-        ])
+        if cur_folder:
+            kb.append([
+                InlineKeyboardButton("✏️ إعادة تسمية المجلد", callback_data=f"my_rename_folder_{folder_id}"),
+                InlineKeyboardButton("🗑️ حذف هذا المجلد", callback_data=f"my_del_folder_{folder_id}"),
+            ])
 
-    # 4. Back navigation
-    if cur_folder:
+    # 5. Back navigation
+    if show_all:
+        kb.append([InlineKeyboardButton("🔙 رجوع للمجلدات", callback_data="my_quizzes")])
+    elif cur_folder:
         parent_id = cur_folder.get("parent_id")
         kb.append([InlineKeyboardButton("🔙 رجوع للمجلد السابق", callback_data=f"my_cat_{parent_id}_1" if parent_id else "my_quizzes")])
     else:
@@ -639,6 +655,9 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             kb.append([InlineKeyboardButton("🔁 إضافة لجدول مراجعاتي اليومية", callback_data=f"sched_pub_quiz_{quiz_id}")])
         else:
             kb.append([InlineKeyboardButton("▶️ بدء مراجعة مجدولة", callback_data=f"start_quiz_{quiz_id}")])
+
+        if quiz.get("is_public") == 1:
+            kb.append([InlineKeyboardButton("📥 إضافة إلى كويزاتي الخاصة", callback_data=f"copy_to_my_quizzes_{quiz_id}")])
 
         is_owner = (user and quiz.get("owner_id") == user.id and not quiz.get("is_public"))
         if is_owner:
@@ -905,6 +924,37 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
                 [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
             ])
         )
+
+    # ── Browse All Private Quizzes ──
+    elif data.startswith("my_all_quizzes_"):
+        page = int(data.split("_")[-1])
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        text, kb = my_quizzes_view(folder_id=None, page=page, user_id=u_id, show_all=True)
+        await safe_edit(query, text, kb)
+
+    # ── Copy Public Quiz to Private Library ──
+    elif data.startswith("copy_to_my_quizzes_"):
+        quiz_id = int(data.split("_")[-1])
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        new_quiz_id = db.copy_quiz_to_user(quiz_id, user_id=u_id)
+        
+        quiz = db.get_quiz(quiz_id)
+        name_safe = html.escape(quiz["name"]) if quiz else "الكويز"
+        text = (
+            f"✅ <b>تمت إضافة الكويز إلى كويزاتك الخاصة بنجاح!</b>\n\n"
+            f"📋 <b>{name_safe}</b>\n\n"
+            f"تم نسخه إلى مكتبتك الخاصة وجدولته في مراجعاتك اليومية 🧠.\n"
+            f"يمكنك الآن نقله إلى أي من مجلداتك الخاصة أو البدء بحله فوراً."
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📁 نقل لمجلد خاص", callback_data=f"my_move_quiz_{new_quiz_id}")],
+            [InlineKeyboardButton("▶️ ابدأ الكويز الآن", callback_data=f"start_practice_{new_quiz_id}")],
+            [InlineKeyboardButton("📁 فتح كويزاتي الخاصة", callback_data="my_quizzes")],
+            [InlineKeyboardButton("🔙 العودة للمجلد العام", callback_data=f"bank_cat_{quiz.get('category_id') or 0}_1")],
+        ])
+        await safe_edit(query, text, kb)
 
     # ── Settings Menu ──
     elif data == "settings_menu":

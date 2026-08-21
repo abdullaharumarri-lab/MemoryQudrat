@@ -191,10 +191,15 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             
         else:
             user = update.effective_user
+            u_id = user.id if user else 6099429826
             is_pub = 1 if (user and is_admin(user.id)) else 0
-            owner_id = user.id if user else None
+            owner_id = u_id
             quiz_name = data.get("quiz_name") or data.get("name", "كويز بدون اسم")
             quiz_id = db.save_quiz_without_review(quiz_name, data["questions"], owner_id=owner_id, is_public=is_pub)
+            
+            # Schedule first review for this user in Spaced Repetition
+            db.schedule_first_review(quiz_id, user_id=u_id, start_today=True)
+            
             quiz = db.get_quiz(quiz_id)
             name_safe = html.escape(quiz.get('name', quiz_name)) if quiz else html.escape(quiz_name)
 
@@ -210,7 +215,7 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
                         real_idx = int(idx) - 1
                         if 0 <= real_idx < total_q:
                             q = saved_questions[real_idx]
-                            db.add_or_reset_weak_question(quiz_id, q["id"])
+                            db.add_or_reset_weak_question(quiz_id, q["id"], user_id=u_id)
                             wrong_count += 1
                     except (ValueError, TypeError):
                         continue
@@ -223,44 +228,42 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 wrong_note = ""
 
             text = (
-                f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
+                f"✅ <b>تمت إضافة الكويز وجدولته بنجاح!</b>\n\n"
                 f"📋 <b>{name_safe}</b>\n"
                 f"📝 {len(data['questions'])} سؤال{wrong_note}\n\n"
-                f"في أي قسم تريد وضع هذا الكويز؟"
+                f"تمت جدولة هذا الكويز في نظام <b>التكرار المتباعد</b> لتصلك مراجعاته الدورية 🧠.\n"
+                f"هل ترغب بنقله إلى أحد مجلداتك؟"
             )
 
-            cats = db.get_categories()
+            cats = db.get_categories(user_id=u_id, is_public=is_pub)
             kb = []
             for c in cats:
-                kb.append([InlineKeyboardButton(f"📁 {c['name']}", callback_data=f"setcat_{quiz_id}_{c['id']}")])
+                callback_target = f"setcat_{quiz_id}_{c['id']}" if is_pub else f"my_set_quiz_cat_{quiz_id}_{c['id']}"
+                kb.append([InlineKeyboardButton(f"📁 {c['name']}", callback_data=callback_target)])
             
+            kb.append([InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_practice_{quiz_id}")])
+            if not is_pub:
+                kb.append([InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")])
+            kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+
             keyboard = InlineKeyboardMarkup(kb)
 
-        if msg_id:
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=msg_id,
-                text=text,
-                reply_markup=keyboard,
-                parse_mode="HTML"
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=text,
-                reply_markup=keyboard,
-                parse_mode="HTML"
-            )
+        chat_id = update.effective_chat.id
+        from utils import send_clean_message
+        await send_clean_message(context, chat_id, text, update=update, reply_markup=keyboard)
 
     except json.JSONDecodeError:
         err = "❌ <b>خطأ:</b> ملف JSON غير صالح. تأكد من الصيغة."
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=err, parse_mode="HTML")
+        from utils import send_clean_message
+        await send_clean_message(context, update.effective_chat.id, err, update=update)
     except ValueError as e:
         err = f"❌ <b>خطأ:</b> {str(e)}"
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=err, parse_mode="HTML")
+        from utils import send_clean_message
+        await send_clean_message(context, update.effective_chat.id, err, update=update)
     except Exception as e:
         err = f"❌ <b>حدث خطأ غير متوقع:</b> {str(e)}"
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=err, parse_mode="HTML")
+        from utils import send_clean_message
+        await send_clean_message(context, update.effective_chat.id, err, update=update)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
