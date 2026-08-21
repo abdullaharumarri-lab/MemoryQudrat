@@ -125,46 +125,53 @@ async def error_handler(update, context):
 
 
 async def post_init(application):
-    db.clear_session()
-    logger.info("Cleared stale sessions.")
-    users = db.get_all_users()
-    scheduled = set()
-    for u in users:
-        uid = u["user_id"]
-        h = u.get("reminder_hour", 4)
-        m = u.get("reminder_minute", 30)
-        schedule_reminder(application.job_queue, uid, hour=h, minute=m)
-        scheduled.add(uid)
-    for chat_id in db.get_all_chat_ids():
-        if chat_id not in scheduled:
-            schedule_reminder(application.job_queue, chat_id)
-            scheduled.add(chat_id)
-    logger.info("Personalized reminders restored for %s users.", len(scheduled))
-
-    # ── Telegram Menu Button (≡) & Commands Setup with Admin Scoping ──────────
-    from telegram import BotCommand, MenuButtonCommands, BotCommandScopeDefault, BotCommandScopeChat
-    from config import ADMIN_USER_IDS
-
-    public_commands = [
-        BotCommand("start", "🏠 القائمة الرئيسية"),
-        BotCommand("menu", "📋 فتح القائمة الرئيسية"),
-        BotCommand("today", "🔁 مراجعات اليوم المستحقة"),
-        BotCommand("weak", "❌ الأسئلة الضعيفة"),
-        BotCommand("schedule", "📅 جدول مراجعاتي"),
-        BotCommand("stats", "📊 إحصائياتي وتقدمي"),
-        BotCommand("help", "💡 شرح نظام التكرار المتباعد"),
-    ]
-
-    admin_commands = public_commands + [
-        BotCommand("admin", "👑 لوحة تحكم المشرف"),
-    ]
+    try:
+        db.clear_session()
+        logger.info("Cleared stale sessions.")
+    except Exception as e:
+        logger.warning("Error clearing sessions: %s", e)
 
     try:
+        users = db.get_all_users()
+        scheduled = set()
+        for u in users:
+            uid = u["user_id"]
+            h = u.get("reminder_hour", 4)
+            m = u.get("reminder_minute", 30)
+            schedule_reminder(application.job_queue, uid, hour=h, minute=m)
+            scheduled.add(uid)
+        for chat_id in db.get_all_chat_ids():
+            if chat_id not in scheduled:
+                schedule_reminder(application.job_queue, chat_id)
+                scheduled.add(chat_id)
+        logger.info("Personalized reminders restored for %s users.", len(scheduled))
+    except Exception as e:
+        logger.warning("Error scheduling reminders in post_init: %s", e)
+
+    # ── Telegram Menu Button (≡) & Commands Setup with Admin Scoping ──────────
+    try:
+        from telegram import BotCommand, MenuButtonCommands, BotCommandScopeDefault, BotCommandScopeChat
+        from config import ADMIN_IDS
+
+        public_commands = [
+            BotCommand("start", "🏠 القائمة الرئيسية"),
+            BotCommand("menu", "📋 فتح القائمة الرئيسية"),
+            BotCommand("today", "🔁 مراجعات اليوم المستحقة"),
+            BotCommand("weak", "❌ الأسئلة الضعيفة"),
+            BotCommand("schedule", "📅 جدول مراجعاتي"),
+            BotCommand("stats", "📊 إحصائياتي وتقدمي"),
+            BotCommand("help", "💡 شرح نظام التكرار المتباعد"),
+        ]
+
+        admin_commands = public_commands + [
+            BotCommand("admin", "👑 لوحة تحكم المشرف"),
+        ]
+
         # 1. Default commands for all regular users (WITHOUT /admin)
         await application.bot.set_my_commands(public_commands, scope=BotCommandScopeDefault())
 
         # 2. Admin-only commands with /admin visible ONLY in admin private chats
-        for admin_id in ADMIN_USER_IDS:
+        for admin_id in ADMIN_IDS:
             try:
                 await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
             except Exception as e:
@@ -173,7 +180,7 @@ async def post_init(application):
         await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
         logger.info("Bot commands with admin scoping and ≡ Menu button set successfully.")
     except Exception as e:
-        logger.warning("Could not set bot commands: %s", e)
+        logger.warning("Could not set bot commands in post_init: %s", e)
 
 
 def main():

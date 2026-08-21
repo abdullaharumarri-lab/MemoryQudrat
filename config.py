@@ -9,6 +9,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Admin user IDs — hardcoded trusted admins + env var
 ADMIN_USER_ID = 6099429826
 ADMIN_IDS = {ADMIN_USER_ID}
+ADMIN_USER_IDS = ADMIN_IDS
 _env_admin = os.getenv("ADMIN_USER_ID")
 if _env_admin:
     try:
