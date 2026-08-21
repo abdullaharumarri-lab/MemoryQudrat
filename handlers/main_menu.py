@@ -228,8 +228,9 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     # ── Admin-only command ────────────────────────────────────────────────────
     user = update.effective_user
     if not user or not is_admin(user.id):
+        err_msg = f"❌ هذا الأمر متاح للمشرف فقط.\n(معرّفك: <code>{user.id if user else 'غير معروف'}</code>)"
         if update.message:
-            await update.message.reply_text("❌ هذا الأمر متاح للمشرف فقط.")
+            await update.message.reply_text(err_msg, parse_mode="HTML")
         elif update.callback_query:
             await update.callback_query.answer("❌ غير مصرح.", show_alert=True)
         logger.warning("Unauthorized fixstage attempt by user_id=%s", user.id if user else "unknown")

@@ -6,16 +6,25 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Admin user ID — only this user can access admin commands and upload to public bank
-_admin_id_raw = os.getenv("ADMIN_USER_ID", "6099429826")
-try:
-    ADMIN_USER_ID = int(_admin_id_raw)
-except (ValueError, TypeError):
-    ADMIN_USER_ID = 6099429826
+# Admin user IDs — hardcoded trusted admins + env var
+ADMIN_IDS = {6099429826}
+_env_admin = os.getenv("ADMIN_USER_ID")
+if _env_admin:
+    try:
+        val = int(_env_admin)
+        if val != 0:
+            ADMIN_IDS.add(val)
+    except (ValueError, TypeError):
+        pass
 
 def is_admin(user_id: int) -> bool:
     """Return True only if the given user_id is the registered admin."""
-    return ADMIN_USER_ID != 0 and user_id == ADMIN_USER_ID
+    if not user_id:
+        return False
+    try:
+        return int(user_id) in ADMIN_IDS
+    except (ValueError, TypeError):
+        return False
 
 # Private channel ID — bot only works inside this channel
 # Set this in .env: ALLOWED_CHANNEL_ID=-100xxxxxxxxxx
