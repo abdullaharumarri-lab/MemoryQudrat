@@ -233,6 +233,9 @@ def main_menu_keyboard(user_id: int = None):
             InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings_menu"),
             InlineKeyboardButton("📋 رفع كويز JSON", callback_data="upload_json"),
         ],
+        [
+            InlineKeyboardButton("📢 قناة التحديثات والشروحات", url="https://t.me/MemoryQudrat"),
+        ],
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -748,6 +751,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         kb = [
             [InlineKeyboardButton("⏰ تغيير وقت التذكير اليومي", callback_data="settings_reminder_time")],
             [InlineKeyboardButton("🧠 كيف يعمل التكرار المتباعد؟", callback_data="settings_how_it_works")],
+            [InlineKeyboardButton("📢 قناة التحديثات والشروحات", url="https://t.me/MemoryQudrat")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ]
         await safe_edit(query, text, InlineKeyboardMarkup(kb))

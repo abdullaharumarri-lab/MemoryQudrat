@@ -91,6 +91,7 @@ async def start_command(update: Update, context):
         f"2️⃣ اضغط <b>«🔁 إضافة لجدول مراجعاتي»</b> ليتولى البوت تذكيرك بالموعد المناسب لتثبيت حفظك.\n"
         f"3️⃣ أخطاؤك تُحفظ تلقائياً في <b>«❌ الأسئلة الضعيفة»</b> لتكرارها حتى تتقنها.\n"
         f"4️⃣ يمكنك تخصيص وقت تذكيرك اليومي من <b>«⚙️ الإعدادات»</b>.\n\n"
+        f"📢 <b>قناة الشروحات والتحديثات:</b> <a href=\"https://t.me/MemoryQudrat\">@MemoryQudrat</a>\n\n"
         f"اختر ما تريد من القائمة بالأسفل:"
     )
     from handlers.main_menu import main_menu_keyboard
