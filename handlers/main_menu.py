@@ -807,10 +807,12 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         now = datetime.now(riyadh_tz)
         today_date = now.date().isoformat()
         
-        reviews = db.get_due_quiz_reviews()
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        reviews = db.get_due_quiz_reviews(user_id=u_id)
         if not reviews:
             await safe_edit(query,
-                "✅ لا توجد مراجعات اليوم!\n\nاستمر بالعمل الجيد 💪",
+                "✅ لا توجد مراجعات مستحقة اليوم في حسابك!\n\nاستمر بالعمل الجيد 💪",
                 InlineKeyboardMarkup(back_btn)
             )
             return
@@ -841,7 +843,6 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         if not kb:
             kb = back_btn
         elif not open_reviews:
-            # If we didn't add due_reviews_keyboard, we need to add the back button
             kb.append(back_btn[0])
 
         await safe_edit(
@@ -880,7 +881,8 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
     # ── Done URL review ──
     elif data.startswith("done_url_review_"):
         review_id = int(data.split("_")[-1])
-        db.advance_quiz_review(review_id)
+        user = update.effective_user
+        db.advance_quiz_review(review_id, user_id=user.id if user else 6099429826)
         await safe_edit(
             query,
             "✅ <b>ممتاز!</b> تم تسجيل حلك وجدولة الموعد القادم بنجاح.",
@@ -901,17 +903,18 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Weak questions ──
     elif data == "weak_questions":
-        all_weak = db.get_all_weak_questions()
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        all_weak = db.get_all_weak_questions(user_id=u_id)
         if not all_weak:
             await safe_edit(query,
-                "✅ لا توجد أسئلة ضعيفة مسجلة!\n\nأداؤك ممتاز 🌟",
+                "✅ لا توجد أسئلة ضعيفة مسجلة في حسابك!\n\nأداؤك ممتاز 🌟",
                 InlineKeyboardMarkup(back_btn)
             )
             return
         
-        # Count ALL weak questions (not just due)
         all_weak_count = len(all_weak)
-        all_due_weak = db.get_due_all_weak_questions_sorted()
+        all_due_weak = db.get_due_all_weak_questions_sorted(user_id=u_id)
         due_count = len(all_due_weak)
         
         quiz_map = {}
@@ -943,7 +946,9 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
     # ── Weak Menu ──
     elif data.startswith("weak_menu_"):
         quiz_id = int(data.split("_")[-1])
-        all_weak = db.get_all_weak_questions()
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        all_weak = db.get_all_weak_questions(user_id=u_id)
         
         quiz_weak = [wq for wq in all_weak if wq["quiz_id"] == quiz_id]
         if not quiz_weak:
@@ -988,7 +993,9 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             "05": "مايو", "06": "يونيو", "07": "يوليو", "08": "أغسطس",
             "09": "سبتمبر", "10": "أكتوبر", "11": "نوفمبر", "12": "ديسمبر"
         }
-        stats = db.get_my_stats()
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        stats = db.get_my_stats(user_id=u_id)
         t = stats["total"]
         c = stats["correct"]
         w = stats["wrong"]
@@ -1000,10 +1007,10 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         elif pct >= 40: medal = "📚"
         else: medal = "💪"
 
-        lines = [f"📊 <b>إحصائياتي</b>\n"]
+        lines = [f"📊 <b>إحصائياتي الشخصية</b>\n"]
 
         if t == 0:
-            lines.append("لا توجد بيانات بعد. ابدأ بالمراجعة لتظهر إحصائياتك! 💪")
+            lines.append("لا توجد بيانات بعد. ابدأ بحل الكويزات لتظهر إحصائياتك هنا! 💪")
         else:
             lines += [
                 f"────── جملة عامة ──────",
@@ -1011,7 +1018,6 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"📝 إجمالي الأسئلة: <b>{t}</b>",
                 f"✅ صحيح: <b>{c}</b>  |  ❌ خطأ: <b>{w}</b>",
                 f"{medal} النسبة العامة: <b>{pct}%</b>",
-                f"🖥 الكويزات المجدولة: <b>{stats['total_quizzes']}</b>",
                 f"❌ الأسئلة الضعيفة الحالية: <b>{stats['total_weak']}</b>",
             ]
 
@@ -1051,86 +1057,59 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
     elif data.startswith("review_schedule"):
         parts = data.split("_")
         page = int(parts[2]) if len(parts) > 2 else 1
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
         
-        quizzes = db.get_all_quizzes()
-        if not quizzes:
-            await safe_edit(query, "📅 لا توجد كويزات بعد!", InlineKeyboardMarkup(back_btn))
+        user_reviews = db.get_all_quiz_reviews(user_id=u_id)
+        if not user_reviews:
+            await safe_edit(
+                query,
+                "📅 <b>جدول المراجعات فارغ حالياً!</b>\n\n"
+                "تصفح <b>بنك الكويزات العام</b> واختر أي كويز ترغب بجدولته في نظام التكرار المتباعد 🧠.",
+                InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📚 تصفح بنك الكويزات العام", callback_data="public_bank_root")],
+                    back_btn[0]
+                ])
+            )
             return
 
         ITEMS_PER_PAGE = 10
-        total_pages = (len(quizzes) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        total_pages = (len(user_reviews) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
         if page > total_pages: page = total_pages
         if page < 1: page = 1
         
         start_idx = (page - 1) * ITEMS_PER_PAGE
         end_idx = start_idx + ITEMS_PER_PAGE
-        page_quizzes = quizzes[start_idx:end_idx]
+        page_reviews = user_reviews[start_idx:end_idx]
 
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        lines = [f"📅 <b>جدول المراجعة</b> (صفحة {page} من {total_pages})", ""]
+        lines = [f"📅 <b>جدول مراجعاتي</b> (صفحة {page} من {total_pages})", ""]
 
-        quiz_ids = [str(q["id"]) for q in page_quizzes]
-        placeholders = ",".join(quiz_ids)
-        cursor.execute(f"""
-            SELECT 
-                q.id, q.name,
-                (SELECT COUNT(*) FROM questions WHERE quiz_id = q.id) as questions_count,
-                qr.stage, qr.next_review_date,
-                (SELECT COUNT(*) FROM weak_questions WHERE quiz_id = q.id) as weak_count,
-                (SELECT COUNT(*) FROM weak_questions WHERE quiz_id = q.id AND next_review_date <= date('now')) as weak_due
-            FROM quizzes q
-            LEFT JOIN quiz_reviews qr ON qr.quiz_id = q.id
-            WHERE q.id IN ({placeholders})
-            ORDER BY q.id DESC
-        """)
-        results = [dict(r) for r in cursor.fetchall()]
-        conn.close()
-
-        for item in results:
-            name_safe = html.escape(item.get("name", "كويز"))
+        for item in page_reviews:
+            name_safe = html.escape(item.get("quiz_name", "كويز"))
             lines.append("──────────────────")
             lines.append(f"📚 <b>{name_safe}</b>")
-            lines.append(f"📝 {item['questions_count']} سؤال")
 
-            if item["next_review_date"]:
+            if item.get("next_review_date"):
                 days = days_until(item["next_review_date"])
-                lbl = stage_label(item["stage"] or 0)
+                lbl = stage_label(item.get("stage", 0))
                 if days <= 0:
-                    lines.append(f"🔁 {lbl}: <b>مستحقة!</b> ⚠️")
+                    lines.append(f"🔁 {lbl}: <b>مستحقة اليوم!</b> ⚠️")
                 elif days == 1:
-                    lines.append(f"🔁 {lbl}: غداً")
+                    lines.append(f"🔁 {lbl}: غداً 🔔")
                 else:
-                    lines.append(f"🔁 {lbl}: بعد {days} يوم")
-                stages_done = item["stage"] or 0
-                bar = "✅" * stages_done + "◻️" * (5 - stages_done)
-                lines.append(f"📊 التقدم: {bar} ({stages_done}/5)")
-            else:
-                lines.append("✅ اكتملت جميع مراجعات الكويز")
+                    lines.append(f"🔁 {lbl}: بعد {days} يوم ⏳")
 
-            weak_count = item["weak_count"]
-            weak_due = item["weak_due"]
-            if weak_count > 0:
-                if weak_due > 0:
-                    lines.append(f"❌ {weak_count} سؤال ضعيف — <b>{weak_due} مستحقة اليوم</b> ⚠️")
-                else:
-                    lines.append(f"❌ {weak_count} سؤال ضعيف — لا يوجد مستحق اليوم")
-            else:
-                lines.append("🌟 لا توجد أسئلة ضعيفة")
-            lines.append("")
-        
-        # Pagination buttons
+        lines.append("──────────────────")
+        kb = []
         nav_row = []
         if page > 1:
-            nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"review_schedule_{page-1}"))
+            nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"review_schedule_page_{page-1}"))
         if page < total_pages:
-            nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"review_schedule_{page+1}"))
-            
-        kb = []
+            nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"review_schedule_page_{page+1}"))
         if nav_row:
             kb.append(nav_row)
+
         kb.append(back_btn[0])
-        
         await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(kb))
 
     # ── Fixstage pagination ──

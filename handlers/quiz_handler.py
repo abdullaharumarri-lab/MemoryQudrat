@@ -1,10 +1,17 @@
 import html
 import asyncio
+import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
+from utils import safe_edit, strip_html_tags
+
+logger = logging.getLogger(__name__)
+
+# Alias for backward compatibility within quiz_handler
+safe_edit_html = safe_edit
 
 
 def build_question_keyboard(options: list, question_id: int, session_type: str) -> InlineKeyboardMarkup:
@@ -23,16 +30,6 @@ def format_progress(current: int, total: int, correct: int) -> str:
     return f"{bar}\n❓ {current}/{total} | ✅ {correct} صح"
 
 
-import logging
-from utils import safe_edit, strip_html_tags
-
-logger = logging.getLogger(__name__)
-
-# Alias for backward compatibility within quiz_handler
-safe_edit_html = safe_edit
-
-
-
 async def start_quiz_session(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -41,7 +38,10 @@ async def start_quiz_session(
     review_id: int = None,
 ):
     query = update.callback_query
-    
+    user = update.effective_user
+    user_id = user.id if user else (context.user_data.get("user_id") or 6099429826)
+    context.user_data["user_id"] = user_id
+
     chat_id = None
     if update and hasattr(update, "effective_chat") and update.effective_chat:
         chat_id = update.effective_chat.id
@@ -49,15 +49,16 @@ async def start_quiz_session(
         chat_id = context.user_data["chat_id"]
         
     if chat_id:
+        context.user_data["chat_id"] = chat_id
         await cleanup_quiz_messages(chat_id, context)
 
     if session_type == "weakall":
-        # ALL weak questions from ALL quizzes, newest first (not just due)
-        weak_list = db.get_all_weak_questions_sorted_for_practice()
+        # ALL weak questions from ALL quizzes for this user, newest first
+        weak_list = db.get_all_weak_questions_sorted_for_practice(user_id=user_id)
         if not weak_list:
             await safe_edit_html(
                 query,
-                "✅ لا توجد أسئلة ضعيفة مسجلة!",
+                "✅ لا توجد أسئلة ضعيفة مسجلة في حسابك!",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
                 context=context
             )
@@ -71,6 +72,7 @@ async def start_quiz_session(
             current_index=0,
             correct_count=0,
             wrong_ids=[],
+            user_id=user_id,
         )
         await safe_edit_html(
             query,
@@ -81,7 +83,7 @@ async def start_quiz_session(
         return
 
     if session_type == "weak":
-        weak_list = db.get_due_weak_questions()
+        weak_list = db.get_due_weak_questions(user_id=user_id)
         # Sort: newest first (highest id first)
         weak_list_quiz = sorted(
             [w for w in weak_list if w["quiz_id"] == quiz_id],
@@ -91,7 +93,7 @@ async def start_quiz_session(
         if not question_ids:
             await safe_edit_html(
                 query,
-                "✅ لا توجد أسئلة ضعيفة مستحقة لهذا الكويز اليوم!",
+                "✅ لا توجد أسئلة ضعيفة مستحقة لهذا الكويز اليوم في حسابك!",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
                 context=context
             )
@@ -99,10 +101,10 @@ async def start_quiz_session(
         title = "❌ مراجعة الأسئلة الضعيفة"
 
     elif session_type == "weakpractice":
-        all_weak = db.get_all_weak_questions_sorted_for_practice()
+        all_weak = db.get_all_weak_questions_sorted_for_practice(user_id=user_id)
         question_ids = [w["question_id"] for w in all_weak if w["quiz_id"] == quiz_id]
         if not question_ids:
-            await safe_edit_html(query, "✅ لا توجد أخطاء للتدرب عليها!", context=context)
+            await safe_edit_html(query, "✅ لا توجد أخطاء للتدرب عليها في هذا الكويز!", context=context)
             return
         title = "🛠 تدريب على الأخطاء"
 
@@ -127,25 +129,34 @@ async def start_quiz_session(
         current_index=0,
         correct_count=0,
         wrong_ids=[],
+        user_id=user_id,
     )
 
     try:
         if query and query.message:
             await query.message.delete()
-    except:
+    except Exception:
         pass
 
     await show_next_question(update, context)
 
 
 async def send_next_question(update, context, session):
+    user_id = session.get("user_id", 6099429826)
     q_id = session["question_ids"][session["current_index"]]
     question = db.get_question(q_id)
     if not question:
         # Question missing or deleted, skip ahead safely
         logger.warning("Question ID %s not found in DB, skipping...", q_id)
         new_index = session["current_index"] + 1
-        db.update_session(new_index, session["correct_count"], session["wrong_ids"], session.get("poll_id"), session.get("session_message_ids", []))
+        db.update_session(
+            new_index,
+            session["correct_count"],
+            session["wrong_ids"],
+            session.get("poll_id"),
+            session.get("session_message_ids", []),
+            user_id=user_id,
+        )
         session["current_index"] = new_index
         if session["current_index"] >= len(session["question_ids"]):
             await finish_session(update, context, session)
@@ -300,14 +311,18 @@ async def send_next_question(update, context, session):
         session["correct_count"], 
         session["wrong_ids"], 
         poll_msg.poll.id,
-        msg_ids
+        msg_ids,
+        user_id=user_id,
     )
 
 
 async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query if update else None
+    user = update.effective_user
+    user_id = user.id if user else (context.user_data.get("user_id") or 6099429826)
+
     try:
-        session = db.get_session()
+        session = db.get_session(user_id=user_id)
         if not session:
             if query:
                 await safe_edit_html(
@@ -326,10 +341,17 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.exception("Error in show_next_question: %s", e)
         # Advance index to skip the corrupted question so user isn't stuck forever
-        session = db.get_session()
+        session = db.get_session(user_id=user_id)
         if session and session["current_index"] < len(session["question_ids"]):
             new_index = session["current_index"] + 1
-            db.update_session(new_index, session["correct_count"], session["wrong_ids"], None, session.get("session_message_ids", []))
+            db.update_session(
+                new_index,
+                session["correct_count"],
+                session["wrong_ids"],
+                None,
+                session.get("session_message_ids", []),
+                user_id=user_id,
+            )
             session["current_index"] = new_index
 
         err_text = f"⚠️ واجه السؤال مشكلة غير متوقعة في التنسيق وتم تخطيه تلقائياً.\nاضغط 'استكمال الكويز' لمتابعة بقية الأسئلة."
@@ -344,17 +366,23 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if chat_id:
                 try:
                     await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=reply_markup)
-                except: pass
+                except Exception:
+                    pass
 
 
 async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = update.poll_answer
     poll_id = answer.poll_id
+    user = answer.user
+    user_id = user.id if user else None
     selected_options = answer.option_ids
 
-    session = db.get_session()
+    # Find session matching this user_id or this poll_id
+    session = db.get_session(user_id=user_id, poll_id=poll_id)
     if not session or session.get("poll_id") != poll_id:
         return
+
+    sess_user_id = session.get("user_id", user_id or 6099429826)
 
     if session["current_index"] >= len(session["question_ids"]):
         await finish_session(update, context, session)
@@ -364,7 +392,14 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     question = db.get_question(q_id)
     if not question:
         new_index = session["current_index"] + 1
-        db.update_session(new_index, session["correct_count"], session["wrong_ids"], None, session.get("session_message_ids", []))
+        db.update_session(
+            new_index,
+            session["correct_count"],
+            session["wrong_ids"],
+            None,
+            session.get("session_message_ids", []),
+            user_id=sess_user_id,
+        )
         await show_next_question(update, context)
         return
 
@@ -388,17 +423,23 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         new_wrong.append(q_id)
 
     new_index = session["current_index"] + 1
-    db.update_session(new_index, new_correct, new_wrong, None, session.get("session_message_ids", []))
+    db.update_session(
+        new_index,
+        new_correct,
+        new_wrong,
+        None,
+        session.get("session_message_ids", []),
+        user_id=sess_user_id,
+    )
 
     # Delay slightly to let the user see the poll result
-    import asyncio
     await asyncio.sleep(1.0)
     await show_next_question(update, context)
 
 
-
 async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, session: dict):
     query = update.callback_query
+    user_id = session.get("user_id", 6099429826)
     total = len(session["question_ids"])
     correct = session["correct_count"]
     wrong_ids = session["wrong_ids"]
@@ -417,17 +458,17 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
                 # For weakall, look up the question's own quiz_id
                 q = db.get_question(wq_id)
                 if q:
-                    db.add_or_reset_weak_question(q["quiz_id"], wq_id)
+                    db.add_or_reset_weak_question(q["quiz_id"], wq_id, user_id=user_id)
             else:
-                db.add_or_reset_weak_question(quiz_id, wq_id)
+                db.add_or_reset_weak_question(quiz_id, wq_id, user_id=user_id)
 
     sr_text = ""
     if session_type in ("quiz", "review") and session.get("review_id"):
-        db.advance_quiz_review(session["review_id"])
+        db.advance_quiz_review(session["review_id"], user_id=user_id)
         sr_text = "✅ تمت المراجعة وجُدوِّل الموعد التالي تلقائياً."
 
     elif session_type == "weak":
-        weak_all = db.get_due_weak_questions()
+        weak_all = db.get_due_weak_questions(user_id=user_id)
         quiz_weak = {w["question_id"]: w for w in weak_all if w["quiz_id"] == quiz_id}
         correct_ids = [qid for qid in session["question_ids"] if qid not in wrong_ids]
         for qid in correct_ids:
@@ -436,8 +477,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
 
     elif session_type == "weakall":
-        # Advance correctly answered weak questions (from all questions pool)
-        all_weak = db.get_all_weak_questions_sorted_for_practice()
+        all_weak = db.get_all_weak_questions_sorted_for_practice(user_id=user_id)
         all_weak_map = {w["question_id"]: w for w in all_weak}
         correct_ids = [qid for qid in session["question_ids"] if qid not in wrong_ids]
         for qid in correct_ids:
@@ -451,9 +491,9 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
     elif session_type == "weakpractice":
         sr_text = "🛠 تدريب على الأخطاء — هذه الجلسة لم تؤثر على جداول التكرار."
 
-    # Log session for weekly stats (exclude practice modes)
+    # Log session for stats (exclude practice modes)
     if session_type not in ("practice", "weakpractice"):
-        db.log_session(quiz_id if quiz_id != 0 else None, session_type, total, correct, len(wrong_ids))
+        db.log_session(quiz_id if quiz_id != 0 else None, session_type, total, correct, len(wrong_ids), user_id=user_id)
 
     result_text = (
         f"🎉 <b>انتهى الكويز!</b>\n\n"
@@ -473,7 +513,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
             InlineKeyboardButton("🛠 تعديل أسئلة الكويز", callback_data=f"fixstage_qlist_{quiz_id}_0")
         ])
 
-    db.clear_session()
+    db.clear_session(user_id=user_id)
     chat_id = None
     if update and hasattr(update, "effective_chat") and update.effective_chat:
         chat_id = update.effective_chat.id
@@ -481,7 +521,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         chat_id = context.user_data["chat_id"]
         
     if chat_id:
-        result_msg = await context.bot.send_message(
+        await context.bot.send_message(
             chat_id=chat_id,
             text=result_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
@@ -493,10 +533,10 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
     elif query:
         await safe_edit_html(query, result_text, InlineKeyboardMarkup(keyboard), context=context)
 
+
 async def cleanup_quiz_messages(chat_id, context):
     msg_ids = context.user_data.pop("cleanup_message_ids", [])
     if not msg_ids:
-        logger.info("No messages to clean up.")
         return
         
     try:
@@ -504,11 +544,10 @@ async def cleanup_quiz_messages(chat_id, context):
         for i in range(0, len(msg_ids), 100):
             chunk = msg_ids[i:i+100]
             await context.bot.delete_messages(chat_id=chat_id, message_ids=chunk)
-        logger.info(f"Successfully deleted batch messages: {msg_ids}")
     except Exception as e:
-        logger.warning(f"Could not delete_messages: {e}, falling back to single deletions")
+        logger.warning("Could not delete_messages: %s, falling back to single deletions", e)
         for msg_id in msg_ids:
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except Exception as ex:
+            except Exception:
                 pass
