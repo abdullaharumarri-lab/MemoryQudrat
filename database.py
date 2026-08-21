@@ -244,48 +244,19 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_weak_questions_user_due ON weak_questions(user_id, next_review_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_log_user ON quiz_sessions_log(user_id, session_date)")
 
-    # ── Default folders / categories setup ──
-    default_folders = [
-        ("نماذج وتجميعات القدرات", "📚", 1),
-        ("القسم الكمي", "📐", 2),
-        ("القسم اللفظي", "📖", 3),
-        ("نماذج المحوسب", "💻", 4),
-    ]
+    # ── Default categories setup (only if table is completely empty) ──
+    cursor.execute("SELECT COUNT(*) FROM categories")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO categories (name, icon, sort_order) VALUES ('أقسام إيهاب', '📚', 1)")
 
-    # Check if 'عام' exists and convert to 'نماذج وتجميعات القدرات'
-    cursor.execute("SELECT id FROM categories WHERE name = 'عام'")
-    general_row = cursor.fetchone()
-    if general_row:
+    # Ensure all quizzes have a valid category
+    cursor.execute("SELECT id FROM categories ORDER BY sort_order ASC, id ASC LIMIT 1")
+    first_cat = cursor.fetchone()
+    if first_cat:
         cursor.execute(
-            "UPDATE categories SET name = 'نماذج وتجميعات القدرات', icon = '📚', sort_order = 1 WHERE id = ?",
-            (general_row["id"],)
+            "UPDATE quizzes SET category_id = ? WHERE category_id IS NULL OR category_id NOT IN (SELECT id FROM categories)",
+            (first_cat["id"],)
         )
-        main_cat_id = general_row["id"]
-    else:
-        cursor.execute("SELECT id FROM categories WHERE name = 'نماذج وتجميعات القدرات'")
-        main_row = cursor.fetchone()
-        if main_row:
-            main_cat_id = main_row["id"]
-        else:
-            cursor.execute(
-                "INSERT INTO categories (name, icon, sort_order) VALUES ('نماذج وتجميعات القدرات', '📚', 1)"
-            )
-            main_cat_id = cursor.lastrowid
-
-    # Create other default folders if missing
-    for name, icon, sort_order in default_folders:
-        cursor.execute("SELECT id FROM categories WHERE name = ?", (name,))
-        if not cursor.fetchone():
-            cursor.execute(
-                "INSERT INTO categories (name, icon, sort_order) VALUES (?, ?, ?)",
-                (name, icon, sort_order)
-            )
-
-    # Assign all uncategorized quizzes to the main folder
-    cursor.execute(
-        "UPDATE quizzes SET category_id = ? WHERE category_id IS NULL OR category_id NOT IN (SELECT id FROM categories)",
-        (main_cat_id,)
-    )
 
     conn.commit()
     conn.close()
