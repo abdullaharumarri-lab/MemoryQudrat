@@ -193,6 +193,14 @@ def main():
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("json"), json_document_handler
     ))
+
+    from handlers.creation_handler import handle_media_upload
+    app.add_handler(MessageHandler(
+        filters.PHOTO, handle_media_upload
+    ))
+    app.add_handler(MessageHandler(
+        filters.Document.ALL & ~filters.Document.MimeType("application/json") & ~filters.Document.FileExtension("json"), handle_media_upload
+    ))
     
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, url_text_handler
