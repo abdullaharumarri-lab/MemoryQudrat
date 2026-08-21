@@ -320,6 +320,91 @@ def get_total_users_count() -> int:
     return cnt
 
 
+def get_all_broadcast_recipients() -> list[int]:
+    """Returns a deduplicated list of all user IDs and chat IDs for broadcast."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    recipients = set()
+    try:
+        cursor.execute("SELECT user_id FROM users")
+        for r in cursor.fetchall():
+            if r["user_id"]:
+                recipients.add(int(r["user_id"]))
+    except Exception:
+        pass
+    try:
+        cursor.execute("SELECT chat_id FROM user_chats")
+        for r in cursor.fetchall():
+            if r["chat_id"]:
+                recipients.add(int(r["chat_id"]))
+    except Exception:
+        pass
+    conn.close()
+    return list(recipients)
+
+
+def get_platform_stats() -> dict:
+    """Computes comprehensive platform-wide analytics for Admin."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # User counts
+    cursor.execute("SELECT COUNT(*) as cnt FROM users")
+    total_users = cursor.fetchone()["cnt"]
+    
+    cursor.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM quiz_sessions_log WHERE session_date = date('now')")
+    active_today = cursor.fetchone()["cnt"]
+
+    cursor.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM quiz_sessions_log WHERE session_date >= date('now', '-7 days')")
+    active_7days = cursor.fetchone()["cnt"]
+
+    # Sessions and questions
+    cursor.execute("SELECT COUNT(*) as cnt, COALESCE(SUM(total), 0) as total_q, COALESCE(SUM(correct), 0) as total_c FROM quiz_sessions_log")
+    sess_row = cursor.fetchone()
+    total_sessions = sess_row["cnt"]
+    total_q_solved = sess_row["total_q"]
+    total_c_solved = sess_row["total_c"]
+    accuracy = int((total_c_solved / total_q_solved) * 100) if total_q_solved > 0 else 0
+
+    # Public bank content
+    cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE is_public = 1")
+    total_public_quizzes = cursor.fetchone()["cnt"]
+
+    cursor.execute("""
+        SELECT COUNT(*) as cnt 
+        FROM questions q 
+        JOIN quizzes z ON q.quiz_id = z.id 
+        WHERE z.is_public = 1
+    """)
+    total_public_questions = cursor.fetchone()["cnt"]
+
+    cursor.execute("SELECT COUNT(*) as cnt FROM categories")
+    total_categories = cursor.fetchone()["cnt"]
+
+    # Active schedules & weak questions across all users
+    cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews")
+    total_active_reviews = cursor.fetchone()["cnt"]
+
+    cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions")
+    total_active_weak = cursor.fetchone()["cnt"]
+
+    conn.close()
+    return {
+        "total_users": max(total_users, len(get_all_broadcast_recipients())),
+        "active_today": active_today,
+        "active_7days": active_7days,
+        "total_sessions": total_sessions,
+        "total_questions_solved": total_q_solved,
+        "total_correct_solved": total_c_solved,
+        "accuracy": accuracy,
+        "total_public_quizzes": total_public_quizzes,
+        "total_public_questions": total_public_questions,
+        "total_categories": total_categories,
+        "total_active_reviews": total_active_reviews,
+        "total_active_weak": total_active_weak,
+    }
+
+
 # ─── Categories ───────────────────────────────────────────────────────────────
 
 def create_category(name: str, intervals_json: str = "[1, 3, 7, 14, 30]", parent_id: int = None, icon: str = "📁") -> int:

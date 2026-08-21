@@ -60,6 +60,11 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user and _is_rate_limited(user.id):
         return  # Silently ignore flood
 
+    # ── Admin Broadcast Handler ───────────────────────────────────────────────
+    from handlers.admin_handler import handle_broadcast_input
+    if await handle_broadcast_input(update, context):
+        return
+
     # ── Admin Folder Handlers ─────────────────────────────────────────────────
     if context.user_data.get("waiting_for_new_folder") is not None:
         parent_id = context.user_data.pop("waiting_for_new_folder")
@@ -662,6 +667,11 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             "✅ تم نقل الكويز للمجلد بنجاح!",
             InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عرض الكويز", callback_data=f"bank_quiz_{quiz_id}")]])
         )
+
+    # ── Admin Dashboard Callbacks ──
+    elif data.startswith("admin_refresh_stats") or data.startswith("admin_broadcast_") or data.startswith("admin_confirm_") or data.startswith("admin_cancel_"):
+        from handlers.admin_handler import admin_button_handler
+        await admin_button_handler(update, context)
 
     # ── Upload JSON ──
     elif data == "upload_json":

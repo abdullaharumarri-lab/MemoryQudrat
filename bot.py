@@ -176,10 +176,14 @@ def main():
         .build()
     )
 
+    from handlers.admin_handler import admin_command, admin_broadcast_command
+
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", main_menu_handler))
     app.add_handler(CommandHandler("template", template_command))
     app.add_handler(CommandHandler("fixstage", fixstage_command))
+    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("broadcast", admin_broadcast_command))
 
     app.add_handler(MessageHandler(
         filters.Document.MimeType("application/json"), json_document_handler
