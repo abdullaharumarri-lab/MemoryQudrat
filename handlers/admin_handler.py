@@ -18,7 +18,7 @@ def build_admin_dashboard() -> tuple[str, InlineKeyboardMarkup]:
     stats = db.get_platform_stats()
 
     text = (
-        "👑 <b>لوحة تحكم المشرف — MemoryQudrat</b>\n\n"
+        "👑 <b>لوحة تحكم المشرف — ذاكرة القدرات 🧠</b>\n\n"
         "👥 <b>إحصائيات الطلاب والنمو:</b>\n"
         f"• إجمالي الطلاب المسجلين: <b>{stats['total_users']}</b> طالب\n"
         f"• النشطون اليوم: <b>{stats['active_today']}</b> طالب\n"
@@ -179,7 +179,7 @@ async def admin_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"📢 <b>تنبيه من إدارة MemoryQudrat:</b>\n\n{broadcast_text}",
+                    text=f"📢 <b>تنبيه من إدارة ذاكرة القدرات 🧠:</b>\n\n{broadcast_text}",
                     parse_mode="HTML",
                 )
                 sent_count += 1

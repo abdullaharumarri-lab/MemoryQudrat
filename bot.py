@@ -58,7 +58,7 @@ async def daily_reminder(context):
     if reviews: parts.append(f"🔁 {len(reviews)} مراجعة كويز")
     if weak: parts.append(f"❌ {len(weak)} سؤال ضعيف")
     text = (
-        "🌅 <b>تذكير يومي — MemoryQudrat</b>\n\n"
+        "🌅 <b>تذكير يومي — ذاكرة القدرات 🧠</b>\n\n"
         "لديك مهام مراجعة مستحقة اليوم:\n" + "\n".join(f"• {p}" for p in parts) +
         "\n\nافتح البوت وابدأ المراجعة لترسيخ معلوماتك 💪"
     )
@@ -84,7 +84,7 @@ async def start_command(update: Update, context):
 
     user_name = user.first_name if user and user.first_name else "صديقنا"
     text = (
-        f"👋 أهلاً بك يا <b>{html.escape(user_name)}</b> في <b>MemoryQudrat</b>! 🌟\n\n"
+        f"👋 أهلاً بك يا <b>{html.escape(user_name)}</b> في بوت <b>ذاكرة القدرات 🧠</b>! 🌟\n\n"
         f"منصتك الذكية للتدريب على اختبار <b>القدرات (كمي ولفظي)</b> باستخدام تقنية <b>التكرار المتباعد</b> لترسيخ الأفكار والقوانين في الذاكرة طويلة المدى 🧠.\n\n"
         f"✨ <b>كيف تبدأ؟</b>\n"
         f"1️⃣ اضغط <b>«📚 بنك الكويزات (العام)»</b> لاختيار نموذج والبدء بالتدريب.\n"

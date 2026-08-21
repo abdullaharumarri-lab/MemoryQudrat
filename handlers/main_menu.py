@@ -373,7 +373,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.save_or_update_user(user.id, user.username, user.full_name)
 
     text = (
-        "👋 أهلاً بك في <b>MemoryQudrat</b>!\n\n"
+        "👋 أهلاً بك في بوت <b>ذاكرة القدرات 🧠</b>!\n\n"
         "نظام مراجعة ذكي باستخدام التكرار المتباعد 🧠\n"
         "اختر ما تريد:"
     )
@@ -822,7 +822,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
     # ── Settings: How Spaced Repetition Works ──
     elif data == "settings_how_it_works":
         text = (
-            "🧠 <b>كيف يعمل نظام التكرار المتباعد في MemoryQudrat؟</b>\n\n"
+            "🧠 <b>كيف يعمل نظام التكرار المتباعد في ذاكرة القدرات؟</b>\n\n"
             "يعتمد البوت على <b>منحنى النسيان العلمي (Ebbinghaus Forgetting Curve)</b>:\n\n"
             "📅 <b>مراحل تكرار الكويزات:</b>\n"
             "• <b>المرحلة 1:</b> بعد يوم واحد (1 day)\n"
