@@ -163,10 +163,22 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
         return
     text = truncate_text(text, 3800)
 
+    # Safely extract chat_id
+    chat_id = None
+    msg = getattr(query, "message", None)
+    if msg:
+        if hasattr(msg, "chat") and msg.chat:
+            chat_id = msg.chat.id
+        elif hasattr(msg, "chat_id"):
+            chat_id = msg.chat_id
+
     # Track message ID
-    if query.message:
-        db.set_last_message_id(query.message.chat_id, query.message.message_id)
-        db.track_chat_message(query.message.chat_id, query.message.message_id)
+    if chat_id and msg and hasattr(msg, "message_id") and msg.message_id:
+        try:
+            db.set_last_message_id(chat_id, msg.message_id)
+            db.track_chat_message(chat_id, msg.message_id)
+        except Exception:
+            pass
 
     # 1. Try HTML edit
     try:
@@ -194,18 +206,20 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
         return
 
     try:
-        if query.message:
-            sent = await query.message.reply_text(clean_text, reply_markup=reply_markup)
-            db.set_last_message_id(sent.chat_id, sent.message_id)
-            db.track_chat_message(sent.chat_id, sent.message_id)
-        elif context and hasattr(query, "message") and query.message:
+        if msg and hasattr(msg, "reply_text"):
+            sent = await msg.reply_text(clean_text, reply_markup=reply_markup)
+            if sent and hasattr(sent, "chat") and sent.chat:
+                db.set_last_message_id(sent.chat.id, sent.message_id)
+                db.track_chat_message(sent.chat.id, sent.message_id)
+        elif context and chat_id:
             sent = await context.bot.send_message(
-                chat_id=query.message.chat_id,
+                chat_id=chat_id,
                 text=clean_text,
                 reply_markup=reply_markup
             )
-            db.set_last_message_id(sent.chat_id, sent.message_id)
-            db.track_chat_message(sent.chat_id, sent.message_id)
+            if sent and hasattr(sent, "chat") and sent.chat:
+                db.set_last_message_id(sent.chat.id, sent.message_id)
+                db.track_chat_message(sent.chat.id, sent.message_id)
     except Exception as e2:
         logger.error("safe_edit fallback reply_text failed: %s", e2)
 

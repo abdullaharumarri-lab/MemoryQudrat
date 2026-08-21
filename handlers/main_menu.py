@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # ─── Rate Limiter ─────────────────────────────────────────────────────────────
 # Tracks the last N timestamps per user_id to detect flood/spam
 _user_request_times: dict = collections.defaultdict(list)
-_RATE_LIMIT_MAX = 12        # max requests
-_RATE_LIMIT_WINDOW = 6.0    # within this many seconds
+_RATE_LIMIT_MAX = 30        # max requests
+_RATE_LIMIT_WINDOW = 5.0    # within this many seconds
 
 def _is_rate_limited(user_id: int) -> bool:
     """Return True if the user has exceeded the rate limit."""
