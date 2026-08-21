@@ -150,6 +150,7 @@ async def handle_media_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data.pop("waiting_for_media_note", None)
     user = update.effective_user
+    chat_id = update.effective_chat.id
     u_id = user.id if user else 6099429826
     msg = update.message
 
@@ -171,20 +172,20 @@ async def handle_media_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ <b>تمت إضافة مادة المراجعة بنجاح!</b> 🧠\n\n"
         f"📌 العنوان: <b>{html.escape(name)}</b>\n\n"
         f"تم إدراجها في نظام <b>التكرار المتباعد</b>.\n"
-        f"سيقوم البوت بإرسالها لك في مواعيد المراجعة الذكية لتثبيتها في الذاكرة 💪."
+        f"سيقوم البوت بتذكيرك بمراجعتها في المواعيد الذكية لتثبيتها في الذاكرة 💪."
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📅 جدول مراجعاتي", callback_data="review_schedule")],
         [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
     ])
-    await msg.reply_text(text, parse_mode="HTML", reply_markup=kb)
+    await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
     return True
 
 
 # ─── Text Input Router for Creation ──────────────────────────────────────────
 
 async def handle_creation_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Handles text input related to manual quiz building or media text notes."""
+    """Handles text input related to manual quiz building, user private folders, or media text notes."""
     msg = update.message.text.strip()
     chat_id = update.effective_chat.id
     user = update.effective_user
@@ -207,19 +208,42 @@ async def handle_creation_text_input(update: Update, context: ContextTypes.DEFAU
             [InlineKeyboardButton("📅 جدول مراجعاتي", callback_data="review_schedule")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
-        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
         return True
 
-    # 2. Manual Quiz: Awaiting Quiz Name
+    # 2. User Private Folder Creation
+    if context.user_data.get("waiting_for_user_folder") is not None:
+        parent_id = context.user_data.pop("waiting_for_user_folder")
+        folder_name = msg.strip()
+        cat_id = db.create_category(
+            name=folder_name,
+            parent_id=parent_id if parent_id != 0 else None,
+            owner_id=u_id,
+            is_public=0
+        )
+        text = (
+            f"✅ <b>تم إنشاء المجلد الخاص بنجاح!</b>\n\n"
+            f"📁 <b>{html.escape(folder_name)}</b>\n\n"
+            f"يمكنك الآن نقل كويزاتك الخاصة إليه وتنظيم دراستك 🌟."
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📂 فتح المجلد", callback_data=f"my_cat_{cat_id}_1")],
+            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        ])
+        await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
+        return True
+
+    # 3. Manual Quiz: Awaiting Quiz Name
     state = context.user_data.get("manual_state")
     if state == "awaiting_quiz_name":
         context.user_data.setdefault("manual_quiz", {})["name"] = msg
         context.user_data["manual_state"] = "idle"
         text, kb = build_manual_quiz_dashboard(context)
-        await update.message.reply_text(f"✅ تم تحديد اسم الكويز:\n\n" + text, parse_mode="HTML", reply_markup=kb)
+        await send_clean_message(context, chat_id, f"✅ <b>تم تحديد اسم الكويز:</b>\n\n" + text, update=update, reply_markup=kb)
         return True
 
-    # 3. Manual Quiz: Awaiting Question Text
+    # 4. Manual Quiz: Awaiting Question Text
     if state == "awaiting_q_text":
         context.user_data.setdefault("current_q", {})["question"] = msg
         context.user_data["manual_state"] = "awaiting_q_options"
@@ -233,14 +257,14 @@ async def handle_creation_text_input(update: Update, context: ContextTypes.DEFAU
             "35"
         )
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء السؤال", callback_data="manual_dashboard")]])
-        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
         return True
 
-    # 4. Manual Quiz: Awaiting Options
+    # 5. Manual Quiz: Awaiting Options
     if state == "awaiting_q_options":
         lines = [line.strip() for line in msg.splitlines() if line.strip()]
         if len(lines) < 2:
-            await update.message.reply_text("⚠️ يرجى إرسال خيارين على الأقل (كل خيار في سطر مستقل). أعد إرسال الخيارات:")
+            await send_clean_message(context, chat_id, "⚠️ يرجى إرسال خيارين على الأقل (كل خيار في سطر مستقل). أعد إرسال الخيارات:", update=update)
             return True
         if len(lines) > 6:
             lines = lines[:6]
@@ -266,7 +290,7 @@ async def handle_creation_text_input(update: Update, context: ContextTypes.DEFAU
             btn_row,
             [InlineKeyboardButton("❌ إلغاء السؤال", callback_data="manual_dashboard")]
         ])
-        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
         return True
 
     return False
