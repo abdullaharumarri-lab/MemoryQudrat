@@ -7,11 +7,11 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Admin user ID — only this user can access admin commands and upload to public bank
-_admin_id_raw = os.getenv("ADMIN_USER_ID", "0")
+_admin_id_raw = os.getenv("ADMIN_USER_ID", "6099429826")
 try:
     ADMIN_USER_ID = int(_admin_id_raw)
 except (ValueError, TypeError):
-    ADMIN_USER_ID = 0
+    ADMIN_USER_ID = 6099429826
 
 def is_admin(user_id: int) -> bool:
     """Return True only if the given user_id is the registered admin."""
