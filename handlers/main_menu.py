@@ -373,7 +373,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.save_or_update_user(user.id, user.username, user.full_name)
 
     text = (
-        "👋 أهلاً بك في بوت <b>ذاكرة القدرات 🧠</b>!\n\n"
+        "👋 أهلاً بك في بوت <b>ذاكرة القدرات</b>!\n\n"
         "نظام مراجعة ذكي باستخدام التكرار المتباعد 🧠\n"
         "اختر ما تريد:"
     )
