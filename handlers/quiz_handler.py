@@ -145,7 +145,7 @@ async def send_next_question(update, context, session):
         # Question missing or deleted, skip ahead safely
         logger.warning("Question ID %s not found in DB, skipping...", q_id)
         new_index = session["current_index"] + 1
-        db.update_session(new_index, session["correct_count"], session["wrong_ids"], session.get("poll_id"))
+        db.update_session(new_index, session["correct_count"], session["wrong_ids"], session.get("poll_id"), session.get("session_message_ids", []))
         session["current_index"] = new_index
         if session["current_index"] >= len(session["question_ids"]):
             await finish_session(update, context, session)
@@ -153,11 +153,16 @@ async def send_next_question(update, context, session):
             await send_next_question(update, context, session)
         return
 
-    options = question.get("options") or []
+    raw_options = question.get("options") or []
+    options = []
+    for idx, opt in enumerate(raw_options):
+        opt_str = str(opt).strip()
+        if not opt_str:
+            opt_str = f"(خيار {idx + 1})"
+        options.append(opt_str)
+
     if len(options) < 2:
-        options = options + ["(خيار فارغ)"] * (2 - len(options))
-        if not options[0]:
-            options = ["نعم", "لا"]
+        options = options + [f"(خيار {i + 1})" for i in range(len(options), 2)]
     if len(options) > 10:
         options = options[:10]
     
@@ -165,22 +170,27 @@ async def send_next_question(update, context, session):
     correct_str = str(question.get("correct_answer", "")).strip()
     correct_idx = 0
     for idx, opt in enumerate(options):
-        if str(opt).strip() == correct_str:
+        if opt == correct_str or str(raw_options[idx] if idx < len(raw_options) else "").strip() == correct_str:
             correct_idx = idx
             break
+
+    if correct_idx < 0 or correct_idx >= len(options):
+        correct_idx = 0
 
     q_text = str(question.get("question_text", "")).strip()
     if not q_text:
         q_text = "سؤال بدون نص"
         
-    explanation = str(question.get("explanation", ""))
-    if len(explanation) > 195:
-        explanation = explanation[:195] + "..."
+    explanation = str(question.get("explanation", "")).strip()
+    if len(explanation) > 190:
+        explanation = explanation[:187] + "..."
+    if not explanation:
+        explanation = None
 
     chat_id = None
     if update and hasattr(update, "effective_chat") and update.effective_chat:
         chat_id = update.effective_chat.id
-    elif update and update.poll_answer and update.poll_answer.user:
+    elif update and getattr(update, "poll_answer", None) and update.poll_answer.user:
         chat_id = update.poll_answer.user.id
     elif context.user_data.get("chat_id"):
         chat_id = context.user_data["chat_id"]
@@ -191,12 +201,12 @@ async def send_next_question(update, context, session):
     else:
         context.user_data["chat_id"] = chat_id
 
-    # Check Telegram Poll limits
-    long_question = len(q_text) > 290
-    long_options = any(len(str(opt)) > 95 for opt in options)
+    # Check Telegram Poll limits (Question max 300, Option max 100)
+    long_question = len(q_text) > 250
+    long_options = any(len(opt) > 90 for opt in options)
 
     poll_options = []
-    letters = ["أ", "ب", "ج", "د", "هـ", "و"]
+    letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"]
     msg_ids = session.get("session_message_ids", [])
     
     if long_question or long_options:
@@ -206,43 +216,83 @@ async def send_next_question(update, context, session):
         if long_options:
             for idx, opt in enumerate(options):
                 letter = letters[idx] if idx < len(letters) else str(idx+1)
-                context_text += f"\n<b>{letter})</b> {html.escape(str(opt))}"
+                context_text += f"\n<b>{letter})</b> {html.escape(opt)}"
                 poll_options.append(letter)
             poll_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة من الرسالة أعلاه):"
         else:
             poll_question = f"السؤال {session['current_index'] + 1} (نص السؤال في الرسالة أعلاه):"
-            poll_options = [str(o) for o in options]
+            poll_options = list(options)
             
-        ctx_msg = await context.bot.send_message(chat_id=chat_id, text=context_text, parse_mode="HTML")
+        if len(context_text) > 3800:
+            context_text = context_text[:3750] + "\n\n...(تم اختصار النص لطوله)"
+
+        try:
+            ctx_msg = await context.bot.send_message(chat_id=chat_id, text=context_text, parse_mode="HTML")
+        except Exception as e:
+            logger.warning("Failed sending context message with HTML, falling back to plain text: %s", e)
+            clean_ctx = strip_html_tags(context_text)
+            ctx_msg = await context.bot.send_message(chat_id=chat_id, text=clean_ctx)
         msg_ids.append(ctx_msg.message_id)
     else:
         poll_question = q_text
-        poll_options = [str(o) for o in options]
+        poll_options = list(options)
 
-    # Limit options length just in case and ensure uniqueness
+    # Limit options length and ensure strictly unique and non-empty options
     seen = set()
     unique_poll_options = []
-    for opt in poll_options:
-        opt_str = str(opt)[:99]
+    for idx, opt in enumerate(poll_options):
+        opt_str = str(opt).strip()[:95]
+        if not opt_str:
+            opt_str = f"خيار {idx + 1}"
         new_opt = opt_str
         counter = 1
         while new_opt in seen:
-            suffix = f" {counter}"
-            new_opt = opt_str[:99-len(suffix)] + suffix
+            suffix = f" ({counter})"
+            new_opt = opt_str[:95 - len(suffix)] + suffix
             counter += 1
         seen.add(new_opt)
         unique_poll_options.append(new_opt)
-    poll_options = unique_poll_options
 
-    poll_msg = await context.bot.send_poll(
-        chat_id=chat_id,
-        question=poll_question,
-        options=poll_options,
-        type="quiz",
-        correct_option_id=correct_idx,
-        explanation=explanation,
-        is_anonymous=False, # Must be False to track who answered in PollAnswerHandler
-    )
+    poll_options = unique_poll_options
+    if len(poll_options) < 2:
+        poll_options = ["(خيار 1)", "(خيار 2)"]
+    if len(poll_options) > 10:
+        poll_options = poll_options[:10]
+    if correct_idx >= len(poll_options) or correct_idx < 0:
+        correct_idx = 0
+
+    poll_question_clean = str(poll_question).strip()
+    if not poll_question_clean:
+        poll_question_clean = "اختر الإجابة الصحيحة:"
+    if len(poll_question_clean) > 295:
+        poll_question_clean = poll_question_clean[:290] + "..."
+
+    poll_kwargs = {
+        "chat_id": chat_id,
+        "question": poll_question_clean,
+        "options": poll_options,
+        "type": "quiz",
+        "correct_option_id": correct_idx,
+        "is_anonymous": False,
+    }
+    if explanation:
+        poll_kwargs["explanation"] = explanation
+
+    try:
+        poll_msg = await context.bot.send_poll(**poll_kwargs)
+    except Exception as poll_err:
+        logger.warning("send_poll failed with error: %s. Trying sanitized fallback poll...", poll_err)
+        fallback_options = [f"الخيار {letters[i]}" if i < len(letters) else f"خيار {i+1}" for i in range(len(poll_options))]
+        fallback_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة):"
+        poll_msg = await context.bot.send_poll(
+            chat_id=chat_id,
+            question=fallback_question,
+            options=fallback_options,
+            type="quiz",
+            correct_option_id=correct_idx,
+            is_anonymous=False
+        )
+
     msg_ids.append(poll_msg.message_id)
 
     db.update_session(
@@ -275,8 +325,18 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await send_next_question(update, context, session)
     except Exception as e:
         logger.exception("Error in show_next_question: %s", e)
-        err_text = f"❌ حدث خطأ أثناء تحميل السؤال التالي.\nيمكنك استكمال الكويز من القائمة الرئيسية."
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+        # Advance index to skip the corrupted question so user isn't stuck forever
+        session = db.get_session()
+        if session and session["current_index"] < len(session["question_ids"]):
+            new_index = session["current_index"] + 1
+            db.update_session(new_index, session["correct_count"], session["wrong_ids"], None, session.get("session_message_ids", []))
+            session["current_index"] = new_index
+
+        err_text = f"⚠️ واجه السؤال مشكلة غير متوقعة في التنسيق وتم تخطيه تلقائياً.\nاضغط 'استكمال الكويز' لمتابعة بقية الأسئلة."
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ استكمال الكويز", callback_data="resume_quiz")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
+        ])
         if query:
             await safe_edit_html(query, err_text, reply_markup=reply_markup, context=context)
         else:

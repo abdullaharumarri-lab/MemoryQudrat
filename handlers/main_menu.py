@@ -104,7 +104,14 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── Keyboards ────────────────────────────────────────────────────────────────
 
 def main_menu_keyboard():
-    return InlineKeyboardMarkup([
+    session = db.get_session()
+    rows = []
+    if session and session.get("question_ids") and session.get("current_index", 0) < len(session["question_ids"]):
+        cur_q = session.get("current_index", 0) + 1
+        tot_q = len(session["question_ids"])
+        rows.append([InlineKeyboardButton(f"▶️ استكمال الكويز ({cur_q}/{tot_q})", callback_data="resume_quiz")])
+
+    rows.extend([
         [InlineKeyboardButton("📋 رفع كويز JSON", callback_data="upload_json"),
          InlineKeyboardButton("🔗 إضافة كويز كرابط", callback_data="upload_url")],
         [InlineKeyboardButton("📚 كويزاتي", callback_data="my_quizzes")],
@@ -115,6 +122,7 @@ def main_menu_keyboard():
         [InlineKeyboardButton("📅 جدول المراجعة", callback_data="review_schedule"),
          InlineKeyboardButton("📊 إحصائياتي", callback_data="weekly_stats")],
     ])
+    return InlineKeyboardMarkup(rows)
 
 
 def quizzes_keyboard(quizzes: list, page: int = 1):
@@ -272,6 +280,11 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         from handlers.quiz_handler import cleanup_quiz_messages
         await cleanup_quiz_messages(update.effective_chat.id, context)
         await main_menu_handler(update, context)
+
+    # ── Resume Quiz ──
+    elif data == "resume_quiz":
+        from handlers.quiz_handler import show_next_question
+        await show_next_question(update, context)
 
     # ── Upload JSON ──
     elif data == "upload_json":
