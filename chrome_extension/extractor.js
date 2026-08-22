@@ -68,13 +68,51 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           5 — Main: iterate over every radiogroup
+           5 — Helper: find a preceding text passage block
+           Google Forms sometimes puts a reading passage (فقرة) in a
+           standalone card BEFORE the MCQ question that references it.
+           We detect it as: the immediately preceding sibling container
+           that has NO radiogroup and NO input, but has substantial text.
+        ══════════════════════════════════════════ */
+        function findPrecedingPassage(container) {
+            const parent = container.parentElement;
+            if (!parent) return '';
+
+            const siblings = Array.from(parent.children);
+            const myIdx = siblings.indexOf(container);
+            if (myIdx <= 0) return '';
+
+            // Walk backwards through preceding siblings
+            for (let i = myIdx - 1; i >= 0; i--) {
+                const prev = siblings[i];
+
+                // Skip if it is another MCQ question
+                if (prev.querySelector('[role="radiogroup"]')) break;
+
+                // Skip if it is a text-answer question
+                if (prev.querySelector('input[type="text"], input[type="email"], textarea')) break;
+
+                // If it has substantial text it is a passage / section header / description
+                const txt = (prev.innerText || '').replace(/\s+/g, ' ').trim();
+                if (txt.length > 30) {
+                    // Exclude score summary banners (contain "/" between numbers)
+                    if (/^\d+\s*\/\s*\d+/.test(txt)) break;
+                    return txt;
+                }
+                // If the sibling is empty / too short, keep looking
+            }
+            return '';
+        }
+
+        /* ══════════════════════════════════════════
+           6 — Main: iterate over every radiogroup
            Each [role="radiogroup"] = one MCQ question
         ══════════════════════════════════════════ */
         const radioGroups = Array.from(document.querySelectorAll('[role="radiogroup"]'));
 
         const questions   = [];
         const wrongIndices = [];
+
 
         radioGroups.forEach((rg, idx) => {
             const qNum = idx + 1;
@@ -121,6 +159,17 @@ function extractGoogleFormsQuiz() {
             // Strip leading number "1. " "س1: " etc.
             questionText = questionText.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').trim();
             if (!questionText) questionText = `السؤال ${qNum}`;
+
+            // ── Attach preceding reading passage (فقرة) if present ──
+            // Some Google Forms tests put a shared text block before the question.
+            // We prepend it so the question is self-contained and meaningful.
+            const passage = findPrecedingPassage(container);
+            if (passage) {
+                // Avoid duplicating the passage text if it is already in the question
+                if (!questionText.includes(passage.slice(0, 40))) {
+                    questionText = '📄 ' + passage + '\n\n❓ ' + questionText;
+                }
+            }
 
             /* ── 5C: Wrong / score detection ── */
             let isWrong = false;
