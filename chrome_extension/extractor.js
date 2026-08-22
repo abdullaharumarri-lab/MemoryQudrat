@@ -1,208 +1,336 @@
 /**
- * MemoryQudrat - Google Forms Quiz Extractor Engine
- * Extracts quiz questions, options, correct answers, and wrong indices from Google Forms "View score" or Quiz page.
+ * MemoryQudrat — Google Forms Quiz Extractor Engine v2.0
+ *
+ * Strategy:
+ *  - Relies on ARIA roles and semantic HTML (never on obfuscated CSS class names for correctness logic)
+ *  - Detects question type: only processes MCQ (radio / checkbox), skips text / short-answer fields
+ *  - Correct answer detection priority:
+ *      1. Explicit "الإجابة الصحيحة" / "Correct answer" label box  (shown only for wrong answers)
+ *      2. Option whose ancestor has a green computed background or a green SVG fill
+ *      3. The checked option when the student answered correctly (score NOT 0/N)
+ *      4. Graceful fallback with a debug flag
  */
 
 function extractGoogleFormsQuiz() {
     try {
-        // 1. Quiz Title
-        let quizTitle = "كويز بدون عنوان";
-        const titleEl = document.querySelector('.F9iS2e, .freebirdFormviewerViewHeaderTitle, .ahS6Le, .v1CNqd, [role="heading"][aria-level="1"], h1');
-        if (titleEl && titleEl.innerText.trim()) {
-            quizTitle = titleEl.innerText.trim();
+
+        /* ══════════════════════════════════════════════════════
+           STEP 1 — Quiz title
+        ══════════════════════════════════════════════════════ */
+        let quizTitle = "كويز";
+
+        // Try the prominent header heading first
+        const headerEl = document.querySelector(
+            '[role="heading"][aria-level="1"], ' +
+            '.freebirdFormviewerViewHeaderTitle, ' +
+            '.F9iS2e, .ahS6Le, .v1CNqd, h1'
+        );
+        if (headerEl && headerEl.innerText.trim()) {
+            quizTitle = headerEl.innerText.trim().split('\n')[0].trim();
         } else {
-            // Document title fallback
-            const docTitle = document.title.replace(/[-–—|].*$/, '').replace(/عرض النتيجة|View score|Google Forms|نماذج Google/gi, '').trim();
-            if (docTitle) quizTitle = docTitle;
+            const doc = document.title
+                .replace(/[-–—|].*$/, '')
+                .replace(/عرض النتيجة|View score|Google Forms|نماذج Google/gi, '')
+                .trim();
+            if (doc) quizTitle = doc;
         }
 
-        // 2. Identify all Question Containers
-        let questionElements = Array.from(document.querySelectorAll('[role="listitem"], .Qr7Oae, .geS5n'));
-        
-        // Filter out non-question containers (like header banner, score summary header, etc.)
-        questionElements = questionElements.filter(el => {
-            const hasOptions = el.querySelectorAll('[role="radio"], [role="checkbox"], .docssharedWizToggleLabeledContainer, .SG0tKc, .nWQ3Re, .d7L4cf').length > 0;
-            const hasHeading = el.querySelector('[role="heading"], .M7eMe, .HoN1Ob, .F3n8vf') !== null;
-            return hasOptions && hasHeading;
+        /* ══════════════════════════════════════════════════════
+           STEP 2 — Locate question containers
+        ══════════════════════════════════════════════════════ */
+
+        // Google Forms renders each question as a role="listitem" inside role="list"
+        let containers = Array.from(document.querySelectorAll(
+            '[role="listitem"], .Qr7Oae, .geS5n, .freebirdFormviewerViewItemsItemItem'
+        ));
+
+        // De-duplicate (some selectors overlap)
+        containers = Array.from(new Set(containers));
+
+        // Keep only MULTIPLE-CHOICE containers:
+        //   • Must contain at least one role="radio" or role="checkbox"
+        //   • Must NOT be a pure text/short-answer field (has an <input type="text"> or <textarea>)
+        containers = containers.filter(el => {
+            const hasMCQ = el.querySelector('[role="radio"], [role="checkbox"]') !== null;
+            const hasTextInput = el.querySelector(
+                'input[type="text"], input[type="email"], input[type="number"], ' +
+                'textarea, .quantumWizTextinputPaperinputInput, .whsOnd, .exportInput'
+            ) !== null;
+            return hasMCQ && !hasTextInput;
         });
 
-        // Fallback: If no role="listitem" matches, query by radio/checkbox parents
-        if (questionElements.length === 0) {
-            const radioGroups = Array.from(document.querySelectorAll('[role="radiogroup"], [role="group"]'));
-            questionElements = radioGroups.map(rg => rg.closest('.Qr7Oae') || rg.closest('.geS5n') || rg.parentElement).filter(Boolean);
-            questionElements = Array.from(new Set(questionElements));
+        // Emergency fallback: locate by radiogroup parents
+        if (containers.length === 0) {
+            const groups = document.querySelectorAll('[role="radiogroup"], [role="group"]');
+            const parents = Array.from(groups).map(g =>
+                g.closest('.Qr7Oae') || g.closest('[role="listitem"]') || g.parentElement
+            ).filter(Boolean);
+            containers = Array.from(new Set(parents)).filter(el =>
+                el.querySelector('[role="radio"], [role="checkbox"]') !== null &&
+                el.querySelector('input[type="text"], textarea') === null
+            );
         }
+
+        /* ══════════════════════════════════════════════════════
+           STEP 3 — Helpers
+        ══════════════════════════════════════════════════════ */
+
+        /**
+         * Returns true if the element (or any child) has a green background or fill.
+         * We check computed style AND inline SVG fill attributes.
+         */
+        function isGreenHighlighted(el) {
+            // SVG green fills used by Google Forms for correct indicators
+            const GREEN_FILLS = ['#137333', '#188038', '#1e8e3e', '#34a853'];
+            const svgs = el.querySelectorAll('svg');
+            for (const svg of svgs) {
+                for (const child of svg.querySelectorAll('[fill]')) {
+                    if (GREEN_FILLS.includes(child.getAttribute('fill').toLowerCase())) return true;
+                }
+                if (GREEN_FILLS.includes((svg.getAttribute('fill') || '').toLowerCase())) return true;
+            }
+
+            // Computed background color — Google uses green-ish tints
+            const bg = window.getComputedStyle(el).backgroundColor;
+            if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+                // Parse rgb(r, g, b) or rgba(r, g, b, a)
+                const m = bg.match(/\d+/g);
+                if (m && m.length >= 3) {
+                    const [r, g, b] = m.map(Number);
+                    // Green dominant: g significantly larger than r and b
+                    if (g > 100 && g > r * 1.3 && g > b * 1.3) return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Returns true if the element (or any child) has a red/error highlight.
+         */
+        function isRedHighlighted(el) {
+            const RED_FILLS = ['#d93025', '#c5221f', '#ea4335'];
+            const svgs = el.querySelectorAll('svg');
+            for (const svg of svgs) {
+                for (const child of svg.querySelectorAll('[fill]')) {
+                    if (RED_FILLS.includes(child.getAttribute('fill').toLowerCase())) return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Safely get inner text from element, collapsing whitespace.
+         */
+        function getText(el) {
+            if (!el) return '';
+            return el.innerText.replace(/\s+/g, ' ').trim();
+        }
+
+        /**
+         * Strip leading option-label prefixes like "أ) ", "1. ", "A. " etc.
+         * IMPORTANT: only strip when followed by a separator (. : - ) /)
+         * NOT when Arabic letter is just the start of a real word.
+         */
+        function stripOptionPrefix(text) {
+            // Match: letter/digit + separator character (., :, -, ), /) + optional space
+            return text.replace(/^[أ-يa-zA-Z\d٠-٩](?=[.\:\-\)\/])\S?\s*/, '').trim();
+        }
+
+        /* ══════════════════════════════════════════════════════
+           STEP 4 — Process each question
+        ══════════════════════════════════════════════════════ */
 
         const questions = [];
         const wrongIndices = [];
 
-        questionElements.forEach((qEl, index) => {
-            const qNum = index + 1;
+        containers.forEach((qEl, idx) => {
+            const qNum = idx + 1;
 
-            // --- A. Extract Question Text ---
-            let questionText = "";
-            const headingEl = qEl.querySelector('[role="heading"], .M7eMe, .HoN1Ob, .F3n8vf');
-            if (headingEl) {
-                const clone = headingEl.cloneNode(true);
-                clone.querySelectorAll('.R4nke, .DqBBlb, .vRMGwf').forEach(e => e.remove());
-                questionText = clone.innerText.trim();
+            /* ── 4A: Question text ── */
+            let questionText = '';
+
+            // The question title is usually the first heading inside the container
+            const headingCandidates = qEl.querySelectorAll(
+                '[role="heading"], .M7eMe, .HoN1Ob, .F3n8vf, ' +
+                '.freebirdFormviewerViewItemsItemItemTitle'
+            );
+            if (headingCandidates.length > 0) {
+                const clone = headingCandidates[0].cloneNode(true);
+                // Remove score labels, required star, etc.
+                clone.querySelectorAll('.DqBBlb, .R4nke, .freebirdFormviewerViewItemsItemRequiredAsterisk').forEach(e => e.remove());
+                questionText = getText(clone);
             }
 
+            // Fallback: first substantial text node
             if (!questionText) {
-                const textNodes = Array.from(qEl.querySelectorAll('div, span')).filter(d => d.children.length === 0 && d.innerText.trim().length > 3);
-                if (textNodes.length > 0) {
-                    questionText = textNodes[0].innerText.trim();
+                for (const el of qEl.querySelectorAll('div, p, span')) {
+                    const t = getText(el);
+                    if (t.length > 5 && el.children.length === 0) {
+                        questionText = t;
+                        break;
+                    }
                 }
             }
 
-            // Remove leading question numbers like "1. ", "س1: ", "1- "
+            // Remove leading numeric indices "1. " "س1:" etc.
             questionText = questionText.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').trim();
-            if (!questionText) {
-                questionText = `السؤال ${qNum}`;
+            if (!questionText) questionText = `السؤال ${qNum}`;
+
+            /* ── 4B: Score / wrong detection ── */
+            let isWrong = false;
+            const fullText = qEl.innerText || '';
+
+            // "0 / 1"  "0/1"  "٠ / ١" etc.
+            if (/\b0\s*\/\s*[1-9]/.test(fullText) || /\b٠\s*\/\s*[١-٩]/.test(fullText)) {
+                isWrong = true;
             }
 
-            // --- B. Check if answer was marked Wrong / Points score ---
-            let isWrong = false;
-            const qTextAll = qEl.innerText || "";
-
-            // Check for score pattern: "0 / 1", "0/1", "٠/١"
-            const zeroPointMatch = /\b0\s*\/\s*[1-9]\b/.test(qTextAll) || /\b٠\s*\/\s*[١-٩]\b/.test(qTextAll);
-            const wrongIcon = qEl.querySelector('.vRMGwf[data-is-correct="false"], svg[fill="#d93025"], .M9Bg4d');
-            
-            if (zeroPointMatch || wrongIcon) {
+            // Red icon anywhere in the container
+            if (!isWrong && isRedHighlighted(qEl)) {
                 isWrong = true;
-            } else {
-                // Check point display element directly
-                const pointEl = qEl.querySelector('.DqBBlb, .R4nke, [aria-label*="نقطة"], [aria-label*="point"]');
-                if (pointEl) {
-                    const ptText = pointEl.innerText.trim();
-                    if (/^[0٠]/.test(ptText)) {
+            }
+
+            // Explicit "الإجابة الصحيحة" / "Correct answer" text block
+            // Google Forms only renders this box when the student answered WRONG
+            let correctAnswerBoxText = '';
+            // Search the whole container text for this pattern
+            const caPattern = /(?:الإجابة الصحيحة|الإجابات الصحيحة|Correct answer|Correct answers)\s*[:\n]+\s*(.+?)(?:\n|$)/i;
+            const caMatch = fullText.match(caPattern);
+            if (caMatch) {
+                correctAnswerBoxText = caMatch[1].trim()
+                    .replace(/\s*\(\s*\d+[^)]*\)\s*$/, '') // strip "(1 نقطة)"
+                    .trim();
+                isWrong = true;
+            }
+
+            // Also try dedicated DOM elements for correct answer box
+            if (!correctAnswerBoxText) {
+                const caEl = qEl.querySelector(
+                    '.c2gzEf, .R305vd, .i9L0be, .N3G8yb, .YMEQ1d, ' +
+                    '[class*="CorrectAnswer"], [class*="correctAnswer"]'
+                );
+                if (caEl) {
+                    let txt = getText(caEl);
+                    txt = txt.replace(/^(الإجابة الصحيحة|الإجابات الصحيحة|Correct answer|Correct answers)\s*[:\n]+\s*/i, '').trim();
+                    txt = txt.replace(/\s*\(\s*\d+[^)]*\)\s*$/, '').trim();
+                    if (txt) {
+                        correctAnswerBoxText = txt;
                         isWrong = true;
                     }
                 }
             }
 
-            // Also check if a "Correct Answer" box is visible (Google Forms only shows this for wrong answers)
-            const correctBox = qEl.querySelector('.c2gzEf, .R305vd, .i9L0be, .N3G8yb, .YMEQ1d');
-            if (correctBox && (correctBox.innerText.includes("الإجابة الصحيحة") || correctBox.innerText.toLowerCase().includes("correct answer"))) {
-                isWrong = true;
-            }
+            if (isWrong) wrongIndices.push(qNum);
 
-            if (isWrong) {
-                wrongIndices.push(qNum);
-            }
-
-            // --- C. Extract Options ---
-            const optionElements = Array.from(qEl.querySelectorAll('[role="radio"], [role="checkbox"], .docssharedWizToggleLabeledContainer, .SG0tKc, .nWQ3Re, .d7L4cf'));
+            /* ── 4C: Extract options ── */
+            const optEls = Array.from(qEl.querySelectorAll('[role="radio"], [role="checkbox"]'));
             const options = [];
-            let checkedOptionText = null;
-            let visuallyCorrectOptionText = null;
+            let checkedOptionText = null;   // the option the student selected
+            let greenOptionText = null;     // the option with a green highlight (correct)
 
-            optionElements.forEach(optEl => {
-                let optText = "";
-                const labelEl = optEl.querySelector('.aDTYNe, .OvPDhc, .ulDsOb, [dir="auto"]') || optEl;
-                if (labelEl) {
-                    optText = labelEl.innerText.trim();
-                }
+            for (const optEl of optEls) {
+                // Get option label text — try labeled span first, then full innerText
+                const labelEl =
+                    optEl.querySelector('.aDTYNe, .OvPDhc, .ulDsOb, [data-answer-value], [dir="auto"]') ||
+                    optEl;
 
-                // Strip leading option letters like "أ- ", "1. "
-                optText = optText.replace(/^[أ-يA-Za-z\d٠-٩][\s\.\:\-\)\/]+\s*/, '').trim();
+                let raw = getText(labelEl);
+
+                // If raw contains multiple lines (e.g. label includes sub-elements), take first line
+                raw = raw.split('\n')[0].trim();
+
+                // Strip "أ) " "1. " prefixes — only when separator char follows immediately
+                const clean = stripOptionPrefix(raw);
+                const optText = clean || raw;
 
                 if (optText && !options.includes(optText)) {
                     options.push(optText);
                 }
 
-                const isChecked = optEl.getAttribute('aria-checked') === 'true' || 
-                                  optEl.querySelector('[aria-checked="true"]') !== null ||
-                                  optEl.classList.contains('N2RpBe') ||
-                                  optEl.querySelector('.u3bW4e') !== null;
+                // Was this option selected by the student?
+                const ariaChecked = optEl.getAttribute('aria-checked');
+                const isChecked = ariaChecked === 'true' ||
+                    optEl.querySelector('[aria-checked="true"]') !== null;
+                if (isChecked && optText) checkedOptionText = optText;
 
-                if (isChecked && optText) {
-                    checkedOptionText = optText;
-                }
-
-                const hasGreen = optEl.querySelector('svg[fill="#137333"], svg[fill="#188038"], .freebirdFormviewerViewItemsRadioCorrectIcon');
-                if (hasGreen && optText) {
-                    visuallyCorrectOptionText = optText;
-                }
-            });
-
-            if (options.length === 0) {
-                options.push("نعم", "لا");
-            }
-
-            // --- D. Extract Correct Answer ---
-            // Priority order:
-            // 1. Explicit "الإجابة الصحيحة" box (only shown when student answered WRONG)
-            // 2. Option with green checkmark icon (shown for correct option always)
-            // 3. If student answered CORRECTLY (isWrong=false), the checked option IS the correct answer
-            // 4. Fallback to first option
-            let correctAnswer = "";
-
-            if (correctBox) {
-                let boxText = correctBox.innerText.trim();
-                boxText = boxText.replace(/^(الإجابة الصحيحة|الإجابات الصحيحة|Correct answer|Correct answers)[\:\s\n]*/i, '').trim();
-                // Remove any trailing point indicators like "(1 نقطة)"
-                boxText = boxText.replace(/\s*\(\d+.*?\)\s*$/, '').trim();
-                if (boxText) {
-                    // Try exact match first, then partial
-                    const matched = options.find(o => o.trim() === boxText) ||
-                                    options.find(o => boxText.includes(o.trim()) || o.trim().includes(boxText));
-                    if (matched) {
-                        correctAnswer = matched;
-                    } else {
-                        correctAnswer = boxText;
-                        if (!options.includes(correctAnswer)) {
-                            options.push(correctAnswer);
-                        }
-                    }
+                // Does this option have a green indicator?
+                if (isGreenHighlighted(optEl) && optText) {
+                    greenOptionText = optText;
                 }
             }
 
-            // Green icon on option (most reliable visual signal)
-            if (!correctAnswer && visuallyCorrectOptionText) {
-                correctAnswer = visuallyCorrectOptionText;
+            if (options.length === 0) options.push('نعم', 'لا');
+
+            /* ── 4D: Determine correct answer ── */
+            let correctAnswer = '';
+
+            // Priority 1: explicit correct-answer text from the box
+            if (correctAnswerBoxText) {
+                // Try to match it to one of the extracted options
+                const exactMatch = options.find(o => o.trim() === correctAnswerBoxText.trim());
+                const partialMatch = options.find(o =>
+                    correctAnswerBoxText.includes(o.trim()) || o.trim().includes(correctAnswerBoxText.trim())
+                );
+                if (exactMatch) {
+                    correctAnswer = exactMatch;
+                } else if (partialMatch) {
+                    correctAnswer = partialMatch;
+                } else {
+                    // Add to options if not present
+                    correctAnswer = correctAnswerBoxText;
+                    if (!options.includes(correctAnswer)) options.push(correctAnswer);
+                }
             }
 
-            // Student answered correctly → checked option IS the answer
+            // Priority 2: green-highlighted option
+            if (!correctAnswer && greenOptionText) {
+                correctAnswer = greenOptionText;
+            }
+
+            // Priority 3: student answered correctly → checked option IS correct
             if (!correctAnswer && !isWrong && checkedOptionText) {
                 correctAnswer = checkedOptionText;
             }
 
-            // Last resort fallback
-            if (!correctAnswer) {
-                correctAnswer = options[0] || "";
-            }
+            // Fallback
+            if (!correctAnswer) correctAnswer = options[0] || '';
 
-            // Ensure correctAnswer is exactly in options (case-insensitive reconciliation)
+            // Case-insensitive reconciliation with options list
             if (correctAnswer && !options.includes(correctAnswer)) {
-                const match = options.find(o => o.trim().toLowerCase() === correctAnswer.trim().toLowerCase());
-                if (match) {
-                    correctAnswer = match;
-                } else {
-                    options.push(correctAnswer);
-                }
+                const ci = options.find(o => o.trim().toLowerCase() === correctAnswer.trim().toLowerCase());
+                if (ci) correctAnswer = ci;
+                else options.push(correctAnswer);
             }
 
-            // --- E. Extract Explanation / Feedback ---
-            let explanation = "";
-            const feedbackEl = qEl.querySelector('.g4k55c, .freebirdFormviewerViewItemsGradingFeedback, .freebirdFormviewerViewItemsGradingFeedbackContainer');
-            if (feedbackEl) {
-                explanation = feedbackEl.innerText.replace(/^(ملاحظات|تعليقات|Feedback)[\:\s\n]*/i, '').trim();
+            /* ── 4E: Feedback / explanation ── */
+            let explanation = '';
+            const fbEl = qEl.querySelector(
+                '.g4k55c, ' +
+                '.freebirdFormviewerViewItemsGradingFeedback, ' +
+                '.freebirdFormviewerViewItemsGradingFeedbackContainer, ' +
+                '[class*="Feedback"]'
+            );
+            if (fbEl) {
+                explanation = getText(fbEl)
+                    .replace(/^(ملاحظات|تعليقات|Feedback)\s*[:\n]+\s*/i, '')
+                    .trim();
             }
 
             questions.push({
                 question: questionText,
-                options: options,
+                options,
                 answer: correctAnswer,
-                explanation: explanation || ""
+                explanation
             });
         });
 
         if (questions.length === 0) {
             return {
                 success: false,
-                error: "لم يتم العثور على أسئلة في هذه الصفحة. يرجى التأكد من فتح صفحة (عرض النتيجة / View score) في Google Forms."
+                error: 'لم يتم العثور على أسئلة (اختيار من متعدد) في هذه الصفحة.\n' +
+                       'تأكد من:\n' +
+                       '1. فتح صفحة "عرض النتيجة / View score" في Google Forms\n' +
+                       '2. انتظار تحميل الصفحة بالكامل قبل الضغط على الإضافة'
             };
         }
 
@@ -211,24 +339,23 @@ function extractGoogleFormsQuiz() {
             data: {
                 quiz_name: quizTitle,
                 wrong: wrongIndices,
-                questions: questions
+                questions
             }
         };
 
     } catch (err) {
         return {
             success: false,
-            error: "حدث خطأ أثناء قراءة كود الصفحة: " + err.message
+            error: 'خطأ غير متوقع: ' + err.message + '\n' + (err.stack || '')
         };
     }
 }
 
-// Support execution via message passing
+// Message-passing support (for background scripts)
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request.action === "EXTRACT_QUIZ") {
-            const res = extractGoogleFormsQuiz();
-            sendResponse(res);
+        if (request.action === 'EXTRACT_QUIZ') {
+            sendResponse(extractGoogleFormsQuiz());
         }
         return true;
     });
