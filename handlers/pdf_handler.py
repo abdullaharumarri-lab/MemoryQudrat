@@ -60,8 +60,9 @@ async def template_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _validate_json_upload(doc, data: dict) -> None:
     """
-    Raises ValueError with an Arabic-friendly message if the uploaded
-    JSON file or its contents fail any security / format check.
+    Validates and intelligently normalizes JSON quiz data in-place.
+    Supports various key aliases (choices, answers, correct, etc.), dict/string options,
+    True/False auto-fill, and letter/number answer index resolution.
     """
     # 1. File size guard
     if doc and hasattr(doc, "file_size") and doc.file_size and doc.file_size > MAX_JSON_FILE_SIZE_BYTES:
@@ -71,31 +72,131 @@ def _validate_json_upload(doc, data: dict) -> None:
             "قسّم الكويز إلى ملفات أصغر."
         )
 
-    # 2. Required top-level keys
-    if "quiz_name" not in data and "name" not in data:
-        raise ValueError("البيانات لا تحتوي على 'quiz_name' أو 'name'.")
-    if "questions" not in data or not isinstance(data["questions"], list):
-        raise ValueError("البيانات لا تحتوي على 'questions' بصيغة قائمة.")
+    if not isinstance(data, dict):
+        if isinstance(data, list):
+            raise ValueError("الملف يجب أن يحتوي على كائن JSON رئيسي يحتوي على 'questions'.")
+        raise ValueError("صيغة البيانات غير صحيحة.")
 
-    # 3. Question count guard
+    # 2. Normalize quiz_name
+    if "quiz_name" not in data:
+        data["quiz_name"] = data.get("name") or data.get("title") or "كويز جديد"
+
+    # 3. Normalize questions list key
+    if "questions" not in data:
+        for possible_key in ["Questions", "items", "quiz", "list"]:
+            if possible_key in data and isinstance(data[possible_key], list):
+                data["questions"] = data[possible_key]
+                break
+
+    if "questions" not in data or not isinstance(data["questions"], list):
+        raise ValueError("البيانات لا تحتوي على قائمة أسئلة 'questions'.")
+
     if len(data["questions"]) == 0:
         raise ValueError("البيانات لا تحتوي على أي أسئلة.")
+
     if len(data["questions"]) > MAX_QUESTIONS_PER_QUIZ:
         raise ValueError(
             f"عدد الأسئلة ({len(data['questions'])}) يتجاوز الحد المسموح ({MAX_QUESTIONS_PER_QUIZ} سؤال). "
             "قسّم الكويز إلى أجزاء أصغر."
         )
 
-    # 4. Per-question validation
+    # 4. Per-question validation and auto-repair
     for i, q in enumerate(data["questions"], start=1):
         if not isinstance(q, dict):
-            raise ValueError(f"السؤال رقم {i} ليس بصيغة صحيحة.")
+            raise ValueError(f"السؤال رقم {i} ليس بصيغة صحيحة (يجب أن يكون كائن JSON).")
+
+        # Normalize question text key
         if "question" not in q:
-            raise ValueError(f"السؤال رقم {i} لا يحتوي على حقل 'question'.")
-        if "options" not in q or not isinstance(q.get("options"), list) or len(q["options"]) < 2:
-            raise ValueError(f"السؤال رقم {i} يحتاج حقل 'options' بقائمة تحتوي خيارَين على الأقل.")
+            for k in ["q", "question_text", "text", "title", "prompt"]:
+                if k in q and q[k]:
+                    q["question"] = str(q[k])
+                    break
+        if "question" not in q or not str(q["question"]).strip():
+            raise ValueError(f"السؤال رقم {i} لا يحتوي على نص السؤال ('question').")
+
+        # Normalize options key
+        if "options" not in q:
+            for k in ["choices", "answers", "options_list", "alternatives", "opts"]:
+                if k in q:
+                    q["options"] = q[k]
+                    break
+
+        # Handle options formats (dict, list of dicts, list of strings, comma/newline string)
+        raw_opts = q.get("options")
+        normalized_opts = []
+        if isinstance(raw_opts, dict):
+            normalized_opts = [str(v).strip() for v in raw_opts.values() if str(v).strip()]
+        elif isinstance(raw_opts, list):
+            for opt in raw_opts:
+                if isinstance(opt, dict):
+                    opt_val = opt.get("text") or opt.get("label") or opt.get("value") or str(opt)
+                    if str(opt_val).strip():
+                        normalized_opts.append(str(opt_val).strip())
+                elif str(opt).strip():
+                    normalized_opts.append(str(opt).strip())
+        elif isinstance(raw_opts, str):
+            if "\n" in raw_opts:
+                normalized_opts = [line.strip() for line in raw_opts.splitlines() if line.strip()]
+            elif "," in raw_opts:
+                normalized_opts = [part.strip() for part in raw_opts.split(",") if part.strip()]
+            elif raw_opts.strip():
+                normalized_opts = [raw_opts.strip()]
+
+        # Normalize answer key
         if "answer" not in q:
-            raise ValueError(f"السؤال رقم {i} لا يحتوي على حقل 'answer'.")
+            for k in ["correct_answer", "correct", "right_answer", "ans", "solution"]:
+                if k in q and q[k] is not None:
+                    q["answer"] = str(q[k]).strip()
+                    break
+
+        ans = str(q.get("answer", "")).strip()
+
+        # If options are fewer than 2: auto-repair gracefully
+        if len(normalized_opts) == 0:
+            if ans in ["صح", "خطأ", "True", "False", "نعم", "لا"]:
+                normalized_opts = ["صح", "خطأ"] if ans in ["صح", "خطأ", "True", "False"] else ["نعم", "لا"]
+                if not ans: ans = "صح"
+            elif ans:
+                normalized_opts = [ans, "خيار بديل"]
+            else:
+                normalized_opts = ["صح", "خطأ"]
+                ans = "صح"
+        elif len(normalized_opts) == 1:
+            if normalized_opts[0] in ["صح", "خطأ"]:
+                normalized_opts = ["صح", "خطأ"]
+            elif normalized_opts[0] in ["نعم", "لا"]:
+                normalized_opts = ["نعم", "لا"]
+            else:
+                normalized_opts.append("خيار بديل")
+
+        # Resolve answer if given as index (0, 1 or "A", "B" or "أ", "ب")
+        if not ans:
+            ans = normalized_opts[0]
+        elif ans not in normalized_opts:
+            if ans.isdigit():
+                idx = int(ans)
+                if 0 <= idx < len(normalized_opts):
+                    ans = normalized_opts[idx]
+                elif 1 <= idx <= len(normalized_opts):
+                    ans = normalized_opts[idx - 1]
+            elif ans.upper() in ["A", "B", "C", "D", "E", "F", "G", "H"]:
+                letter_idx = ord(ans.upper()) - ord("A")
+                if 0 <= letter_idx < len(normalized_opts):
+                    ans = normalized_opts[letter_idx]
+            elif ans in ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح"]:
+                arabic_letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح"]
+                a_idx = arabic_letters.index(ans)
+                if 0 <= a_idx < len(normalized_opts):
+                    ans = normalized_opts[a_idx]
+            else:
+                # If still not found, add it to options so it's a valid option
+                if len(normalized_opts) < 10:
+                    normalized_opts.append(ans)
+                else:
+                    ans = normalized_opts[0]
+
+        q["options"] = normalized_opts
+        q["answer"] = ans
 
 
 async def process_json_quiz_data(
