@@ -426,3 +426,60 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+# ─── PDF File Handler (AI Extractor) ──────────────────────────────────────────
+
+async def pdf_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handles PDF uploads (e.g. Google Forms results printed to PDF or test PDFs).
+    Uses Gemini AI to extract questions, correct answers, and wrong question indices.
+    """
+    msg_obj = update.effective_message
+    if not msg_obj or not msg_obj.document: return
+
+    doc = msg_obj.document
+    chat_id = update.effective_chat.id
+    if update.message:
+        db.track_chat_message(chat_id, update.message.message_id)
+
+    await send_clean_message(
+        context=context,
+        chat_id=chat_id,
+        update=update,
+        text="🤖 <b>جاري قراءة وتدقيق واستخراج الأسئلة بالذكاء الاصطناعي...</b> ⏳\n<i>(سيتم حل المسائل وتحديد الإجابات الصحيحة وأخطائك تلقائياً)</i>"
+    )
+
+    tmp_path = None
+    try:
+        from ai_extractor import extract_questions_from_pdf
+        file = await doc.get_file()
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp_path = tmp.name
+        await file.download_to_drive(tmp_path)
+
+        data = await extract_questions_from_pdf(tmp_path)
+
+        # Validate & normalize
+        _validate_json_upload(None, data)
+
+        user = update.effective_user
+        quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
+        quiz_update_id = context.user_data.pop("waiting_for_json_update", None)
+
+        await process_json_quiz_data(
+            data=data,
+            user=user,
+            context=context,
+            chat_id=chat_id,
+            update=update,
+            quiz_upgrade_id=quiz_upgrade_id,
+            quiz_update_id=quiz_update_id
+        )
+
+    except Exception as e:
+        err = f"❌ <b>تعذر استخراج الأسئلة من ملف PDF:</b>\n{str(e)}"
+        await send_clean_message(context, chat_id, err, update=update)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)

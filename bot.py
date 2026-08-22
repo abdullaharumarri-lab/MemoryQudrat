@@ -16,7 +16,7 @@ from telegram.ext import (
 import database as db
 from config import TELEGRAM_BOT_TOKEN
 from handlers.main_menu import main_menu_handler, button_handler, url_text_handler, fixstage_command
-from handlers.pdf_handler import json_document_handler, template_command
+from handlers.pdf_handler import json_document_handler, template_command, pdf_document_handler
 from utils import send_clean_message
 
 logging.basicConfig(
@@ -239,13 +239,16 @@ def main():
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("json"), json_document_handler
     ))
+    app.add_handler(MessageHandler(
+        filters.Document.PDF | filters.Document.FileExtension("pdf"), pdf_document_handler
+    ))
 
     from handlers.creation_handler import handle_media_upload, handle_incoming_poll
     app.add_handler(MessageHandler(
         filters.PHOTO, handle_media_upload
     ))
     app.add_handler(MessageHandler(
-        filters.Document.ALL & ~filters.Document.MimeType("application/json") & ~filters.Document.FileExtension("json"), handle_media_upload
+        filters.Document.ALL & ~filters.Document.MimeType("application/json") & ~filters.Document.FileExtension("json") & ~filters.Document.PDF & ~filters.Document.FileExtension("pdf"), handle_media_upload
     ))
     
     # ── Native Telegram Poll / Quiz Handler ──────────────────────────────────
