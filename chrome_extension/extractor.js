@@ -63,23 +63,26 @@ function extractGoogleFormsQuiz() {
 
             // --- B. Check if answer was marked Wrong / Points score ---
             let isWrong = false;
-            const pointEl = qEl.querySelector('.DqBBlb, .R4nke, .c2gzEf, [aria-label*="نقطة"], [aria-label*="point"]');
             const qTextAll = qEl.innerText || "";
-            
-            // Check for 0/1 or 0 / 1 or ٠/١ or wrong icons
-            const zeroPointMatch = qTextAll.match(/\b0\s*[\/|\\]\s*[1-9]\b/) || qTextAll.match(/\b٠\s*[\/|\\]\s*[١-٩]\b/);
+
+            // Check for score pattern: "0 / 1", "0/1", "٠/١"
+            const zeroPointMatch = /\b0\s*\/\s*[1-9]\b/.test(qTextAll) || /\b٠\s*\/\s*[١-٩]\b/.test(qTextAll);
             const wrongIcon = qEl.querySelector('.vRMGwf[data-is-correct="false"], svg[fill="#d93025"], .M9Bg4d');
             
             if (zeroPointMatch || wrongIcon) {
                 isWrong = true;
-            } else if (pointEl) {
-                const ptText = pointEl.innerText.trim();
-                if (ptText.startsWith("0") || ptText.startsWith("٠")) {
-                    isWrong = true;
+            } else {
+                // Check point display element directly
+                const pointEl = qEl.querySelector('.DqBBlb, .R4nke, [aria-label*="نقطة"], [aria-label*="point"]');
+                if (pointEl) {
+                    const ptText = pointEl.innerText.trim();
+                    if (/^[0٠]/.test(ptText)) {
+                        isWrong = true;
+                    }
                 }
             }
 
-            // Also check if a "Correct Answer" box is visible (Google Forms displays this only for wrong answers)
+            // Also check if a "Correct Answer" box is visible (Google Forms only shows this for wrong answers)
             const correctBox = qEl.querySelector('.c2gzEf, .R305vd, .i9L0be, .N3G8yb, .YMEQ1d');
             if (correctBox && (correctBox.innerText.includes("الإجابة الصحيحة") || correctBox.innerText.toLowerCase().includes("correct answer"))) {
                 isWrong = true;
@@ -129,13 +132,22 @@ function extractGoogleFormsQuiz() {
             }
 
             // --- D. Extract Correct Answer ---
+            // Priority order:
+            // 1. Explicit "الإجابة الصحيحة" box (only shown when student answered WRONG)
+            // 2. Option with green checkmark icon (shown for correct option always)
+            // 3. If student answered CORRECTLY (isWrong=false), the checked option IS the correct answer
+            // 4. Fallback to first option
             let correctAnswer = "";
 
             if (correctBox) {
                 let boxText = correctBox.innerText.trim();
                 boxText = boxText.replace(/^(الإجابة الصحيحة|الإجابات الصحيحة|Correct answer|Correct answers)[\:\s\n]*/i, '').trim();
+                // Remove any trailing point indicators like "(1 نقطة)"
+                boxText = boxText.replace(/\s*\(\d+.*?\)\s*$/, '').trim();
                 if (boxText) {
-                    const matched = options.find(o => o.trim() === boxText || boxText.includes(o.trim()) || o.trim().includes(boxText));
+                    // Try exact match first, then partial
+                    const matched = options.find(o => o.trim() === boxText) ||
+                                    options.find(o => boxText.includes(o.trim()) || o.trim().includes(boxText));
                     if (matched) {
                         correctAnswer = matched;
                     } else {
@@ -147,22 +159,23 @@ function extractGoogleFormsQuiz() {
                 }
             }
 
+            // Green icon on option (most reliable visual signal)
             if (!correctAnswer && visuallyCorrectOptionText) {
                 correctAnswer = visuallyCorrectOptionText;
             }
 
-            if (!correctAnswer) {
-                if (!isWrong && checkedOptionText) {
-                    correctAnswer = checkedOptionText;
-                } else if (checkedOptionText) {
-                    correctAnswer = checkedOptionText;
-                } else {
-                    correctAnswer = options[0];
-                }
+            // Student answered correctly → checked option IS the answer
+            if (!correctAnswer && !isWrong && checkedOptionText) {
+                correctAnswer = checkedOptionText;
             }
 
-            // Ensure correctAnswer is in options
-            if (!options.includes(correctAnswer)) {
+            // Last resort fallback
+            if (!correctAnswer) {
+                correctAnswer = options[0] || "";
+            }
+
+            // Ensure correctAnswer is exactly in options (case-insensitive reconciliation)
+            if (correctAnswer && !options.includes(correctAnswer)) {
                 const match = options.find(o => o.trim().toLowerCase() === correctAnswer.trim().toLowerCase());
                 if (match) {
                     correctAnswer = match;

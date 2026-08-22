@@ -22,43 +22,57 @@ async function initExtractor() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
-    if (!tab || !tab.url || !tab.url.includes("docs.google.com/forms/")) {
+    if (!tab || !tab.url) {
       showState("not-forms");
       return;
     }
 
-    // Inject extractor.js into active tab
-    const results = await chrome.scripting.executeScript({
+    // Must be on Google Forms domain
+    if (!tab.url.includes("docs.google.com/forms/")) {
+      showState("not-forms");
+      return;
+    }
+
+    // Step 1: Inject extractor.js into the tab
+    await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ["extractor.js"]
     });
 
-    // Execute extractGoogleFormsQuiz in the tab context
+    // Step 2: Call the extraction function (already injected above)
     const execResults = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
         if (typeof extractGoogleFormsQuiz === "function") {
           return extractGoogleFormsQuiz();
         }
-        return { success: false, error: "دالة الاستخراج غير معرّفة" };
+        return { success: false, error: "دالة الاستخراج غير موجودة — يرجى إعادة تحميل الصفحة وحاول مرة أخرى." };
       }
     });
 
-    if (execResults && execResults[0] && execResults[0].result) {
-      const response = execResults[0].result;
-      if (response.success && response.data) {
-        extractedData = response.data;
-        renderQuizData(extractedData);
-        showState("content");
-      } else {
-        showError(response.error || "تعذر العثور على أسئلة في هذه الصفحة.");
-      }
+    if (!execResults || !execResults[0] || execResults[0].result === undefined) {
+      showError("لم يتم الحصول على نتيجة من الصفحة. تأكد من فتح صفحة (عرض النتيجة) في Google Forms.");
+      return;
+    }
+
+    const response = execResults[0].result;
+
+    if (response && response.success && response.data) {
+      extractedData = response.data;
+      renderQuizData(extractedData);
+      showState("content");
     } else {
-      showError("تعذر تنفيذ سكريبت الاستخراج على هذه الصفحة.");
+      showError(response && response.error ? response.error : "تعذر العثور على أسئلة في هذه الصفحة.");
     }
 
   } catch (err) {
-    showError("حدث خطأ أثناء التواصل مع الصفحة: " + err.message);
+    // Handle common permission errors
+    const msg = err.message || "";
+    if (msg.includes("Cannot access") || msg.includes("permission")) {
+      showError("لا يمكن الوصول إلى هذه الصفحة. تأكد من أن الصفحة محملة بالكامل ثم أعد المحاولة.");
+    } else {
+      showError("خطأ غير متوقع: " + msg);
+    }
   }
 }
 
