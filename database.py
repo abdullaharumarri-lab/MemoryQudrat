@@ -911,6 +911,21 @@ def advance_quiz_review(review_id: int, user_id: int = None):
     conn.close()
 
 
+def advance_quiz_review_for_quiz(quiz_id: int, user_id: int = 6099429826) -> bool:
+    """
+    Finds the active review for this quiz and user (if any) and advances it to next stage.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        advance_quiz_review(row["id"], user_id=user_id)
+        return True
+    return False
+
+
 # ─── Weak Questions ───────────────────────────────────────────────────────────
 
 def add_or_reset_weak_question(quiz_id: int, question_id: int, user_id: int = 6099429826):

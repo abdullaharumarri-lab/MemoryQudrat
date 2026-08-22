@@ -486,7 +486,7 @@ def quizzes_keyboard(quizzes: list, page: int = 1):
 
 def quiz_menu_keyboard(quiz_id: int):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ ابدأ الكويز (تجربة)", callback_data=f"start_practice_{quiz_id}")],
+        [InlineKeyboardButton("▶️ ابدأ الكويز", callback_data=f"start_quiz_{quiz_id}")],
         [
             InlineKeyboardButton("🔄 إعادة رفع / تحديث (JSON)", callback_data=f"reupload_json_{quiz_id}"),
             InlineKeyboardButton("🛠 تعديل الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0"),
@@ -1421,7 +1421,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
     elif data.startswith("start_practice_"):
         quiz_id = int(data.split("_")[-1])
         from handlers.quiz_handler import start_quiz_session
-        await start_quiz_session(update, context, quiz_id, session_type="practice")
+        await start_quiz_session(update, context, quiz_id, session_type="quiz")
 
     # ── Delete quiz ──
     elif data.startswith("delete_quiz_"):

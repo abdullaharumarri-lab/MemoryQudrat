@@ -106,6 +106,15 @@ async def start_quiz_session(
         else:
             title = "▶️ الكويز"
 
+    if not review_id and quiz_id and session_type not in ("weakall", "weak", "weakpractice"):
+        conn = db.get_connection()
+        c = conn.cursor()
+        c.execute("SELECT id FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id))
+        r = c.fetchone()
+        conn.close()
+        if r:
+            review_id = r["id"]
+
     db.save_session(
         session_type=session_type,
         quiz_id=quiz_id,
@@ -457,21 +466,27 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
     elif score >= 40: rating = "📚 تحتاج مراجعة"
     else: rating = "💪 استمر في المحاولة"
 
-    if session_type != "practice":
-        for wq_id in wrong_ids:
-            if session_type == "weakall":
-                # For weakall, look up the question's own quiz_id
-                q = db.get_question(wq_id)
-                if q:
-                    db.add_or_reset_weak_question(q["quiz_id"], wq_id, user_id=user_id)
-            else:
-                db.add_or_reset_weak_question(quiz_id, wq_id, user_id=user_id)
+    # Always record mistakes into weak questions
+    for wq_id in wrong_ids:
+        if session_type == "weakall":
+            q = db.get_question(wq_id)
+            if q:
+                db.add_or_reset_weak_question(q["quiz_id"], wq_id, user_id=user_id)
+        elif quiz_id:
+            db.add_or_reset_weak_question(quiz_id, wq_id, user_id=user_id)
 
     sr_text = ""
-    if session_type in ("quiz", "review") and session.get("review_id"):
-        db.advance_quiz_review(session["review_id"], user_id=user_id)
-        sr_text = "✅ تمت المراجعة وجُدوِّل الموعد التالي تلقائياً."
+    # Check if there is an active review to advance
+    review_id = session.get("review_id")
+    advanced = False
+    if review_id:
+        db.advance_quiz_review(review_id, user_id=user_id)
+        advanced = True
+    elif quiz_id and session_type not in ("weakall", "weak", "weakpractice"):
+        advanced = db.advance_quiz_review_for_quiz(quiz_id, user_id=user_id)
 
+    if advanced:
+        sr_text = "✅ تم تسجيل حلك وتقدم الكويز للمرحلة التالية في التكرار المتباعد 🧠!"
     elif session_type == "weak":
         weak_all = db.get_due_weak_questions(user_id=user_id)
         quiz_weak = {w["question_id"]: w for w in weak_all if w["quiz_id"] == quiz_id}
@@ -488,17 +503,10 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         for qid in correct_ids:
             if qid in all_weak_map:
                 db.advance_weak_question(all_weak_map[qid]["id"])
-        sr_text = f"✅ تم تثبيت إجاباتك وجدولة التكرار اليومي لـ {len(correct_ids)} سؤال (محفوظة دائماً وتتكرر يومياً)."
+        sr_text = f"✅ تم تثبيت إجاباتك وجدولة التكرار لـ {len(correct_ids)} سؤال."
 
-    elif session_type == "practice":
-        sr_text = "🎮 وضع التجربة — لم يتم احتساب هذه الجلسة في المراجعات."
-
-    elif session_type == "weakpractice":
-        sr_text = "🛠 تدريب على الأخطاء — هذه الجلسة لم تؤثر على جداول التكرار."
-
-    # Log session for stats (exclude practice modes)
-    if session_type not in ("practice", "weakpractice"):
-        db.log_session(quiz_id if quiz_id != 0 else None, session_type, total, correct, len(wrong_ids), user_id=user_id)
+    # Log session for stats
+    db.log_session(quiz_id if quiz_id != 0 else None, session_type, total, correct, len(wrong_ids), user_id=user_id)
 
     result_text = (
         f"🎉 <b>انتهى الكويز!</b>\n\n"
