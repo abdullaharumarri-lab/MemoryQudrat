@@ -14,21 +14,6 @@ logger = logging.getLogger(__name__)
 safe_edit_html = safe_edit
 
 
-def build_question_keyboard(options: list, question_id: int, session_type: str) -> InlineKeyboardMarkup:
-    """Build MCQ keyboard with options."""
-    keyboard = []
-    letters = ["أ", "ب", "ج", "د", "هـ", "و"]
-    for idx, opt in enumerate(options):
-        letter = letters[idx] if idx < len(letters) else str(idx+1)
-        keyboard.append([InlineKeyboardButton(f"{letter}) {opt}", callback_data=f"ans_{session_type}_{question_id}_{idx}")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-def format_progress(current: int, total: int, correct: int) -> str:
-    filled = int((current / total) * 10) if total > 0 else 0
-    bar = "🟩" * filled + "⬜" * (10 - filled)
-    return f"{bar}\n❓ {current}/{total} | ✅ {correct} صح"
-
 
 async def start_quiz_session(
     update: Update,

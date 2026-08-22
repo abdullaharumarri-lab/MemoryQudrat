@@ -336,7 +336,7 @@ def get_total_users_count() -> int:
 
 
 def get_all_broadcast_recipients() -> list[int]:
-    """Returns a deduplicated list of all user IDs and chat IDs for broadcast."""
+    """Returns a deduplicated list of all user IDs for broadcast."""
     conn = get_connection()
     cursor = conn.cursor()
     recipients = set()
@@ -345,13 +345,6 @@ def get_all_broadcast_recipients() -> list[int]:
         for r in cursor.fetchall():
             if r["user_id"]:
                 recipients.add(int(r["user_id"]))
-    except Exception:
-        pass
-    try:
-        cursor.execute("SELECT chat_id FROM user_chats")
-        for r in cursor.fetchall():
-            if r["chat_id"]:
-                recipients.add(int(r["chat_id"]))
     except Exception:
         pass
     conn.close()
