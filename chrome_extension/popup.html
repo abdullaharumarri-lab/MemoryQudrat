@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MemoryQudrat Extractor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-box">
+        <span class="logo-icon">🧠</span>
+        <div class="title-wrap">
+          <h1>مستخرج كويزات القدرات</h1>
+          <span class="badge">MemoryQudrat v1.0</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content State -->
+    <div id="loading" class="state-box">
+      <div class="spinner"></div>
+      <p>جاري فحص صفحة الاختبار واستخراج الأسئلة...</p>
+    </div>
+
+    <div id="not-forms" class="state-box hidden">
+      <div class="icon-warning">⚠️</div>
+      <h3>لست في صفحة Google Forms!</h3>
+      <p>يرجى فتح صفحة <b>(عرض النتيجة / View score)</b> في Google Forms ثم النقر على الإضافة مرة أخرى.</p>
+    </div>
+
+    <div id="error-box" class="state-box hidden">
+      <div class="icon-error">❌</div>
+      <h3>تعذر الاستخراج</h3>
+      <p id="error-message"></p>
+      <button id="retry-btn" class="btn btn-secondary">🔄 إعادة المحاولة</button>
+    </div>
+
+    <div id="content" class="content-box hidden">
+      <!-- Quiz Info Card -->
+      <div class="quiz-info-card">
+        <div class="quiz-title-row">
+          <span class="label">اسم الكويز:</span>
+          <input type="text" id="quiz-name-input" class="quiz-name-input" placeholder="اسم الكويز...">
+        </div>
+
+        <div class="stats-row">
+          <div class="stat-card">
+            <span class="stat-num" id="total-count">0</span>
+            <span class="stat-label">إجمالي الأسئلة</span>
+          </div>
+          <div class="stat-card stat-wrong">
+            <span class="stat-num" id="wrong-count">0</span>
+            <span class="stat-label">أخطاء محددة</span>
+          </div>
+          <div class="stat-card stat-correct">
+            <span class="stat-num" id="accuracy-rate">100%</span>
+            <span class="stat-label">دقة الاستخراج</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="action-buttons">
+        <button id="download-btn" class="btn btn-primary">
+          <span class="btn-icon">📥</span> تحميل ملف JSON
+        </button>
+        <button id="copy-btn" class="btn btn-secondary">
+          <span class="btn-icon">📋</span> نسخ الـ JSON
+        </button>
+      </div>
+
+      <div id="copy-feedback" class="copy-feedback hidden">✅ تم نسخ كود الـ JSON بنجاح!</div>
+
+      <!-- Preview Accordion -->
+      <div class="preview-section">
+        <div class="preview-header" id="toggle-preview">
+          <span>👁️ معاينة الأسئلة والإجابات (<span id="preview-count">0</span>)</span>
+          <span id="preview-arrow" class="arrow">▼</span>
+        </div>
+        <div id="preview-list" class="preview-list hidden"></div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>متوافق 100% مع تيليجرام والتكرار المتباعد</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
