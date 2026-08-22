@@ -183,6 +183,7 @@ def init_db():
     except sqlite3.OperationalError: pass
 
     cursor.execute("UPDATE quizzes SET is_public = 1 WHERE is_public IS NULL")
+    cursor.execute("UPDATE quizzes SET owner_id = ? WHERE owner_id IS NULL", (ADMIN_USER_ID,))
 
     # Categories: add parent_id, is_public, icon, sort_order, owner_id if missing
     try:
@@ -485,16 +486,24 @@ def get_quizzes_by_category(category_id: int = None, user_id: int = None, is_pub
     """Returns quizzes belonging to a specific category."""
     conn = get_connection()
     cursor = conn.cursor()
+    from config import is_admin
     if is_public == 1:
         if category_id is not None:
             cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id DESC", (category_id,))
         else:
             cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id IS NULL ORDER BY id DESC")
     else:
-        if category_id is not None:
-            cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id = ? ORDER BY id DESC", (user_id, category_id))
+        if user_id is not None and is_admin(user_id):
+            # Admin private view: includes all quizzes owned by admin or legacy unassigned
+            if category_id is not None:
+                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id = ? ORDER BY id DESC", (user_id, category_id))
+            else:
+                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id IS NULL ORDER BY id DESC", (user_id,))
         else:
-            cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL ORDER BY id DESC", (user_id,))
+            if category_id is not None:
+                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id = ? ORDER BY id DESC", (user_id, category_id))
+            else:
+                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL ORDER BY id DESC", (user_id,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
@@ -503,8 +512,11 @@ def get_quizzes_by_category(category_id: int = None, user_id: int = None, is_pub
 def get_category_quizzes_count(category_id: int, user_id: int = None) -> int:
     conn = get_connection()
     cursor = conn.cursor()
-    if user_id is not None:
-        cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND owner_id = ?", (category_id, user_id))
+    from config import is_admin
+    if user_id is not None and is_admin(user_id):
+        cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND (owner_id = ? OR owner_id IS NULL)", (category_id, user_id))
+    elif user_id is not None:
+        cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND owner_id = ? AND is_public = 0", (category_id, user_id))
     else:
         cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND is_public = 1", (category_id,))
     row = cursor.fetchone()
@@ -615,13 +627,20 @@ def get_public_quizzes(category_id: int = None) -> list:
 
 
 def get_user_private_quizzes(user_id: int) -> list:
-    """Returns quizzes uploaded privately by the given user."""
+    """Returns quizzes uploaded privately by the given user (or all created quizzes if admin)."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM quizzes WHERE owner_id = ? AND is_public = 0 ORDER BY id DESC",
-        (user_id,),
-    )
+    from config import is_admin
+    if is_admin(user_id):
+        cursor.execute(
+            "SELECT * FROM quizzes WHERE owner_id = ? OR owner_id IS NULL ORDER BY id DESC",
+            (user_id,),
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM quizzes WHERE owner_id = ? AND is_public = 0 ORDER BY id DESC",
+            (user_id,),
+        )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows

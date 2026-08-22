@@ -1,4 +1,5 @@
 import html
+import json
 import pytz
 import logging
 import re
@@ -181,6 +182,38 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [[InlineKeyboardButton("🔙 العودة للسؤال", callback_data=f"fixstage_qedit_{quiz_id}_{q_id_edit}")]]
         await context.bot.send_message(chat_id, "✅ تم تحديث نص السؤال بنجاح!", reply_markup=InlineKeyboardMarkup(kb))
         return
+
+    # ── JSON Text Upload or Upgrade Handler ──
+    raw_text = msg.strip()
+    is_json_candidate = (
+        context.user_data.get("waiting_for_json_upgrade") or 
+        context.user_data.get("waiting_for_json_upload") or
+        (raw_text.startswith("{") and "questions" in raw_text)
+    )
+    if is_json_candidate and (raw_text.startswith("{") or "questions" in raw_text):
+        try:
+            data = json.loads(raw_text)
+            from handlers.pdf_handler import _validate_json_upload, process_json_quiz_data
+            _validate_json_upload(None, data)
+            quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
+            context.user_data.pop("waiting_for_json_upload", None)
+            await process_json_quiz_data(
+                data=data,
+                user=user,
+                context=context,
+                chat_id=chat_id,
+                update=update,
+                quiz_upgrade_id=quiz_upgrade_id
+            )
+            return
+        except json.JSONDecodeError:
+            if context.user_data.get("waiting_for_json_upgrade") or context.user_data.get("waiting_for_json_upload"):
+                await send_clean_message(context, chat_id, "❌ <b>صيغة JSON غير صحيحة!</b>\nتأكد من صحة الأقواس والفواصل.", update=update)
+                return
+        except ValueError as ve:
+            if context.user_data.get("waiting_for_json_upgrade") or context.user_data.get("waiting_for_json_upload"):
+                await send_clean_message(context, chat_id, f"❌ <b>خطأ في محتوى JSON:</b>\n{ve}", update=update)
+                return
 
     # If it's a URL, process it regardless of state
     is_url = msg and (msg.startswith("http://") or msg.startswith("https://"))
@@ -982,13 +1015,25 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Upload JSON ──
     elif data == "upload_json":
+        context.user_data["waiting_for_json_upload"] = True
         await safe_edit(
             query,
-            "📋 <b>2- رفع كويز عبر ملف JSON</b>\n\n"
-            "أرسل ملف JSON الخاص بالكويز الآن 📄.\n\n"
-            "💡 <i>للحصول على قالب JSON الجاهز، يمكنك كتابة أمر /template</i>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]]),
+            "📋 <b>2- رفع كويز عبر JSON</b>\n\n"
+            "يمكنك إضافة الكويز بإحدى طريقتين:\n"
+            "1️⃣ <b>إرسال ملف .json</b> كمستند 📄\n"
+            "2️⃣ <b>أو نسخ ولصق نص الـ JSON</b> مباشرة في المحادثة ✍️\n\n"
+            "<i>(يدعم تحديد الأسئلة الضعيفة مباشرة عبر حقل wrong)</i>",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📄 تحميل نموذج JSON", callback_data="get_json_template")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]
+            ]),
         )
+
+    # ── Get JSON Template Callback ──
+    elif data == "get_json_template":
+        from handlers.pdf_handler import template_command
+        await template_command(update, context)
+        return
 
     # ── Upload URL ──
     elif data == "upload_url":
@@ -1524,13 +1569,21 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
     elif data.startswith("upgrade_json_"):
         quiz_id = int(data.split("_")[-1])
         context.user_data["waiting_for_json_upgrade"] = quiz_id
-        await safe_edit(
-            query,
-            "🔄 <b>تحويل إلى JSON</b>\n\n"
-            "الرجاء إرسال ملف الـ JSON الخاص بهذا الكويز ليتم دمجه والبدء بتتبع الأسئلة الضعيفة.\n\n"
-            "<i>(لن تفقد تقدمك الحالي في التكرار المتباعد)</i>",
-            InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="due_reviews")]])
+        quiz = db.get_quiz(quiz_id)
+        q_url = quiz.get("url") if quiz else ""
+        text = (
+            "🔄 <b>تحويل الرابط إلى أسئلة تفاعلية (JSON)</b>\n\n"
+            f"🔗 الرابط الحالي: <code>{html.escape(q_url or '')}</code>\n\n"
+            "لتحويل هذا الرابط إلى كويز تفاعلي وحفظ أخطائك وتكرارها، يمكنك:\n"
+            "1️⃣ <b>إرسال ملف .json</b> كمستند 📄\n"
+            "2️⃣ <b>أو لصق نص الـ JSON</b> مباشرة في رسالة نصية ✍️\n\n"
+            "<i>(لن تفقد تقدمك ومواعيد مراجعاتك السابقة)</i>"
         )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 تحميل نموذج JSON", callback_data="get_json_template")],
+            [InlineKeyboardButton("❌ إلغاء", callback_data=f"bank_quiz_{quiz_id}")]
+        ])
+        await safe_edit(query, text, kb)
 
     # ── Weak questions ──
     elif data == "weak_questions":

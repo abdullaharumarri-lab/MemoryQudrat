@@ -125,11 +125,7 @@ async def error_handler(update, context):
 
 
 async def post_init(application):
-    try:
-        db.clear_session()
-        logger.info("Cleared stale sessions.")
-    except Exception as e:
-        logger.warning("Error clearing sessions: %s", e)
+    logger.info("Bot initializing post_init...")
 
     try:
         users = db.get_all_users()

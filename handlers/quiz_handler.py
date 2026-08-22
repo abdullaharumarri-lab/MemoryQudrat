@@ -188,14 +188,16 @@ async def send_next_question(update, context, session):
         chat_id = update.effective_chat.id
     elif update and getattr(update, "poll_answer", None) and update.poll_answer.user:
         chat_id = update.poll_answer.user.id
+    elif update and getattr(update, "callback_query", None) and update.callback_query.message:
+        chat_id = update.callback_query.message.chat.id
     elif context.user_data.get("chat_id"):
         chat_id = context.user_data["chat_id"]
+    elif user_id:
+        chat_id = user_id
             
     if not chat_id:
-        logger.error("Could not determine chat_id to send poll.")
-        return
-    else:
-        context.user_data["chat_id"] = chat_id
+        chat_id = user_id
+    context.user_data["chat_id"] = chat_id
 
     # Check Telegram Poll limits (Question max 300, Option max 100)
     long_question = len(q_text) > 250
@@ -213,7 +215,7 @@ async def send_next_question(update, context, session):
             for idx, opt in enumerate(options):
                 letter = letters[idx] if idx < len(letters) else str(idx+1)
                 context_text += f"\n<b>{letter})</b> {html.escape(opt)}"
-                poll_options.append(letter)
+                poll_options.append(f"الخيار ({letter})")
             poll_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة من الرسالة أعلاه):"
         else:
             poll_question = f"السؤال {session['current_index'] + 1} (نص السؤال في الرسالة أعلاه):"
@@ -254,8 +256,8 @@ async def send_next_question(update, context, session):
         poll_options = ["(خيار 1)", "(خيار 2)"]
     if len(poll_options) > 10:
         poll_options = poll_options[:10]
-    if correct_idx >= len(poll_options) or correct_idx < 0:
-        correct_idx = 0
+    
+    correct_idx = max(0, min(correct_idx, len(poll_options) - 1))
 
     poll_question_clean = str(poll_question).strip()
     if not poll_question_clean:
@@ -272,22 +274,33 @@ async def send_next_question(update, context, session):
         "is_anonymous": False,
     }
     if explanation:
-        poll_kwargs["explanation"] = explanation
+        clean_exp = strip_html_tags(str(explanation).strip())[:190]
+        if clean_exp:
+            poll_kwargs["explanation"] = clean_exp
 
+    poll_msg = None
     try:
         poll_msg = await context.bot.send_poll(**poll_kwargs)
     except Exception as poll_err:
-        logger.warning("send_poll failed with error: %s. Trying sanitized fallback poll...", poll_err)
-        fallback_options = [f"الخيار {letters[i]}" if i < len(letters) else f"خيار {i+1}" for i in range(len(poll_options))]
-        fallback_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة):"
-        poll_msg = await context.bot.send_poll(
-            chat_id=chat_id,
-            question=fallback_question,
-            options=fallback_options,
-            type="quiz",
-            correct_option_id=correct_idx,
-            is_anonymous=False
-        )
+        logger.warning("send_poll with explanation failed: %s. Retrying without explanation...", poll_err)
+        poll_kwargs.pop("explanation", None)
+        try:
+            poll_msg = await context.bot.send_poll(**poll_kwargs)
+        except Exception as poll_err2:
+            logger.warning("send_poll failed again: %s. Trying clean fallback poll...", poll_err2)
+            fallback_options = [f"الخيار ({letters[i]})" if i < len(letters) else f"خيار {i+1}" for i in range(len(poll_options))]
+            if len(fallback_options) < 2:
+                fallback_options = ["الخيار (أ)", "الخيار (ب)"]
+            fb_correct = max(0, min(correct_idx, len(fallback_options) - 1))
+            fallback_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة):"
+            poll_msg = await context.bot.send_poll(
+                chat_id=chat_id,
+                question=fallback_question,
+                options=fallback_options,
+                type="quiz",
+                correct_option_id=fb_correct,
+                is_anonymous=False
+            )
 
     msg_ids.append(poll_msg.message_id)
 
@@ -339,7 +352,7 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             session["current_index"] = new_index
 
-        err_text = f"⚠️ واجه السؤال مشكلة غير متوقعة في التنسيق وتم تخطيه تلقائياً.\nاضغط 'استكمال الكويز' لمتابعة بقية الأسئلة."
+        err_text = "⚠️ واجه السؤال مشكلة غير متوقعة في التنسيق وتم تخطيه تلقائياً.\nاضغط 'استكمال الكويز' لمتابعة بقية الأسئلة."
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ استكمال الكويز", callback_data="resume_quiz")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
@@ -347,7 +360,7 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if query:
             await safe_edit_html(query, err_text, reply_markup=reply_markup, context=context)
         else:
-            chat_id = context.user_data.get("chat_id")
+            chat_id = context.user_data.get("chat_id") or user_id
             if chat_id:
                 try:
                     await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=reply_markup)
@@ -357,6 +370,8 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = update.poll_answer
+    if not answer:
+        return
     poll_id = answer.poll_id
     user = answer.user
     user_id = user.id if user else None
@@ -364,10 +379,15 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Find session matching this user_id or this poll_id
     session = db.get_session(user_id=user_id, poll_id=poll_id)
-    if not session or session.get("poll_id") != poll_id:
+    if not session:
+        session = db.get_session(poll_id=poll_id) or db.get_session(user_id=user_id)
+    if not session:
+        logger.warning("No active session found for user_id=%s or poll_id=%s", user_id, poll_id)
         return
 
     sess_user_id = session.get("user_id", user_id or 6099429826)
+    context.user_data["user_id"] = sess_user_id
+    context.user_data["chat_id"] = sess_user_id
 
     if session["current_index"] >= len(session["question_ids"]):
         await finish_session(update, context, session)

@@ -123,7 +123,7 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
         name = manual_quiz.get("name", "كويز بدون اسم")
         questions = manual_quiz.get("questions", [])
 
-        is_pub = 1 if is_admin(u_id) else 0
+        is_pub = 0
         quiz_id = db.save_quiz(name, questions, user_id=u_id, is_public=is_pub)
 
         text = (
