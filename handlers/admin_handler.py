@@ -73,7 +73,10 @@ async def admin_broadcast_command(update: Update, context: ContextTypes.DEFAULT_
     """Entry point for /broadcast command."""
     user = update.effective_user
     if not user or not is_admin(user.id):
-        await update.message.reply_text("❌ هذا الأمر متاح للمشرف فقط.", parse_mode="HTML")
+        if update.message:
+            await update.message.reply_text("❌ هذا الأمر متاح للمشرف فقط.", parse_mode="HTML")
+        elif update.callback_query:
+            await update.callback_query.answer("❌ غير مصرح.", show_alert=True)
         return
 
     context.user_data["waiting_for_broadcast"] = True
@@ -86,7 +89,10 @@ async def admin_broadcast_command(update: Update, context: ContextTypes.DEFAULT_
         "<i>(يدعم تنسيقات HTML والروابط)</i>"
     )
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء الإذاعة", callback_data="admin_cancel_broadcast")]])
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+    if update.message:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+    elif update.callback_query:
+        await safe_edit(update.callback_query, text, kb)
 
 
 async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -98,6 +104,15 @@ async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_T
     if not user or not is_admin(user.id):
         context.user_data.pop("waiting_for_broadcast", None)
         return False
+
+    # Guard: only accept text messages, not photos/files/stickers
+    if not update.message or not update.message.text:
+        if update.message:
+            await update.message.reply_text(
+                "⚠️ <b>يرجى إرسال نص فقط</b> لرسالة الإذاعة (لا تُدعم الصور أو الملفات).",
+                parse_mode="HTML"
+            )
+        return True  # consumed but rejected
 
     broadcast_text = update.message.text
     context.user_data["waiting_for_broadcast"] = False

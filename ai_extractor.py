@@ -50,27 +50,39 @@ async def extract_questions_from_pdf(pdf_path: str) -> dict:
             ),
         )
 
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[
-                types.Part.from_uri(
-                    file_uri=uploaded_file.uri,
-                    mime_type="application/pdf",
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[
+                    types.Part.from_uri(
+                        file_uri=uploaded_file.uri,
+                        mime_type="application/pdf",
+                    ),
+                    EXTRACTION_PROMPT,
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=8192,
                 ),
-                EXTRACTION_PROMPT,
-            ],
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                max_output_tokens=8192,
-            ),
-        )
+            )
 
-        raw = response.text.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1]).strip()
+            raw = response.text.strip()
+            # Strip markdown code blocks if present
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                raw = "\n".join(lines[1:-1]).strip()
 
-        return json.loads(raw)
+            # Try JSON parse with clear error
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Gemini returned non-JSON response. Parse error: {e}\nRaw: {raw[:200]}")
+        finally:
+            # Always delete the uploaded file to prevent storage leaks
+            try:
+                client.files.delete(name=uploaded_file.name)
+            except Exception:
+                pass
 
     return await asyncio.to_thread(_extract_sync)
 

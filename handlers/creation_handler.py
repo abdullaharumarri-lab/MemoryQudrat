@@ -230,6 +230,8 @@ async def handle_media_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_creation_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Handles text input related to manual quiz building, user private folders, or media text notes."""
+    if not update.message or not update.message.text:
+        return False
     msg = update.message.text.strip()
     chat_id = update.effective_chat.id
     user = update.effective_user

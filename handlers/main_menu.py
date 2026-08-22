@@ -104,8 +104,13 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("waiting_for_rename_user_folder") is not None:
         cat_id = context.user_data.pop("waiting_for_rename_user_folder")
         new_name = msg.strip()
-        db.update_category_name(cat_id, new_name)
-        text = f"✅ تم تغيير اسم المجلد إلى <b>{html.escape(new_name)}</b> بنجاح!"
+        # IDOR guard: verify ownership before renaming
+        cat = db.get_category(cat_id)
+        if cat and (cat.get("owner_id") == (user.id if user else None) or (user and is_admin(user.id))):
+            db.update_category_name(cat_id, new_name)
+            text = f"✅ تم تغيير اسم المجلد إلى <b>{html.escape(new_name)}</b> بنجاح!"
+        else:
+            text = "❌ لا تملك صلاحية تعديل هذا المجلد."
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📂 العودة للمجلد", callback_data=f"my_cat_{cat_id}_1")],
             [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
@@ -1083,6 +1088,13 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         parts = data.split("_")
         quiz_id = int(parts[4])
         cat_id = int(parts[5]) if len(parts) > 5 else 0
+        user = update.effective_user
+        u_id = user.id if user else 6099429826
+        # IDOR guard: only allow moving quizzes owned by this user
+        quiz = db.get_quiz(quiz_id)
+        if not quiz or (quiz.get("owner_id") != u_id and not is_admin(u_id)):
+            await query.answer("❌ لا تملك صلاحية نقل هذا الكويز.", show_alert=True)
+            return
         db.move_quiz_to_category(quiz_id, cat_id if cat_id != 0 else None)
         await safe_edit(
             query,

@@ -191,16 +191,18 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
 
     # 2. Clean plain-text fallback (Strip tags so user NEVER sees raw <b> or <i>)
     clean_text = strip_html_tags(text)
+    last_error = None
     try:
         await query.edit_message_text(clean_text, reply_markup=reply_markup)
         return
     except Exception as e:
+        last_error = e
         if "Message is not modified" in str(e):
             return
         logger.warning("safe_edit plain edit failed: %s", e)
 
     # 3. Fallback: send message if editing failed completely
-    err_str = str(e).lower()
+    err_str = str(last_error).lower() if last_error else ""
     if "timeout" in err_str or "timed out" in err_str or "readtimeout" in err_str:
         logger.warning("safe_edit dropping message instead of fallback due to timeout")
         return

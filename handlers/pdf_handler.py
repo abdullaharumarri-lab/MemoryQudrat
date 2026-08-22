@@ -170,6 +170,8 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             # Process wrong field in upgrade path too
             wrong_indices = data.get("wrong", [])
             wrong_count = 0
+            upgrade_user = update.effective_user
+            upgrade_u_id = upgrade_user.id if upgrade_user else 6099429826
             if wrong_indices:
                 saved_questions = db.get_questions(quiz_upgrade_id)
                 for idx in wrong_indices:
@@ -177,7 +179,7 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
                         real_idx = int(idx) - 1
                         if 0 <= real_idx < len(saved_questions):
                             q = saved_questions[real_idx]
-                            db.add_or_reset_weak_question(quiz_upgrade_id, q["id"])
+                            db.add_or_reset_weak_question(quiz_upgrade_id, q["id"], user_id=upgrade_u_id)
                             wrong_count += 1
                     except (ValueError, TypeError):
                         continue

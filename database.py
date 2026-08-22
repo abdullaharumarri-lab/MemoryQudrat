@@ -480,7 +480,8 @@ def delete_category(cat_id: int, user_id: int = None):
     cursor.execute("UPDATE quizzes SET category_id = NULL WHERE category_id = ?", (cat_id,))
     cursor.execute("UPDATE categories SET parent_id = NULL WHERE parent_id = ?", (cat_id,))
     if user_id is not None:
-        cursor.execute("DELETE FROM categories WHERE id = ? AND (owner_id = ? OR is_public = 1)", (cat_id, user_id))
+        # Only allow deleting own private categories (not public ones)
+        cursor.execute("DELETE FROM categories WHERE id = ? AND owner_id = ? AND is_public = 0", (cat_id, user_id))
     else:
         cursor.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
     conn.commit()
