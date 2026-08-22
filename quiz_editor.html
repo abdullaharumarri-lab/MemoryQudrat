@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>محرر ومدقق كويزات JSON — ذاكرة القدرات 🧠</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #10b981;
+      --success-bg: rgba(16, 185, 129, 0.15);
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --warning: #f59e0b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --input-bg: #0f172a;
+      --input-border: #475569;
+      --radius: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Tajawal', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px 80px 16px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    header h1 {
+      font-size: 28px;
+      font-weight: 800;
+      color: #60a5fa;
+      margin-bottom: 6px;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 15px;
+    }
+
+    /* Top Action Bar */
+    .top-bar {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    }
+
+    .quiz-title-group {
+      margin-bottom: 16px;
+    }
+
+    .quiz-title-group label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 6px;
+      font-size: 15px;
+      color: #cbd5e1;
+    }
+
+    input[type="text"], textarea {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 15px;
+      transition: all 0.2s;
+    }
+
+    input[type="text"]:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+    }
+
+    .actions-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    button, .file-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+      text-decoration: none;
+    }
+
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); }
+
+    .btn-success { background: var(--success); color: white; }
+    .btn-success:hover { background: #059669; transform: translateY(-1px); }
+
+    .btn-secondary { background: #334155; color: white; }
+    .btn-secondary:hover { background: #475569; }
+
+    .btn-danger { background: #991b1b; color: white; }
+    .btn-danger:hover { background: var(--danger-hover); }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--card-border);
+      color: #cbd5e1;
+    }
+    .btn-outline:hover { background: #334155; }
+
+    /* Question Cards */
+    .question-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 20px;
+      position: relative;
+      transition: border-color 0.2s;
+    }
+
+    .question-card.invalid {
+      border-color: var(--danger);
+    }
+
+    .q-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .q-number {
+      font-size: 17px;
+      font-weight: 800;
+      color: #60a5fa;
+    }
+
+    .q-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .q-actions button {
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 5px;
+    }
+
+    /* Options List */
+    .options-container {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .option-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--input-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      transition: all 0.2s;
+    }
+
+    .option-row.is-correct {
+      border-color: var(--success);
+      background: var(--success-bg);
+    }
+
+    .radio-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      color: #cbd5e1;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .radio-label input[type="radio"] {
+      cursor: pointer;
+      width: 18px;
+      height: 18px;
+      accent-color: var(--success);
+    }
+
+    .opt-letter {
+      font-weight: 800;
+      color: #93c5fd;
+      font-size: 15px;
+      width: 24px;
+      text-align: center;
+    }
+
+    .opt-input {
+      flex: 1;
+      border: none !important;
+      background: transparent !important;
+      padding: 6px 4px !important;
+    }
+
+    .opt-del-btn {
+      background: transparent;
+      color: #64748b;
+      padding: 4px 6px;
+      font-size: 14px;
+      border-radius: 4px;
+    }
+    .opt-del-btn:hover {
+      color: var(--danger);
+      background: rgba(239, 68, 68, 0.1);
+    }
+
+    .add-opt-btn {
+      align-self: flex-start;
+      margin-top: 6px;
+      font-size: 12px;
+      padding: 6px 12px;
+    }
+
+    .card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .weak-checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fca5a5;
+    }
+
+    .weak-checkbox-label input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--danger);
+      cursor: pointer;
+    }
+
+    /* Sticky Bottom Export Bar */
+    .bottom-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #0b1120;
+      border-top: 1px solid #1e293b;
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+      box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
+    }
+
+    .stats-badge {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .stats-badge span {
+      background: #1e293b;
+      padding: 6px 12px;
+      border-radius: 20px;
+      border: 1px solid var(--card-border);
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-overlay.active { display: flex; }
+
+    .modal-content {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      max-width: 600px;
+      width: 100%;
+      padding: 24px;
+    }
+    .modal-content h3 { margin-bottom: 12px; color: #60a5fa; }
+    .modal-content textarea { height: 200px; font-family: monospace; font-size: 13px; margin-bottom: 16px; }
+
+    .toast {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #10b981;
+      color: white;
+      font-weight: 700;
+      padding: 10px 24px;
+      border-radius: 30px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 300;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="toast" class="toast">✅ تم النسخ بنجاح!</div>
+
+  <div class="container">
+    <header>
+      <h1>ذاكرة القدرات 🧠</h1>
+      <p>محرر ومدقق ملفات JSON — لإنشاء وتعديل الكويزات بدون أي أخطاء إملائية أو برمجية</p>
+    </header>
+
+    <!-- Top Action Bar -->
+    <div class="top-bar">
+      <div class="quiz-title-group">
+        <label for="quizTitle">عنوان / اسم الكويز:</label>
+        <input type="text" id="quizTitle" placeholder="مثال: كويز الهندسة والزوايا (النموذج 1)" spellcheck="true">
+      </div>
+
+      <div class="actions-grid">
+        <button class="btn-primary" onclick="addQuestion()">➕ إضافة سؤال جديد</button>
+        
+        <label class="file-btn btn-secondary">
+          📂 فتح ملف JSON لتعديله
+          <input type="file" id="jsonFileInput" accept=".json" style="display:none;" onchange="loadJsonFile(event)">
+        </label>
+
+        <button class="btn-outline" onclick="openRawModal()">📋 لصق كود JSON</button>
+        <button class="btn-outline" onclick="loadSampleQuiz()">💡 تحميل كويز تجريبي</button>
+        <button class="btn-danger" onclick="confirmClear()">🧹 مسح الكل</button>
+      </div>
+    </div>
+
+    <!-- Questions Container -->
+    <div id="questionsContainer"></div>
+
+    <div style="text-align: center; margin: 30px 0;">
+      <button class="btn-primary" style="padding: 14px 32px; font-size: 16px;" onclick="addQuestion()">
+        ➕ إضافة سؤال جديد
+      </button>
+    </div>
+  </div>
+
+  <!-- Sticky Bottom Bar -->
+  <div class="bottom-bar">
+    <div class="stats-badge">
+      <span>📝 عدد الأسئلة: <strong id="totalCount" style="color:#60a5fa">0</strong></span>
+      <span>❌ أخطاء محددة (Wrong): <strong id="wrongCount" style="color:#f87171">0</strong></span>
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+      <button class="btn-outline" onclick="copyJsonToClipboard()">📋 نسخ JSON</button>
+      <button class="btn-success" style="padding: 10px 24px; font-size: 15px;" onclick="downloadJson()">
+        💾 تحميل ملف JSON جاهز
+      </button>
+    </div>
+  </div>
+
+  <!-- Paste Raw JSON Modal -->
+  <div id="rawModal" class="modal-overlay">
+    <div class="modal-content">
+      <h3>📋 لصق كود JSON</h3>
+      <p style="color:var(--text-muted); font-size:13px; margin-bottom:10px;">الصق نص الـ JSON هنا لتعديل الأسئلة والتأكد من صحتها:</p>
+      <textarea id="rawJsonText" placeholder='{"quiz_name": "...", "questions": [...]}'></textarea>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn-outline" onclick="closeRawModal()">إلغاء</button>
+        <button class="btn-primary" onclick="importRawJson()">استيراد وتعديل</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let questions = [];
+    const letters = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح'];
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2500);
+    }
+
+    function createDefaultQuestion() {
+      return {
+        id: Date.now() + Math.random(),
+        question: '',
+        options: ['', '', '', ''],
+        answer: '',
+        explanation: '',
+        isWrong: false
+      };
+    }
+
+    function renderQuestions() {
+      const container = document.getElementById('questionsContainer');
+      container.innerHTML = '';
+
+      questions.forEach((q, qIdx) => {
+        const card = document.createElement('div');
+        card.className = 'question-card';
+        card.id = `q-card-${qIdx}`;
+
+        card.innerHTML = `
+          <div class="q-header">
+            <span class="q-number">سؤال رقم ${qIdx + 1}</span>
+            <div class="q-actions">
+              ${qIdx > 0 ? `<button class="btn-outline" onclick="moveQuestion(${qIdx}, -1)">⬆️</button>` : ''}
+              ${qIdx < questions.length - 1 ? `<button class="btn-outline" onclick="moveQuestion(${qIdx}, 1)">⬇️</button>` : ''}
+              <button class="btn-outline" onclick="duplicateQuestion(${qIdx})" title="تكرار السؤال">📋 تكرار</button>
+              <button class="btn-danger" onclick="deleteQuestion(${qIdx})" title="حذف">🗑</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>نص السؤال (المدقق الإملائي مفعل تلقائياً):</label>
+            <textarea rows="2" placeholder="اكتب نص السؤال هنا..." spellcheck="true" oninput="updateQuestionText(${qIdx}, this.value)">${escapeHtml(q.question)}</textarea>
+          </div>
+
+          <div class="form-group">
+            <label>الخيارات (اضغط على الدائرة ✅ بجانب الخيار لتحديده كإجابة صحيحة):</label>
+            <div class="options-container" id="opts-${qIdx}">
+              ${q.options.map((opt, optIdx) => {
+                const isSelected = q.answer && q.answer.trim() === opt.trim() && opt.trim() !== '';
+                const letter = letters[optIdx] || (optIdx + 1);
+                return `
+                  <div class="option-row ${isSelected ? 'is-correct' : ''}">
+                    <label class="radio-label">
+                      <input type="radio" name="correct_q_${qIdx}" ${isSelected ? 'checked' : ''} onchange="setCorrectAnswer(${qIdx}, ${optIdx})">
+                      <span class="opt-letter">${letter})</span>
+                    </label>
+                    <input type="text" class="opt-input" placeholder="الخيار ${letter}..." value="${escapeHtml(opt)}" spellcheck="true" oninput="updateOptionText(${qIdx}, ${optIdx}, this.value)">
+                    ${q.options.length > 2 ? `<button class="opt-del-btn" onclick="deleteOption(${qIdx}, ${optIdx})" title="حذف الخيار">✕</button>` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+            ${q.options.length < 8 ? `
+              <button class="btn-outline add-opt-btn" onclick="addOption(${qIdx})">➕ إضافة خيار آخر</button>
+            ` : ''}
+          </div>
+
+          <div class="form-group">
+            <label>الشرح أو طريقة الحل (اختياري):</label>
+            <input type="text" placeholder="مثال: بالتعويض في القانون مساحة الدائرة = ط نق²..." spellcheck="true" value="${escapeHtml(q.explanation || '')}" oninput="updateExplanation(${qIdx}, this.value)">
+          </div>
+
+          <div class="card-footer">
+            <label class="weak-checkbox-label">
+              <input type="checkbox" ${q.isWrong ? 'checked' : ''} onchange="toggleWrong(${qIdx}, this.checked)">
+              ❌ تمييز كسؤال ضعيف (يُضاف تلقائياً لحقل wrong لتكراره ومراجعته)
+            </label>
+          </div>
+        `;
+
+        container.appendChild(card);
+      });
+
+      updateStats();
+    }
+
+    function updateStats() {
+      document.getElementById('totalCount').innerText = questions.length;
+      const wrongCount = questions.filter(q => q.isWrong).length;
+      document.getElementById('wrongCount').innerText = wrongCount;
+    }
+
+    function addQuestion() {
+      questions.push(createDefaultQuestion());
+      renderQuestions();
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+
+    function deleteQuestion(idx) {
+      if (confirm(`هل أنت متأكد من حذف السؤال رقم ${idx + 1}؟`)) {
+        questions.splice(idx, 1);
+        renderQuestions();
+      }
+    }
+
+    function duplicateQuestion(idx) {
+      const clone = JSON.parse(JSON.stringify(questions[idx]));
+      clone.id = Date.now() + Math.random();
+      questions.splice(idx + 1, 0, clone);
+      renderQuestions();
+    }
+
+    function moveQuestion(idx, dir) {
+      const target = idx + dir;
+      if (target < 0 || target >= questions.length) return;
+      const temp = questions[idx];
+      questions[idx] = questions[target];
+      questions[target] = temp;
+      renderQuestions();
+    }
+
+    function updateQuestionText(idx, val) {
+      questions[idx].question = val;
+    }
+
+    function updateOptionText(qIdx, optIdx, val) {
+      const wasAnswer = questions[qIdx].answer === questions[qIdx].options[optIdx];
+      questions[qIdx].options[optIdx] = val;
+      if (wasAnswer) {
+        questions[qIdx].answer = val;
+      }
+      renderQuestions();
+    }
+
+    function setCorrectAnswer(qIdx, optIdx) {
+      questions[qIdx].answer = questions[qIdx].options[optIdx];
+      renderQuestions();
+    }
+
+    function addOption(qIdx) {
+      if (questions[qIdx].options.length < 8) {
+        questions[qIdx].options.push('');
+        renderQuestions();
+      }
+    }
+
+    function deleteOption(qIdx, optIdx) {
+      if (questions[qIdx].options.length > 2) {
+        const deletedVal = questions[qIdx].options[optIdx];
+        questions[qIdx].options.splice(optIdx, 1);
+        if (questions[qIdx].answer === deletedVal) {
+          questions[qIdx].answer = questions[qIdx].options[0] || '';
+        }
+        renderQuestions();
+      }
+    }
+
+    function updateExplanation(qIdx, val) {
+      questions[qIdx].explanation = val;
+    }
+
+    function toggleWrong(qIdx, checked) {
+      questions[qIdx].isWrong = checked;
+      updateStats();
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function buildJsonObject() {
+      const title = document.getElementById('quizTitle').value.trim() || 'كويز جديد';
+      const wrongIndices = [];
+
+      const cleanQuestions = questions.map((q, idx) => {
+        if (q.isWrong) wrongIndices.push(idx + 1);
+
+        const cleanOpts = q.options.map(o => o.trim()).filter(o => o !== '');
+        let ans = q.answer.trim();
+        if (!ans || !cleanOpts.includes(ans)) {
+          ans = cleanOpts[0] || 'صح';
+        }
+
+        const item = {
+          question: q.question.trim() || `سؤال ${idx + 1}`,
+          options: cleanOpts.length >= 2 ? cleanOpts : ['صح', 'خطأ'],
+          answer: ans
+        };
+        if (q.explanation && q.explanation.trim()) {
+          item.explanation = q.explanation.trim();
+        }
+        return item;
+      });
+
+      const payload = {
+        quiz_name: title,
+        questions: cleanQuestions
+      };
+      if (wrongIndices.length > 0) {
+        payload.wrong = wrongIndices;
+      }
+      return payload;
+    }
+
+    function downloadJson() {
+      if (questions.length === 0) {
+        alert('⚠️ الرجاء إضافة سؤال واحد على الأقل قبل التحميل.');
+        return;
+      }
+
+      const obj = buildJsonObject();
+      const jsonStr = JSON.stringify(obj, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      const filename = (obj.quiz_name.replace(/[/\\?%*:|"<>]/g, '_') || 'quiz') + '.json';
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('💾 تم تحميل ملف JSON بنجاح!');
+    }
+
+    function copyJsonToClipboard() {
+      if (questions.length === 0) {
+        alert('⚠️ لا توجد أسئلة لنسخها.');
+        return;
+      }
+      const obj = buildJsonObject();
+      const jsonStr = JSON.stringify(obj, null, 2);
+      navigator.clipboard.writeText(jsonStr).then(() => {
+        showToast('📋 تم نسخ كود JSON للحافظة!');
+      });
+    }
+
+    function loadJsonData(data) {
+      if (!data || !Array.isArray(data.questions)) {
+        alert('❌ صيغة الملف غير صحيحة. يجب أن يحتوي على مصفوفة questions.');
+        return;
+      }
+
+      document.getElementById('quizTitle').value = data.quiz_name || data.name || 'كويز';
+      const wrongSet = new Set(data.wrong || []);
+
+      questions = data.questions.map((q, idx) => {
+        const isWrong = wrongSet.has(idx + 1);
+        let opts = Array.isArray(q.options) ? q.options : ['صح', 'خطأ'];
+        return {
+          id: Date.now() + Math.random() + idx,
+          question: q.question || '',
+          options: opts.length >= 2 ? opts : [...opts, 'خيار إضافي'],
+          answer: q.answer || opts[0] || '',
+          explanation: q.explanation || '',
+          isWrong: isWrong
+        };
+      });
+
+      renderQuestions();
+      showToast('📂 تم استيراد الكويز بنجاح!');
+    }
+
+    function loadJsonFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        try {
+          const data = JSON.parse(evt.target.result);
+          loadJsonData(data);
+        } catch (err) {
+          alert('❌ تعذر قراءة الملف: تأكد أنه ملف JSON صالح.');
+        }
+      };
+      reader.readAsText(file, 'UTF-8');
+      e.target.value = '';
+    }
+
+    function openRawModal() {
+      document.getElementById('rawModal').classList.add('active');
+    }
+    function closeRawModal() {
+      document.getElementById('rawModal').classList.remove('active');
+    }
+
+    function importRawJson() {
+      const text = document.getElementById('rawJsonText').value.trim();
+      if (!text) return;
+      try {
+        const data = JSON.parse(text);
+        loadJsonData(data);
+        closeRawModal();
+      } catch (err) {
+        alert('❌ صيغة JSON غير صحيحة. تأكد من الأقواس والفواصل.');
+      }
+    }
+
+    function loadSampleQuiz() {
+      const sample = {
+        "quiz_name": "نموذج كويز القدرات (كمي ولفظي)",
+        "wrong": [2],
+        "questions": [
+          {
+            "question": "إذا كان س + ص = 12 و س - ص = 4، فما قيمة س؟",
+            "options": ["8", "6", "4", "10"],
+            "answer": "8",
+            "explanation": "بجمع المعادلتين: 2س = 16 => س = 8"
+          },
+          {
+            "question": "العلاقة بين (رئة : تنفس) تطابق أي علاقة من الآتي:",
+            "options": ["عين : رؤية", "قلب : تفكير", "قدم : كتابة", "أذن : نظر"],
+            "answer": "عين : رؤية",
+            "explanation": "علاقة عضو بوظيفته (الرئة للتنفس والعين للرؤية)"
+          }
+        ]
+      };
+      loadJsonData(sample);
+    }
+
+    function confirmClear() {
+      if (confirm('هل أنت متأكد من مسح جميع الأسئلة والبدء من جديد؟')) {
+        document.getElementById('quizTitle').value = '';
+        questions = [createDefaultQuestion()];
+        renderQuestions();
+      }
+    }
+
+    // Initialize with 1 default question
+    questions = [createDefaultQuestion()];
+    renderQuestions();
+  </script>
+</body>
+</html>
