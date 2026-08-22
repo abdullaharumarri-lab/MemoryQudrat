@@ -37,7 +37,7 @@
       background-color: var(--bg);
       color: var(--text);
       min-height: 100vh;
-      padding: 24px 16px 80px 16px;
+      padding: 24px 16px 90px 16px;
     }
 
     .container {
@@ -47,7 +47,7 @@
 
     header {
       text-align: center;
-      margin-bottom: 28px;
+      margin-bottom: 24px;
     }
 
     header h1 {
@@ -92,7 +92,7 @@
       border-radius: 8px;
       padding: 10px 14px;
       font-size: 15px;
-      transition: all 0.2s;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
 
     input[type="text"]:focus, textarea:focus {
@@ -112,7 +112,7 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
-      padding: 10px 18px;
+      padding: 10px 16px;
       border-radius: 8px;
       font-weight: 700;
       font-size: 14px;
@@ -130,6 +130,15 @@
 
     .btn-secondary { background: #334155; color: white; }
     .btn-secondary:hover { background: #475569; }
+
+    .btn-forms {
+      background: linear-gradient(135deg, #7c3aed, #6366f1);
+      color: white;
+    }
+    .btn-forms:hover {
+      background: linear-gradient(135deg, #6d28d9, #4f46e5);
+      transform: translateY(-1px);
+    }
 
     .btn-danger { background: #991b1b; color: white; }
     .btn-danger:hover { background: var(--danger-hover); }
@@ -149,11 +158,6 @@
       padding: 20px;
       margin-bottom: 20px;
       position: relative;
-      transition: border-color 0.2s;
-    }
-
-    .question-card.invalid {
-      border-color: var(--danger);
     }
 
     .q-header {
@@ -209,7 +213,7 @@
       border: 1px solid var(--input-border);
       border-radius: 8px;
       padding: 8px 12px;
-      transition: all 0.2s;
+      transition: background-color 0.2s, border-color 0.2s;
     }
 
     .option-row.is-correct {
@@ -332,7 +336,7 @@
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(4px);
       z-index: 200;
       align-items: center;
@@ -345,12 +349,14 @@
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: var(--radius);
-      max-width: 600px;
+      max-width: 680px;
       width: 100%;
       padding: 24px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
     }
-    .modal-content h3 { margin-bottom: 12px; color: #60a5fa; }
-    .modal-content textarea { height: 200px; font-family: monospace; font-size: 13px; margin-bottom: 16px; }
+    .modal-content h3 { margin-bottom: 8px; color: #60a5fa; font-size: 20px; }
+    .modal-content p { color: var(--text-muted); font-size: 13.5px; margin-bottom: 12px; line-height: 1.5; }
+    .modal-content textarea { height: 220px; font-family: monospace; font-size: 13px; margin-bottom: 16px; }
 
     .toast {
       position: fixed;
@@ -375,7 +381,7 @@
   <div class="container">
     <header>
       <h1>ذاكرة القدرات 🧠</h1>
-      <p>محرر ومدقق ملفات JSON — لإنشاء وتعديل الكويزات بدون أي أخطاء إملائية أو برمجية</p>
+      <p>محرر ومدقق ملفات JSON — لإنشاء وتعديل الكويزات وتحويل اختبارات Google Forms بضغطة زر</p>
     </header>
 
     <!-- Top Action Bar -->
@@ -386,15 +392,16 @@
       </div>
 
       <div class="actions-grid">
-        <button class="btn-primary" onclick="addQuestion()">➕ إضافة سؤال جديد</button>
+        <button class="btn-primary" onclick="addQuestion()">➕ إضافة سؤال</button>
+        <button class="btn-forms" onclick="openFormsModal()">⚡ تحويل من Google Forms</button>
         
         <label class="file-btn btn-secondary">
-          📂 فتح ملف JSON لتعديله
+          📂 فتح ملف JSON
           <input type="file" id="jsonFileInput" accept=".json" style="display:none;" onchange="loadJsonFile(event)">
         </label>
 
-        <button class="btn-outline" onclick="openRawModal()">📋 لصق كود JSON</button>
-        <button class="btn-outline" onclick="loadSampleQuiz()">💡 تحميل كويز تجريبي</button>
+        <button class="btn-outline" onclick="openRawModal()">📋 لصق JSON</button>
+        <button class="btn-outline" onclick="loadSampleQuiz()">💡 نموذج تجريبي</button>
         <button class="btn-danger" onclick="confirmClear()">🧹 مسح الكل</button>
       </div>
     </div>
@@ -424,11 +431,27 @@
     </div>
   </div>
 
+  <!-- Google Forms Import Modal -->
+  <div id="formsModal" class="modal-overlay">
+    <div class="modal-content">
+      <h3>⚡ استيراد وتحويل سريع من Google Forms (صفحة النتيجة)</h3>
+      <p>
+        بعد حل اختبار Google Forms، افتح صفحة <b>(عرض النتيجة / View score)</b>، وحدد نص الصفحة كاملاً (Ctrl+A ثم Ctrl+C)، ثم الصقه هنا.<br>
+        سيتعرف المحول تلقائياً على <b>الأسئلة، الخيارات، الإجابة الصحيحة، والأسئلة التي أخطأت فيها</b> ليضعها في التكرار المتباعد!
+      </p>
+      <textarea id="formsText" placeholder="الصق هنا نص صفحة نتيجة Google Forms كاملة..."></textarea>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn-outline" onclick="closeFormsModal()">إلغاء</button>
+        <button class="btn-forms" onclick="importFromGoogleForms()">⚡ استخراج وتحويل فوري</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Paste Raw JSON Modal -->
   <div id="rawModal" class="modal-overlay">
     <div class="modal-content">
       <h3>📋 لصق كود JSON</h3>
-      <p style="color:var(--text-muted); font-size:13px; margin-bottom:10px;">الصق نص الـ JSON هنا لتعديل الأسئلة والتأكد من صحتها:</p>
+      <p>الصق نص الـ JSON هنا لتعديل الأسئلة والتأكد من صحتها:</p>
       <textarea id="rawJsonText" placeholder='{"quiz_name": "...", "questions": [...]}'></textarea>
       <div style="display:flex; justify-content:flex-end; gap:10px;">
         <button class="btn-outline" onclick="closeRawModal()">إلغاء</button>
@@ -480,7 +503,7 @@
           </div>
 
           <div class="form-group">
-            <label>نص السؤال (المدقق الإملائي مفعل تلقائياً):</label>
+            <label>نص السؤال (المدقق الإملائي مفعل):</label>
             <textarea rows="2" placeholder="اكتب نص السؤال هنا..." spellcheck="true" oninput="updateQuestionText(${qIdx}, this.value)">${escapeHtml(q.question)}</textarea>
           </div>
 
@@ -491,7 +514,7 @@
                 const isSelected = q.answer && q.answer.trim() === opt.trim() && opt.trim() !== '';
                 const letter = letters[optIdx] || (optIdx + 1);
                 return `
-                  <div class="option-row ${isSelected ? 'is-correct' : ''}">
+                  <div class="option-row ${isSelected ? 'is-correct' : ''}" id="opt-row-${qIdx}-${optIdx}">
                     <label class="radio-label">
                       <input type="radio" name="correct_q_${qIdx}" ${isSelected ? 'checked' : ''} onchange="setCorrectAnswer(${qIdx}, ${optIdx})">
                       <span class="opt-letter">${letter})</span>
@@ -561,6 +584,7 @@
       renderQuestions();
     }
 
+    // In-place text update without re-rendering the whole page (No Jump!)
     function updateQuestionText(idx, val) {
       questions[idx].question = val;
     }
@@ -571,12 +595,21 @@
       if (wasAnswer) {
         questions[qIdx].answer = val;
       }
-      renderQuestions();
     }
 
     function setCorrectAnswer(qIdx, optIdx) {
       questions[qIdx].answer = questions[qIdx].options[optIdx];
-      renderQuestions();
+      // Update styling in-place without page jump
+      const rows = document.querySelectorAll(`#opts-${qIdx} .option-row`);
+      rows.forEach((row, i) => {
+        if (i === optIdx) {
+          row.classList.add('is-correct');
+          const radio = row.querySelector('input[type="radio"]');
+          if (radio) radio.checked = true;
+        } else {
+          row.classList.remove('is-correct');
+        }
+      });
     }
 
     function addOption(qIdx) {
@@ -623,7 +656,7 @@
         if (q.isWrong) wrongIndices.push(idx + 1);
 
         const cleanOpts = q.options.map(o => o.trim()).filter(o => o !== '');
-        let ans = q.answer.trim();
+        let ans = q.answer ? q.answer.trim() : '';
         if (!ans || !cleanOpts.includes(ans)) {
           ans = cleanOpts[0] || 'صح';
         }
@@ -742,6 +775,123 @@
       } catch (err) {
         alert('❌ صيغة JSON غير صحيحة. تأكد من الأقواس والفواصل.');
       }
+    }
+
+    function openFormsModal() {
+      document.getElementById('formsModal').classList.add('active');
+    }
+    function closeFormsModal() {
+      document.getElementById('formsModal').classList.remove('active');
+    }
+
+    // Smart Google Forms Parser from Result Page text
+    function importFromGoogleForms() {
+      const raw = document.getElementById('formsText').value.trim();
+      if (!raw) return;
+
+      const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
+      if (lines.length < 3) {
+        alert('⚠️ النص المدخل قصير جداً. يرجى التأكد من نسخ صفحة عرض النتيجة كاملة.');
+        return;
+      }
+
+      // Detect Title
+      let quizTitle = 'كويز Google Forms';
+      if (lines[0] && !lines[0].includes('/') && !lines[0].includes('نقاط') && !lines[0].includes('النتيجة')) {
+        quizTitle = lines[0];
+      }
+
+      const extracted = [];
+      let currentQ = null;
+      let isReadingExplanation = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Detect Question Header / Point line (e.g. "0/1 من النقاط" or "1/1" or "0/1" or "سؤال" or numeric prefix)
+        const isPointLine = /(\d+\/\d+|\d+\s*من\s*النقاط|نقطة\s*واحدة|\b\d+\s*نقطة\b)/.test(line);
+        const isCorrectAnswerLine = line.startsWith('الإجابة الصحيحة') || line.startsWith('الاجابة الصحيحة') || line.startsWith('Correct answer');
+        const isFeedbackLine = line.startsWith('الملاحظات') || line.startsWith('تعليقات') || line.startsWith('Feedback');
+
+        if (isPointLine || (line.startsWith('*') && line.length > 3)) {
+          if (currentQ && currentQ.question && currentQ.options.length >= 2) {
+            extracted.push(currentQ);
+          }
+          currentQ = {
+            id: Date.now() + Math.random() + i,
+            question: '',
+            options: [],
+            answer: '',
+            explanation: '',
+            isWrong: line.includes('0/') || line.includes('0 /') || line.includes('❌') || line.includes('غير صحيحة')
+          };
+          // Next line or previous line is question text
+          if (i > 0 && !lines[i-1].includes('من النقاط') && lines[i-1].length > 4 && !lines[i-1].startsWith('الإجابة')) {
+            currentQ.question = lines[i-1];
+          }
+          continue;
+        }
+
+        if (isCorrectAnswerLine) {
+          let ansText = line.replace(/^(الإجابة الصحيحة|الاجابة الصحيحة|Correct answer)[:\s-]*/, '').trim();
+          if (!ansText && i + 1 < lines.length) {
+            ansText = lines[i + 1].trim();
+          }
+          if (currentQ) {
+            currentQ.answer = ansText;
+            if (!currentQ.options.includes(ansText) && ansText) {
+              currentQ.options.push(ansText);
+            }
+          }
+          continue;
+        }
+
+        if (isFeedbackLine) {
+          isReadingExplanation = true;
+          continue;
+        }
+
+        if (currentQ) {
+          if (isReadingExplanation) {
+            currentQ.explanation += (currentQ.explanation ? ' ' : '') + line;
+          } else if (!currentQ.question) {
+            currentQ.question = line;
+          } else {
+            // It's an option
+            if (line.length < 200 && !line.includes('من النقاط') && !line.includes('عرض النتيجة')) {
+              // Clean option prefixes
+              const cleanOpt = line.replace(/^[•\-\*\d\(\)\.\s]+/, '').trim();
+              if (cleanOpt && !currentQ.options.includes(cleanOpt)) {
+                currentQ.options.push(cleanOpt);
+              }
+            }
+          }
+        }
+      }
+
+      if (currentQ && currentQ.question && currentQ.options.length >= 2) {
+        extracted.push(currentQ);
+      }
+
+      if (extracted.length === 0) {
+        // Fallback simple line-by-line block parser
+        alert('⚠️ تم نسخ النص بصيغة غير اعتيادية. سيتم فتح محرر الأسئلة لتعبئتها وتعديلها بسهولة.');
+        closeFormsModal();
+        return;
+      }
+
+      // Auto-set answer if not set
+      extracted.forEach(q => {
+        if (!q.answer && q.options.length > 0) {
+          q.answer = q.options[0];
+        }
+      });
+
+      document.getElementById('quizTitle').value = quizTitle;
+      questions = extracted;
+      renderQuestions();
+      closeFormsModal();
+      showToast(`⚡ تم استخراج ${extracted.length} سؤال بنجاح مع تحديد الأخطاء!`);
     }
 
     function loadSampleQuiz() {
