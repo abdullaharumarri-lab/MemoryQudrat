@@ -205,12 +205,49 @@ async def process_json_quiz_data(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
     update: Update,
-    quiz_upgrade_id: int = None
+    quiz_upgrade_id: int = None,
+    quiz_update_id: int = None
 ):
-    """Processes parsed JSON data for either upgrading an existing quiz or saving a new quiz."""
+    """Processes parsed JSON data for either updating an existing quiz, upgrading an existing URL quiz, or saving a new quiz."""
     u_id = user.id if user else 6099429826
 
-    if quiz_upgrade_id:
+    # 1. Update/Replace questions of an existing quiz (Preserves all Spaced Repetition reviews!)
+    if quiz_update_id:
+        new_name = data.get("quiz_name") or data.get("name")
+        db.update_quiz_questions(quiz_update_id, data["questions"], new_name=new_name)
+
+        # Process wrong field if present
+        wrong_indices = data.get("wrong", [])
+        wrong_count = 0
+        if wrong_indices:
+            saved_questions = db.get_questions(quiz_update_id)
+            for idx in wrong_indices:
+                try:
+                    real_idx = int(idx) - 1
+                    if 0 <= real_idx < len(saved_questions):
+                        q = saved_questions[real_idx]
+                        db.add_or_reset_weak_question(quiz_update_id, q["id"], user_id=u_id)
+                        wrong_count += 1
+                except (ValueError, TypeError):
+                    continue
+
+        quiz = db.get_quiz(quiz_update_id)
+        name_safe = html.escape(quiz.get('name', 'كويز')) if quiz else "كويز"
+        wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة." if wrong_count else ""
+        text = (
+            f"✅ <b>تم تحديث وإعادة رفع أسئلة الكويز بنجاح!</b>\n\n"
+            f"📋 <b>{name_safe}</b>\n"
+            f"📝 تم تحديث <b>{len(data['questions'])}</b> سؤال بنجاح مع الإجابات المصححة.{wrong_note}\n\n"
+            f"🔁 <b>جدول التكرار المتباعد:</b> محفوظ ومستمر حسب جدولك السابق دون أي تغيير 🌟."
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ ابدأ الكويز المحدث", callback_data=f"start_practice_{quiz_update_id}")],
+            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        ])
+
+    # 2. Upgrade URL to JSON quiz
+    elif quiz_upgrade_id:
         conn = db.get_connection()
         cursor = conn.cursor()
         cursor.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_upgrade_id,))
@@ -364,6 +401,7 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
         _validate_json_upload(doc, data)
 
         quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
+        quiz_update_id = context.user_data.pop("waiting_for_json_update", None)
         user = update.effective_user
 
         await process_json_quiz_data(
@@ -372,7 +410,8 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
             context=context,
             chat_id=chat_id,
             update=update,
-            quiz_upgrade_id=quiz_upgrade_id
+            quiz_upgrade_id=quiz_upgrade_id,
+            quiz_update_id=quiz_update_id
         )
 
     except json.JSONDecodeError:

@@ -183,10 +183,11 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id, "✅ تم تحديث نص السؤال بنجاح!", reply_markup=InlineKeyboardMarkup(kb))
         return
 
-    # ── JSON Text Upload or Upgrade Handler ──
+    # ── JSON Text Upload or Upgrade or Update Handler ──
     raw_text = msg.strip()
     is_json_candidate = (
         context.user_data.get("waiting_for_json_upgrade") or 
+        context.user_data.get("waiting_for_json_update") or 
         context.user_data.get("waiting_for_json_upload") or
         (raw_text.startswith("{") and "questions" in raw_text)
     )
@@ -196,6 +197,7 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from handlers.pdf_handler import _validate_json_upload, process_json_quiz_data
             _validate_json_upload(None, data)
             quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
+            quiz_update_id = context.user_data.pop("waiting_for_json_update", None)
             context.user_data.pop("waiting_for_json_upload", None)
             await process_json_quiz_data(
                 data=data,
@@ -203,15 +205,16 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context=context,
                 chat_id=chat_id,
                 update=update,
-                quiz_upgrade_id=quiz_upgrade_id
+                quiz_upgrade_id=quiz_upgrade_id,
+                quiz_update_id=quiz_update_id
             )
             return
         except json.JSONDecodeError:
-            if context.user_data.get("waiting_for_json_upgrade") or context.user_data.get("waiting_for_json_upload"):
+            if context.user_data.get("waiting_for_json_upgrade") or context.user_data.get("waiting_for_json_update") or context.user_data.get("waiting_for_json_upload"):
                 await send_clean_message(context, chat_id, "❌ <b>صيغة JSON غير صحيحة!</b>\nتأكد من صحة الأقواس والفواصل.", update=update)
                 return
         except ValueError as ve:
-            if context.user_data.get("waiting_for_json_upgrade") or context.user_data.get("waiting_for_json_upload"):
+            if context.user_data.get("waiting_for_json_upgrade") or context.user_data.get("waiting_for_json_update") or context.user_data.get("waiting_for_json_upload"):
                 await send_clean_message(context, chat_id, f"❌ <b>خطأ في محتوى JSON:</b>\n{ve}", update=update)
                 return
 
@@ -484,7 +487,14 @@ def quizzes_keyboard(quizzes: list, page: int = 1):
 def quiz_menu_keyboard(quiz_id: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ ابدأ الكويز (تجربة)", callback_data=f"start_practice_{quiz_id}")],
-        [InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")],
+        [
+            InlineKeyboardButton("🔄 إعادة رفع / تحديث (JSON)", callback_data=f"reupload_json_{quiz_id}"),
+            InlineKeyboardButton("🛠 تعديل الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0"),
+        ],
+        [
+            InlineKeyboardButton("📁 نقل لمجلد", callback_data=f"my_move_quiz_{quiz_id}"),
+            InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}"),
+        ],
         [InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")],
     ])
 
@@ -1582,6 +1592,27 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📄 تحميل نموذج JSON", callback_data="get_json_template")],
             [InlineKeyboardButton("❌ إلغاء", callback_data=f"bank_quiz_{quiz_id}")]
+        ])
+        await safe_edit(query, text, kb)
+
+    # ── Re-upload / Update existing Quiz JSON ──
+    elif data.startswith("reupload_json_"):
+        quiz_id = int(data.split("_")[-1])
+        context.user_data["waiting_for_json_update"] = quiz_id
+        quiz = db.get_quiz(quiz_id)
+        name_safe = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
+        questions = db.get_questions(quiz_id) or []
+        text = (
+            "🔄 <b>إعادة رفع وتحديث أسئلة الكويز (JSON)</b>\n\n"
+            f"📋 الكويز: <b>{name_safe}</b>\n"
+            f"📝 عدد الأسئلة الحالي: <b>{len(questions)}</b> سؤال\n\n"
+            "🔹 يمكنك إرسال ملف <code>.json</code> جديد أو نسخ ولصق نص الـ JSON في رسالة نصية ✍️.\n"
+            "🔹 <b>سيتم استبدال الأسئلة والإجابات بالصيغة المصححة الجديدة.</b>\n"
+            "🔹 <b>مواعيد وجدول التكرار المتباعد لن تتأثر وستبقى محفوظة كما هي!</b> 🌟"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 تحميل نموذج JSON", callback_data="get_json_template")],
+            [InlineKeyboardButton("❌ إلغاء", callback_data=f"bank_quiz_{quiz_id}")],
         ])
         await safe_edit(query, text, kb)
 

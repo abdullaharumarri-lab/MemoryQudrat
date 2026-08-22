@@ -560,6 +560,39 @@ def save_quiz_without_review(name: str, questions: list, category_id: int = None
     return quiz_id
 
 
+def update_quiz_questions(quiz_id: int, questions: list, new_name: str = None) -> bool:
+    """
+    Replaces questions of an existing quiz with updated ones while keeping
+    all quiz_reviews, categories, and spaced repetition schedules intact.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    if new_name:
+        cursor.execute("UPDATE quizzes SET name = ?, url = NULL WHERE id = ?", (new_name, quiz_id))
+    else:
+        cursor.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_id,))
+
+    # Delete previous questions for this quiz
+    cursor.execute("DELETE FROM questions WHERE quiz_id = ?", (quiz_id,))
+
+    # Insert new questions
+    for q in questions:
+        cursor.execute(
+            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                quiz_id,
+                q["question"],
+                json.dumps(q["options"], ensure_ascii=False),
+                q["answer"],
+                q.get("explanation", ""),
+            ),
+        )
+    conn.commit()
+    conn.close()
+    return True
+
+
 def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
     """Save quiz with a URL and smart first review date."""
     conn = get_connection()
