@@ -414,6 +414,15 @@ def get_platform_stats() -> dict:
     }
 
 
+def get_riyadh_today_iso() -> str:
+    """Returns today's date in Asia/Riyadh timezone formatted as YYYY-MM-DD."""
+    try:
+        riyadh_tz = pytz.timezone("Asia/Riyadh")
+        return datetime.now(riyadh_tz).date().isoformat()
+    except Exception:
+        return date.today().isoformat()
+
+
 # ─── Categories ───────────────────────────────────────────────────────────────
 
 def create_category(name: str, intervals_json: str = "[1, 3, 7, 14, 30]", parent_id: int = None, icon: str = "📁", owner_id: int = None, is_public: int = 1) -> int:
@@ -430,20 +439,22 @@ def create_category(name: str, intervals_json: str = "[1, 3, 7, 14, 30]", parent
 
 
 def get_categories(parent_id: int = None, user_id: int = None, is_public: int = 1) -> list:
+    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
     if is_public == 1:
         if parent_id is None:
-            cursor.execute("SELECT * FROM categories WHERE is_public = 1 AND parent_id IS NULL ORDER BY sort_order ASC, name ASC")
+            cursor.execute("SELECT * FROM categories WHERE is_public = 1 AND parent_id IS NULL ORDER BY sort_order ASC, id ASC")
         else:
-            cursor.execute("SELECT * FROM categories WHERE is_public = 1 AND parent_id = ? ORDER BY sort_order ASC, name ASC", (parent_id,))
+            cursor.execute("SELECT * FROM categories WHERE is_public = 1 AND parent_id = ? ORDER BY sort_order ASC, id ASC", (parent_id,))
     else:
         if parent_id is None:
-            cursor.execute("SELECT * FROM categories WHERE is_public = 0 AND owner_id = ? AND parent_id IS NULL ORDER BY name ASC", (user_id,))
+            cursor.execute("SELECT * FROM categories WHERE is_public = 0 AND owner_id = ? AND parent_id IS NULL ORDER BY id ASC", (user_id,))
         else:
-            cursor.execute("SELECT * FROM categories WHERE is_public = 0 AND owner_id = ? AND parent_id = ? ORDER BY name ASC", (user_id, parent_id))
+            cursor.execute("SELECT * FROM categories WHERE is_public = 0 AND owner_id = ? AND parent_id = ? ORDER BY id ASC", (user_id, parent_id))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=lambda c: natural_sort_key(c.get("name", "")))
     return rows
 
 
@@ -474,7 +485,6 @@ def delete_category(cat_id: int, user_id: int = None):
     cursor.execute("UPDATE quizzes SET category_id = NULL WHERE category_id = ?", (cat_id,))
     cursor.execute("UPDATE categories SET parent_id = NULL WHERE parent_id = ?", (cat_id,))
     if user_id is not None:
-        # Only allow deleting own private categories (not public ones)
         cursor.execute("DELETE FROM categories WHERE id = ? AND owner_id = ? AND is_public = 0", (cat_id, user_id))
     else:
         cursor.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
@@ -483,29 +493,30 @@ def delete_category(cat_id: int, user_id: int = None):
 
 
 def get_quizzes_by_category(category_id: int = None, user_id: int = None, is_public: int = 1) -> list:
-    """Returns quizzes belonging to a specific category."""
+    """Returns quizzes belonging to a specific category, sorted naturally by numeric value in name."""
+    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
     from config import is_admin
     if is_public == 1:
         if category_id is not None:
-            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id DESC", (category_id,))
+            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id ASC", (category_id,))
         else:
-            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id IS NULL ORDER BY id DESC")
+            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id IS NULL ORDER BY id ASC")
     else:
         if user_id is not None and is_admin(user_id):
-            # Admin private view: includes all quizzes owned by admin or legacy unassigned
             if category_id is not None:
-                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id = ? ORDER BY id DESC", (user_id, category_id))
+                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id = ? ORDER BY id ASC", (user_id, category_id))
             else:
-                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id IS NULL ORDER BY id DESC", (user_id,))
+                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id IS NULL ORDER BY id ASC", (user_id,))
         else:
             if category_id is not None:
-                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id = ? ORDER BY id DESC", (user_id, category_id))
+                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id = ? ORDER BY id ASC", (user_id, category_id))
             else:
-                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL ORDER BY id DESC", (user_id,))
+                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL ORDER BY id ASC", (user_id,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     return rows
 
 
@@ -594,7 +605,7 @@ def update_quiz_questions(quiz_id: int, questions: list, new_name: str = None) -
 
 
 def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
-    """Save quiz with a URL and smart first review date."""
+    """Save a URL-only quiz (like Google Forms) and schedule its first review for today."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -605,77 +616,77 @@ def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6
     conn.commit()
     conn.close()
     
-    riyadh_tz = pytz.timezone("Asia/Riyadh")
-    now_riyadh = datetime.now(riyadh_tz)
-    start_today = now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30)
-    schedule_first_review(quiz_id, user_id=user_id, start_today=start_today)
+    schedule_first_review(quiz_id, user_id=user_id, start_today=True)
     return quiz_id
 
 
 def save_quiz(name: str, questions: list, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
-    """Save quiz with smart first review date (today if before 4:30 AM, else tomorrow)."""
+    """Save quiz and schedule its first review for today in Riyadh timezone."""
     quiz_id = save_quiz_without_review(name, questions, category_id, owner_id=user_id, is_public=is_public)
-    riyadh_tz = pytz.timezone("Asia/Riyadh")
-    now_riyadh = datetime.now(riyadh_tz)
-    start_today = now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30)
-    schedule_first_review(quiz_id, user_id=user_id, start_today=start_today)
+    schedule_first_review(quiz_id, user_id=user_id, start_today=True)
     return quiz_id
 
 
 def get_all_quizzes(user_id: int = None) -> list:
     """
     Returns public quizzes + user's own private quizzes if user_id is provided.
-    If user_id is None, returns all quizzes.
+    Sorted naturally by number/name.
     """
+    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
     if user_id is not None:
         cursor.execute(
             """SELECT * FROM quizzes
                WHERE is_public = 1 OR owner_id = ?
-               ORDER BY id DESC""",
+               ORDER BY id ASC""",
             (user_id,),
         )
     else:
-        cursor.execute("SELECT * FROM quizzes ORDER BY id DESC")
+        cursor.execute("SELECT * FROM quizzes ORDER BY id ASC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     return rows
 
 
 def get_public_quizzes(category_id: int = None) -> list:
-    """Returns quizzes in the public bank, optionally filtered by category."""
+    """Returns quizzes in the public bank, sorted naturally by number/name."""
+    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
     if category_id is not None:
         cursor.execute(
-            "SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id DESC",
+            "SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id ASC",
             (category_id,),
         )
     else:
-        cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 ORDER BY id DESC")
+        cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 ORDER BY id ASC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     return rows
 
 
 def get_user_private_quizzes(user_id: int) -> list:
-    """Returns quizzes uploaded privately by the given user (or all created quizzes if admin)."""
+    """Returns quizzes uploaded privately by the given user, sorted naturally by number/name."""
+    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
     from config import is_admin
     if is_admin(user_id):
         cursor.execute(
-            "SELECT * FROM quizzes WHERE owner_id = ? OR owner_id IS NULL ORDER BY id DESC",
+            "SELECT * FROM quizzes WHERE owner_id = ? OR owner_id IS NULL ORDER BY id ASC",
             (user_id,),
         )
     else:
         cursor.execute(
-            "SELECT * FROM quizzes WHERE owner_id = ? AND is_public = 0 ORDER BY id DESC",
+            "SELECT * FROM quizzes WHERE owner_id = ? AND is_public = 0 ORDER BY id ASC",
             (user_id,),
         )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     return rows
 
 
@@ -710,7 +721,7 @@ def copy_quiz_to_user(quiz_id: int, user_id: int) -> int:
     new_quiz_id = cursor.lastrowid
 
     # Copy questions if it's not a URL/media quiz
-    cursor.execute("SELECT * FROM questions WHERE quiz_id = ?", (quiz_id,))
+    cursor.execute("SELECT * FROM questions WHERE quiz_id = ? ORDER BY id ASC", (quiz_id,))
     questions = cursor.fetchall()
     for q in questions:
         q_dict = dict(q)
@@ -728,7 +739,7 @@ def copy_quiz_to_user(quiz_id: int, user_id: int) -> int:
     conn.commit()
     conn.close()
 
-    # Schedule first review for this user
+    # Schedule first review for this user immediately today
     schedule_first_review(new_quiz_id, user_id=user_id, start_today=True)
     return new_quiz_id
 
@@ -754,7 +765,7 @@ def delete_quiz(quiz_id: int, user_id: int = None):
 def get_questions(quiz_id: int) -> list:
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM questions WHERE quiz_id = ?", (quiz_id,))
+    cursor.execute("SELECT * FROM questions WHERE quiz_id = ? ORDER BY id ASC", (quiz_id,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     for r in rows:
@@ -792,50 +803,63 @@ def get_question(question_id: int) -> dict | None:
 # ─── Quiz Reviews ─────────────────────────────────────────────────────────────
 
 def schedule_first_review(quiz_id: int, user_id: int = 6099429826, start_today: bool = True):
-    """Schedule the first review for a user. start_today=True → today, False → tomorrow."""
+    """Schedule the first review for a user in Riyadh timezone."""
     conn = get_connection()
     cursor = conn.cursor()
+    today_str = get_riyadh_today_iso()
     if start_today:
-        review_date = date.today().isoformat()
+        review_date = today_str
     else:
-        review_date = (date.today() + timedelta(days=1)).isoformat()
-    cursor.execute(
-        """INSERT INTO quiz_reviews (user_id, quiz_id, stage, next_review_date)
-           VALUES (?, ?, 0, ?)""",
-        (user_id, quiz_id, review_date),
-    )
+        review_date = (date.fromisoformat(today_str) + timedelta(days=1)).isoformat()
+    
+    # Check if a review already exists for this (user_id, quiz_id)
+    cursor.execute("SELECT id FROM quiz_reviews WHERE user_id = ? AND quiz_id = ?", (user_id, quiz_id))
+    existing = cursor.fetchone()
+    if existing:
+        cursor.execute("UPDATE quiz_reviews SET stage = 0, next_review_date = ? WHERE id = ?", (review_date, existing["id"]))
+    else:
+        cursor.execute(
+            """INSERT INTO quiz_reviews (user_id, quiz_id, stage, next_review_date)
+               VALUES (?, ?, 0, ?)""",
+            (user_id, quiz_id, review_date),
+        )
     conn.commit()
     conn.close()
 
 
 def get_due_quiz_reviews(user_id: int = None) -> list:
-    """Returns quiz_reviews due today or earlier for a user (or all if user_id is None)."""
+    """Returns quiz_reviews due today or earlier for a user in Riyadh timezone, sorted naturally by quiz name/number."""
+    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
+    today_iso = get_riyadh_today_iso()
     if user_id is not None:
         cursor.execute(
             """SELECT qr.*, q.name as quiz_name
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
-               WHERE qr.user_id = ? AND qr.next_review_date <= date('now')
-               ORDER BY qr.next_review_date""",
-            (user_id,),
+               WHERE qr.user_id = ? AND qr.next_review_date <= ?
+               ORDER BY qr.next_review_date ASC""",
+            (user_id, today_iso),
         )
     else:
         cursor.execute(
             """SELECT qr.*, q.name as quiz_name
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
-               WHERE qr.next_review_date <= date('now')
-               ORDER BY qr.next_review_date"""
+               WHERE qr.next_review_date <= ?
+               ORDER BY qr.next_review_date ASC""",
+            (today_iso,),
         )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=lambda r: natural_sort_key(r.get("quiz_name", "")))
     return rows
 
 
 def get_all_quiz_reviews(user_id: int = None) -> list:
-    """Returns all scheduled quiz_reviews with quiz names, ordered by next date."""
+    """Returns all scheduled quiz_reviews with quiz names, ordered by date and naturally by quiz number."""
+    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
     if user_id is not None:

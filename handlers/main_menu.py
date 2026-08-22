@@ -309,39 +309,45 @@ def main_menu_keyboard(user_id: int = None):
 def public_bank_view(cat_id: int = None, page: int = 1, user_id: int = None):
     """
     Builds the message text and inline keyboard for browsing the public bank by category/folder.
+    Sorted naturally by numeric values.
     """
+    from utils import natural_sort_key
     subcats = db.get_categories(parent_id=cat_id)
     cur_cat = db.get_category(cat_id) if cat_id else None
     
     if cur_cat:
         title_icon = cur_cat.get("icon", "📁")
         title_name = cur_cat["name"]
-        header_text = f"📂 <b>{title_icon} {html.escape(title_name)}</b>\n\nاختر كويزاً للبدء أو تصفح المجلدات الفرعية:\n"
+        header_text = f"📂 <b>{title_icon} {html.escape(title_name)}</b>\n\nالكويزات مرتبة تسلسلياً 🔢:\n"
         quizzes = db.get_quizzes_by_category(category_id=cat_id, is_public=1)
     else:
         header_text = "📚 <b>بنك كويزات القدرات العام</b>\n\nاختر القسم الذي تريد التدرب عليه 🧠:\n"
         quizzes = []  # Root screen shows ONLY folders!
 
+    quizzes.sort(key=lambda q: natural_sort_key(q.get("name", "")))
+    subcats.sort(key=lambda s: natural_sort_key(s.get("name", "")))
+
     kb = []
 
     # 1. Subfolders (if any)
-    for sc in subcats:
+    for idx, sc in enumerate(subcats):
         count = db.get_category_quizzes_count(sc["id"])
         icon = sc.get("icon", "📁")
-        kb.append([InlineKeyboardButton(f"{icon} {sc['name']} ({count} كويز)", callback_data=f"bank_cat_{sc['id']}_1")])
+        kb.append([InlineKeyboardButton(f"{icon} {idx + 1}. {sc['name']} ({count} كويز)", callback_data=f"bank_cat_{sc['id']}_1")])
 
     # 2. Quizzes inside this category with pagination
-    ITEMS_PER_PAGE = 10
+    ITEMS_PER_PAGE = 8
     total_q = len(quizzes)
     if total_q > 0:
-        total_pages = (total_q + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        total_pages = max(1, (total_q + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
         page = max(1, min(page, total_pages))
         start = (page - 1) * ITEMS_PER_PAGE
         end = start + ITEMS_PER_PAGE
         page_quizzes = quizzes[start:end]
 
-        for q in page_quizzes:
-            kb.append([InlineKeyboardButton(f"📝 {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
+        for idx, q in enumerate(page_quizzes):
+            item_num = start + idx + 1
+            kb.append([InlineKeyboardButton(f"📝 {item_num}. {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
 
         # Pagination controls
         nav_row = []
@@ -375,23 +381,28 @@ def public_bank_view(cat_id: int = None, page: int = 1, user_id: int = None):
 def my_quizzes_view(folder_id: int = None, page: int = 1, user_id: int = None, show_all: bool = False):
     """
     Builds the message text and keyboard for browsing personal private quizzes and personal folders.
+    Sorted naturally by numeric values.
     """
+    from utils import natural_sort_key
     if show_all:
         quizzes = db.get_user_private_quizzes(user_id) if user_id else []
         subfolders = []
         cur_folder = None
-        header_text = f"📚 <b>جميع كويزاتي الخاصة</b> — ({len(quizzes)} كويز)\n\nاختر أي كويز للبدء أو نقله لأحد مجلداتك:\n"
+        header_text = f"📚 <b>جميع كويزاتي الخاصة</b> — ({len(quizzes)} كويز)\n\nمرتبة تسلسلياً 🔢:\n"
     else:
         subfolders = db.get_categories(parent_id=folder_id, user_id=user_id, is_public=0)
         cur_folder = db.get_category(folder_id) if folder_id else None
         
         if cur_folder:
             title_name = cur_folder.get("name", "مجلد")
-            header_text = f"📂 <b>مجلد: {html.escape(title_name)}</b>\n\nاختر كويزاً للبدء أو تصفح المجلدات الفرعية:\n"
+            header_text = f"📂 <b>مجلد: {html.escape(title_name)}</b>\n\nالكويزات مرتبة تسلسلياً 🔢:\n"
             quizzes = db.get_quizzes_by_category(category_id=folder_id, user_id=user_id, is_public=0)
         else:
-            header_text = "📁 <b>كويزاتي ومجلداتي الخاصة</b> 🧠\n\nتصفح مجلداتك وكويزاتك الخاصة، أو أنشئ مجلداً جديداً:\n"
+            header_text = "📁 <b>كويزاتي ومجلداتي الخاصة</b> 🧠\n\nتصفح كويزاتك ومجلداتك مرتبة تسلسلياً 🔢:\n"
             quizzes = db.get_quizzes_by_category(category_id=None, user_id=user_id, is_public=0)
+
+    quizzes.sort(key=lambda q: natural_sort_key(q.get("name", "")))
+    subfolders.sort(key=lambda f: natural_sort_key(f.get("name", "")))
 
     kb = []
 
@@ -402,23 +413,24 @@ def my_quizzes_view(folder_id: int = None, page: int = 1, user_id: int = None, s
             kb.append([InlineKeyboardButton(f"📚 كل كويزاتي الخاصة ({len(all_private)} كويز)", callback_data="my_all_quizzes_1")])
 
     # 2. Subfolders
-    for sf in subfolders:
+    for idx, sf in enumerate(subfolders):
         count = db.get_category_quizzes_count(sf["id"], user_id=user_id)
         icon = sf.get("icon", "📁")
-        kb.append([InlineKeyboardButton(f"{icon} {sf['name']} ({count} كويز)", callback_data=f"my_cat_{sf['id']}_1")])
+        kb.append([InlineKeyboardButton(f"{icon} {idx + 1}. {sf['name']} ({count} كويز)", callback_data=f"my_cat_{sf['id']}_1")])
 
     # 3. Quizzes inside this view with pagination
     ITEMS_PER_PAGE = 8
     total_q = len(quizzes)
     if total_q > 0:
-        total_pages = (total_q + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        total_pages = max(1, (total_q + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
         page = max(1, min(page, total_pages))
         start = (page - 1) * ITEMS_PER_PAGE
         end = start + ITEMS_PER_PAGE
         page_quizzes = quizzes[start:end]
 
-        for q in page_quizzes:
-            kb.append([InlineKeyboardButton(f"📝 {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
+        for idx, q in enumerate(page_quizzes):
+            item_num = start + idx + 1
+            kb.append([InlineKeyboardButton(f"📝 {item_num}. {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
 
         nav_row = []
         page_prefix = "my_all_quizzes_" if show_all else f"my_cat_{folder_id or 0}_"
@@ -459,9 +471,11 @@ def my_quizzes_view(folder_id: int = None, page: int = 1, user_id: int = None, s
 
 
 def quizzes_keyboard(quizzes: list, page: int = 1):
+    from utils import natural_sort_key
+    quizzes.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     ITEMS_PER_PAGE = 20
     total = len(quizzes)
-    total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    total_pages = max(1, (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
     page = max(1, min(page, total_pages))
 
     start = (page - 1) * ITEMS_PER_PAGE
@@ -564,18 +578,20 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     u_id = user.id if user else 6099429826
     reviews = db.get_due_quiz_reviews(user_id=u_id)
-    text = (
-        f"🔁 <b>مراجعات اليوم المستحقة</b> 🧠\n\n"
-        f"عدد الكويزات المستحقة لمراجعتها اليوم: <b>{len(reviews)}</b>\n\n"
-        f"المراجعة اليومية تضمن ترسيخ القوانين والنماذج في الذاكرة طويلة المدى 💪."
-    )
     if not reviews:
-        kb = [[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]
+        text = "✅ <b>لا توجد مراجعات مستحقة اليوم في حسابك!</b>\n\nاستمر بالعمل الجيد وتصفح كويزاتك من القائمة الرئيسية 💪."
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
     else:
-        kb = [[InlineKeyboardButton(f"🔁 {r['quiz_name']} — {stage_label(r['stage'])}", callback_data=f"start_review_{r['id']}_{r['quiz_id']}")] for r in reviews]
-        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+        ITEMS_PER_PAGE = 8
+        total_pages = max(1, (len(reviews) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+        text = (
+            f"🔁 <b>مراجعات اليوم المستحقة</b> ({len(reviews)} مراجعة) 🧠\n"
+            f"(صفحة 1 من {total_pages})\n\n"
+            f"اختر الكويز للبدء فوراً (مرتبة تسلسلياً 🔢):"
+        )
+        kb = due_reviews_keyboard(reviews, page=1)
     await clean_entire_chat(context, chat_id, extra_ids=[update.message.message_id] if update.message else None)
-    await send_clean_message(context, chat_id, text, reply_markup=InlineKeyboardMarkup(kb))
+    await send_clean_message(context, chat_id, text, reply_markup=kb)
 
 
 async def weak_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -599,7 +615,7 @@ def render_schedule_view(user_id: int, page: int = 1) -> tuple[str, InlineKeyboa
     if not user_reviews:
         text = (
             "📅 <b>جدول المراجعات فارغ حالياً!</b>\n\n"
-            "تصفح <b>بنك الكويزات العام</b> واختر أي كويز ترغب بجدولته في نظام التكرار المتباعد 🧠."
+            "تصفح <b>بنك الكويزات العام</b> أو <b>كويزاتك الخاصة</b> واختر أي كويز ترغب بجدولته في نظام التكرار المتباعد 🧠."
         )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📚 تصفح بنك الكويزات العام", callback_data="public_bank_root")],
@@ -608,7 +624,7 @@ def render_schedule_view(user_id: int, page: int = 1) -> tuple[str, InlineKeyboa
         return text, kb
 
     ITEMS_PER_PAGE = 8
-    total_pages = (len(user_reviews) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    total_pages = max(1, (len(user_reviews) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
     page = max(1, min(page, total_pages))
     
     start_idx = (page - 1) * ITEMS_PER_PAGE
@@ -617,27 +633,28 @@ def render_schedule_view(user_id: int, page: int = 1) -> tuple[str, InlineKeyboa
 
     lines = [
         f"📅 <b>جدول مراجعاتي</b> (صفحة {page} من {total_pages})",
-        f"إجمالي الكويزات المجدولة: <b>{len(user_reviews)}</b> كويز",
+        f"إجمالي الكويزات المجدولة: <b>{len(user_reviews)}</b> كويز (مرتبة تسلسلياً 🔢)",
         "────────────────────"
     ]
 
-    for item in page_reviews:
+    for idx, item in enumerate(page_reviews):
+        item_num = start_idx + idx + 1
         name_safe = html.escape(item.get("quiz_name", "كويز"))
         stage = item.get("stage", 0) or 0
         bar = "✅" * stage + "◻️" * (5 - stage)
         
-        lines.append(f"📚 <b>{name_safe}</b>")
+        lines.append(f"<b>{item_num}. {name_safe}</b>")
         lines.append(f"📊 التقدم: {bar} ({stage}/5)")
 
         if item.get("next_review_date"):
             days = days_until(item["next_review_date"])
             lbl = stage_label(stage)
             if days <= 0:
-                lines.append(f"🔁 <b>{lbl}</b> — 🔴 <b>مستحقة اليوم!</b> ⚠️")
+                lines.append(f"🔁 <b>{lbl}</b> — 🔴 <b>مستحقة الآن!</b> ⚠️")
             elif days == 1:
                 lines.append(f"🔁 <b>{lbl}</b> — 🟡 غداً 🔔")
             else:
-                lines.append(f"🔁 <b>{lbl}</b> — ⏳ بعد {days} يوم")
+                lines.append(f"🔁 <b>{lbl}</b> — ⏳ بعد {days} يوم ({item['next_review_date']})")
         else:
             lines.append("✅ <b>اكتملت جميع مراحل المراجعة</b> 🎉")
 
@@ -723,6 +740,7 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         logger.warning("Unauthorized fixstage attempt by user_id=%s", user.id if user else "unknown")
         return
 
+    from utils import natural_sort_key
     reviews = db.get_all_quiz_reviews()
     if not reviews:
         text = "لا توجد كويزات مجدولة."
@@ -732,18 +750,20 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
             await safe_edit(update.callback_query, text)
         return
 
-    ITEMS_PER_PAGE = 30
+    reviews.sort(key=lambda r: natural_sort_key(r.get("quiz_name", "")))
+
+    ITEMS_PER_PAGE = 10
     total_items = len(reviews)
-    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    total_pages = max(1, (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
     page = max(1, min(page, total_pages))
 
     start_idx = (page - 1) * ITEMS_PER_PAGE
     end_idx = start_idx + ITEMS_PER_PAGE
     page_reviews = reviews[start_idx:end_idx]
 
-
     kb = []
-    for r in page_reviews:
+    for idx, r in enumerate(page_reviews):
+        item_num = start_idx + idx + 1
         days = days_until(r["next_review_date"])
         if days <= 0:
             timing = "🔴 مستحق الآن"
@@ -751,8 +771,13 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
             timing = "🟡 غداً"
         else:
             timing = f"⏳ بعد {days} يوم"
+        
+        q_name = r.get("quiz_name", "كويز")
+        if len(q_name) > 25:
+            q_name = q_name[:22] + "..."
+
         kb.append([InlineKeyboardButton(
-            f"🔧 {r['quiz_name']} — {timing}",
+            f"🔧 {item_num}. {q_name} — {timing}",
             callback_data=f"fixstage_menu_{r['quiz_id']}"
         )])
 
@@ -767,10 +792,11 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
 
     kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
 
-    text = f"🛠 <b>تعديل موعد المراجعة (صفحة {page}/{total_pages})</b>\n\nاختر الكويز الذي تريد تعديل موعده:"
+    text = f"🛠 <b>تعديل مراحل ومواعيد الكويزات (صفحة {page}/{total_pages})</b>\n\nالكويزات مرتبة تسلسلياً 🔢 — اختر الكويز للتعديل:"
     if update.message:
         await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=InlineKeyboardMarkup(kb))
     elif update.callback_query:
+        await safe_edit(update.callback_query, text, InlineKeyboardMarkup(kb))
         await safe_edit(update.callback_query, text, InlineKeyboardMarkup(kb))
 
 
@@ -1444,54 +1470,33 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             InlineKeyboardMarkup([[InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")]]))
 
     # ── Due reviews ──
-    elif data == "due_reviews":
-        riyadh_tz = pytz.timezone("Asia/Riyadh")
-        now = datetime.now(riyadh_tz)
-        today_date = now.date().isoformat()
+    elif data == "due_reviews" or data.startswith("due_reviews_page_"):
+        try:
+            page = int(data.split("_")[-1])
+        except (ValueError, TypeError):
+            page = 1
         
         user = update.effective_user
         u_id = user.id if user else 6099429826
         reviews = db.get_due_quiz_reviews(user_id=u_id)
         if not reviews:
             await safe_edit(query,
-                "✅ لا توجد مراجعات مستحقة اليوم في حسابك!\n\nاستمر بالعمل الجيد 💪",
+                "✅ <b>لا توجد مراجعات مستحقة اليوم في حسابك!</b>\n\nاستمر بالعمل الجيد وتصفح كويزاتك من القائمة الرئيسية 💪.",
                 InlineKeyboardMarkup(back_btn)
             )
             return
 
-        overdue_reviews = [r for r in reviews if r["next_review_date"] < today_date]
-        due_today_reviews = [r for r in reviews if r["next_review_date"] == today_date]
+        ITEMS_PER_PAGE = 8
+        total_pages = max(1, (len(reviews) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+        page = max(1, min(page, total_pages))
 
-        if now.hour > 4 or (now.hour == 4 and now.minute >= 30):
-            open_reviews = overdue_reviews + due_today_reviews
-            locked_reviews = []
-        else:
-            open_reviews = overdue_reviews
-            locked_reviews = due_today_reviews
-
-        text = ""
-        kb = []
-
-        if open_reviews:
-            text += f"🔁 <b>المراجعات المتاحة الآن</b> — {len(open_reviews)} مراجعة\n\n"
-            kb = due_reviews_keyboard(open_reviews).inline_keyboard
-            
-        if locked_reviews:
-            if open_reviews:
-                text += "──────────────\n\n"
-            text += f"🔒 <b>مراجعات مجدولة لليوم</b> — ({len(locked_reviews)} مراجعة)\n"
-            text += "ستتاح لك الساعة 4:30 فجراً بتوقيت الرياض."
-
-        if not kb:
-            kb = back_btn
-        elif not open_reviews:
-            kb.append(back_btn[0])
-
-        await safe_edit(
-            query,
-            text,
-            InlineKeyboardMarkup(kb)
+        text = (
+            f"🔁 <b>مراجعات اليوم المستحقة</b> ({len(reviews)} مراجعة) 🧠\n"
+            f"(صفحة {page} من {total_pages})\n\n"
+            f"اختر الكويز للمراجعة (مرتبة تسلسلياً 🔢):"
         )
+        kb = due_reviews_keyboard(reviews, page=page)
+        await safe_edit(query, text, kb)
 
     # ── Start review ──
     elif data.startswith("start_review_"):
@@ -1970,10 +1975,12 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         kb = []
         for idx, q in enumerate(page_qs):
             q_num = start_idx + idx + 1
-            q_text = str(q.get("question_text", ""))
-            if len(q_text) > 40:
-                q_text = q_text[:37] + "..."
-            kb.append([InlineKeyboardButton(f"سؤال {q_num}: {q_text}", callback_data=f"fixstage_qedit_{quiz_id}_{q['id']}")])
+            raw_text = str(q.get("question_text", ""))
+            clean_q = raw_text.split("\n\n❓ ")[-1] if "❓ " in raw_text else raw_text
+            clean_q = clean_q.replace("\n", " ").strip()
+            if len(clean_q) > 35:
+                clean_q = clean_q[:32] + "..."
+            kb.append([InlineKeyboardButton(f"سؤال {q_num}: {clean_q}", callback_data=f"fixstage_qedit_{quiz_id}_{q['id']}")])
             
         nav_row = []
         if page > 0:
@@ -1988,7 +1995,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         quiz = db.get_quiz(quiz_id)
         q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
         
-        text = f"🛠 <b>تعديل أسئلة الكويز</b>\n📚 {q_name}\n\nاختر السؤال المراد تعديله:"
+        text = f"🛠 <b>تعديل أسئلة الكويز (صفحة {page+1}/{total_pages})</b>\n📚 <b>{q_name}</b>\n\nالأسئلة مرتبة تسلسلياً 🔢 — اختر السؤال لتعديله:"
         await safe_edit(query, text, InlineKeyboardMarkup(kb), context=context)
 
     # ── Edit Question Menu ──
@@ -2004,17 +2011,17 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             
         q_text = html.escape(str(question.get("question_text", "")))
         options = question.get("options", [])
-        correct = html.escape(str(question.get("correct_answer", "")))
+        correct = str(question.get("correct_answer", "")).strip()
         
         text = f"📝 <b>السؤال:</b>\n{q_text}\n\n<b>الخيارات:</b>\n"
         for i, opt in enumerate(options):
             opt_safe = html.escape(str(opt))
-            if str(opt).strip() == correct.strip():
-                text += f"✅ {opt_safe}\n"
+            if str(opt).strip() == correct:
+                text += f"✅ <b>{opt_safe}</b> <i>(الإجابة الصحيحة)</i>\n"
             else:
                 text += f"🔘 {opt_safe}\n"
                 
-        text += "\nاختر ماذا تريد أن تفعل:"
+        text += "\nاختر الإجراء المطلوب:"
         
         kb = []
         kb.append([InlineKeyboardButton("✏️ تعديل نص السؤال", callback_data=f"fixstg_edittext_{quiz_id}_{q_id}")])

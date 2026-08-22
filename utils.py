@@ -226,3 +226,31 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
         logger.error("safe_edit fallback reply_text failed: %s", e2)
 
 
+def normalize_arabic_digits(s: str) -> str:
+    """Converts Arabic-Indic digits (٠-٩) to Western standard digits (0-9)."""
+    if not s:
+        return ""
+    arabic_digits = "٠١٢٣٤٥٦٧٨٩"
+    for i, d in enumerate(arabic_digits):
+        s = str(s).replace(d, str(i))
+    return s
+
+
+def natural_sort_key(s: str) -> list:
+    """
+    Returns a sort key that orders strings naturally by numeric values.
+    e.g. 'كويز 1', 'كويز 2', 'كويز 10' -> sorted 1, 2, 10 instead of 1, 10, 2.
+    """
+    if not s:
+        return [0, ""]
+    norm = normalize_arabic_digits(str(s))
+    parts = re.split(r'(\d+)', norm)
+    key = []
+    for p in parts:
+        if p.isdigit():
+            key.append(int(p))
+        else:
+            key.append(p.strip().lower())
+    return key
+
+
