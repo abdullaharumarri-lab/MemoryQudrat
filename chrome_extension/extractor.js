@@ -1,20 +1,17 @@
 /**
- * MemoryQudrat — Google Forms Quiz Extractor Engine v4.2 (Universal Reading & MCQ Engine)
+ * MemoryQudrat — Google Forms Quiz Extractor Engine v4.3 (Bulletproof Reading & MCQ Engine)
  *
- * Major Fixes & Enhancements:
- *   1. Precise Reading Passage Extraction:
- *      - Captures passages from section headers, standalone description cards, and multi-paragraph blocks.
- *      - Distinguishes real reading passages from disclaimers, oaths (اقسم/أتعهد), and instructions.
- *      - Never false-drops passages containing words like "دورة", "شروط", "ملاحظة", "الأستاذ".
- *   2. Section Context Awareness:
- *      - Automatically propagates active passages to all consecutive comprehension questions in that section.
- *      - Clears active passage when encountering non-reading sections (التناظر اللفظي, الخطأ السياقي, إكمال الجمل, القسم الكمي).
- *   3. Strict Analogy & Sentence Completion Protection:
- *      - Preserves pure analogy questions ("رياضة : لياقة") without prepending irrelevant passages.
- *      - Accurately identifies comprehension questions even when they contain colons (":").
- *   4. Rock-Solid Option Isolation:
- *      - Scopes each radio button strictly to its immediate container, guaranteeing all 4 options are extracted.
- *      - Extracts correct answer indicators (green highlight, score box, checked answer).
+ * Key Precision Upgrades:
+ *   1. Complete Student Info / Score / Pledge Elimination:
+ *      - Rejects student name cards ("اسم الطالب : عبدالله جمعان"), emails, phone numbers, passwords,
+ *        score banners ("0 من إجمالي 0 نقطة"), oaths (اقسم/أتعهد), and course announcements.
+ *   2. Strict Passage Validation:
+ *      - Only accepts genuine multi-sentence reading passages (استيعاب المقروء) (> 70 chars with zero metadata/score words).
+ *   3. Universal Analogy & Question Formatting:
+ *      - Strips asterisks, trailing symbols, and numbers cleanly.
+ *      - Preserves pure analogy questions ("قماش : ملابس", "إهمال: رسوب") cleanly without attached text.
+ *   4. Perfect 4-Option MCQ Isolation:
+ *      - Extracts all 4 choices cleanly for every question.
  */
 
 function extractGoogleFormsQuiz() {
@@ -69,13 +66,33 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           3 — Precise Pledge / Disclaimer Filter
+           3 — Strict Reading Passage Validator
+           Rejects student names, scores, emails, pledges, passwords
         ══════════════════════════════════════════ */
-        function isPledgeOrDisclaimer(text) {
-            if (!text) return true;
+        function isValidReadingPassage(text) {
+            if (!text) return false;
             const t = text.trim();
-            const pledgeRegex = /(اقسم\s+انني|أقسم\s+أنني|اقسم\s+بالله|أقسم\s+بالله|أتعهد\s+بأن|اتعهد\s+بان|أقر\s+بأن|اقر\s+بان|تعهد\s+والتزام|شروط\s+وقواعد\s+الاختبار|أدخل\s+كلمة\s+المرور|الاسم\s+الثلاثي|رقم\s+الهوية|رقم\s+الجوال)/i;
-            return pledgeRegex.test(t);
+
+            // 1. Length requirement: Real reading passages are substantial
+            if (t.length < 70) return false;
+
+            // 2. Score indicators (e.g. "0 من إجمالي 0 نقطة", "5/5 points")
+            if (/من\s+إجمالي\s+\d+\s+نقطة|\b\d+\s*\/\s*\d+\b|\bpoints?\b|\bنقطة\b|\bنقاط\b|\bالدرجة\b|\bالنتيجة\b/i.test(t)) {
+                return false;
+            }
+
+            // 3. Student info, form inputs, pledges, passwords, course headers
+            const forbiddenPattern = /(اسم\s+الطالب|اسم\s+المشترك|الاسم\s+الثلاثي|الاسم\s*:|البريد|الإيميل|email|رقم\s+الجوال|رقم\s+الهاتف|phone|الفصل|المدرسة|المجموعة|كلمة\s+المرور|password|اقسم|أقسم|أتعهد|اتعهد|أقر\s+بأن|تعهد\s+والتزام|شروط\s+وقواعد|محوسب\s+أغسطس|إيهاب\s+عبد\s+العظيم)/i;
+            if (forbiddenPattern.test(t)) {
+                return false;
+            }
+
+            // 4. Form title redundancy
+            if (quizTitle && t.startsWith(quizTitle) && t.length < quizTitle.length + 50) {
+                return false;
+            }
+
+            return true;
         }
 
         /* ══════════════════════════════════════════
@@ -96,13 +113,12 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           5 — Precise Verbal Analogy (التناظر اللفظي) Filter
+           5 — Precise Verbal Analogy Filter
         ══════════════════════════════════════════ */
         function isVerbalAnalogy(qText) {
             if (!qText) return false;
-            const t = qText.trim().replace(/[\*\.]+$/, '').trim();
+            const t = qText.trim().replace(/[\*\.\s]+$/, '').trim();
 
-            // Comprehension question keywords must NEVER be treated as analogies
             const compKeywords = [
                 'وفق', 'الفقرة', 'النص', 'القطعة', 'الضمير', 'معنى', 'علاقة',
                 'يفهم', 'يستنتج', 'المقصود', 'أنسب', 'عنوان', 'تشير', 'يدل',
@@ -112,8 +128,7 @@ function extractGoogleFormsQuiz() {
                 if (t.includes(kw)) return false;
             }
 
-            // Analogy format: short string strictly matching "Word(s) : Word(s)"
-            if (t.length < 45 && /^[\u0600-\u06FF\s]+\s*[:\：]\s*[\u0600-\u06FF\s]+$/.test(t)) {
+            if (t.length < 50 && /^[\u0600-\u06FF\s]+\s*[:\：]\s*[\u0600-\u06FF\s]+$/.test(t)) {
                 return true;
             }
             return false;
@@ -133,7 +148,6 @@ function extractGoogleFormsQuiz() {
         // Deduplicate nested containers
         const allItems = [];
         rawContainers.forEach((el) => {
-            // Only keep top-level containers (elements not contained within another selected element)
             const isDescendant = rawContainers.some(other => other !== el && other.contains(el));
             if (!isDescendant && !allItems.includes(el)) {
                 allItems.push(el);
@@ -146,26 +160,19 @@ function extractGoogleFormsQuiz() {
             const hasRadios = item.querySelector('[role="radiogroup"], [role="radio"]');
             const hasInputs = item.querySelector('input[type="text"], input[type="email"], textarea');
 
-            // ── Case A: Standalone Text Card / Section Header / Passage ──
+            // ── Case A: Standalone Card / Section Header / Text Block ──
             if (!hasRadios && !hasInputs) {
                 const text = clean(item);
 
-                // If this is a section break for a non-reading section, clear active passage
+                // Clear active passage if non-reading section begins
                 if (isNonReadingSection(text)) {
                     currentActivePassage = '';
                     return;
                 }
 
-                // If this is a pledge/disclaimer or score banner, ignore it
-                if (isPledgeOrDisclaimer(text) || /^\d+\s*\/\s*\d+/.test(text)) {
-                    return;
-                }
-
-                // If it has substantial reading text (> 45 chars) and is not just the form title
-                if (text.length > 45) {
-                    if (!text.startsWith(quizTitle) || text.length > quizTitle.length + 30) {
-                        currentActivePassage = text;
-                    }
+                // If this is a valid reading passage, store it
+                if (isValidReadingPassage(text)) {
+                    currentActivePassage = text;
                 }
                 return;
             }
@@ -194,11 +201,13 @@ function extractGoogleFormsQuiz() {
                 clone.querySelectorAll('.R4nke, .DqBBlb').forEach(e => e.remove());
                 questionText = clean(clone);
             }
-            // Strip leading question numbering
+            
+            // Clean question text: strip leading numbers and clean trailing score artifacts
             questionText = questionText.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').trim();
+            questionText = questionText.replace(/\s*\*\s*$/, '').trim();
             if (!questionText) questionText = `السؤال ${qNum}`;
 
-            // Attach active passage ONLY to reading comprehension questions (never to analogies)
+            // Attach active passage ONLY to comprehension questions (never analogies)
             if (currentActivePassage && !isVerbalAnalogy(questionText)) {
                 const snippet = currentActivePassage.slice(0, 30);
                 if (!questionText.includes(snippet)) {
@@ -251,7 +260,6 @@ function extractGoogleFormsQuiz() {
             let greenOptText = null;
 
             for (const radio of radios) {
-                // Scope strictly to this specific option wrapper
                 let optBox = radio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, div[jscontroller]');
                 if (!optBox || optBox === item || optBox === rg) {
                     optBox = radio.parentElement || radio;
