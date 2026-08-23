@@ -624,6 +624,16 @@ def update_quiz_questions(quiz_id: int, questions: list, new_name: str = None) -
     return True
 
 
+def update_quiz_name(quiz_id: int, new_name: str) -> bool:
+    """Updates the title/name of a quiz."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE quizzes SET name = ? WHERE id = ?", (new_name.strip(), quiz_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
 def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
     """Save a URL-only quiz (like Google Forms) and schedule its first review for today."""
     conn = get_connection()

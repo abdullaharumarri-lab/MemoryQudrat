@@ -119,6 +119,28 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
         return
 
+    # ── Quiz Rename Handler ───────────────────────────────────────────────────
+    if context.user_data.get("waiting_for_quiz_rename") is not None:
+        quiz_id = context.user_data.pop("waiting_for_quiz_rename")
+        new_name = msg.strip()
+        quiz = db.get_quiz(quiz_id)
+        if quiz and (quiz.get("owner_id") == (user.id if user else None) or (user and is_admin(user.id))):
+            db.update_quiz_name(quiz_id, new_name)
+            text = (
+                f"✅ <b>تم تغيير اسم الكويز بنجاح!</b>\n\n"
+                f"📌 الاسم الجديد: <b>{html.escape(new_name)}</b>\n\n"
+                f"تم تحديث الترتيب والجدول تلقائياً 🌟."
+            )
+        else:
+            text = "❌ لا تملك صلاحية تعديل هذا الكويز."
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚙️ فتح الكويز", callback_data=f"bank_quiz_{quiz_id}")],
+            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        ])
+        await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
+        return
+
     # Check if waiting for custom reminder time
     if context.user_data.get("waiting_for_custom_reminder"):
         context.user_data.pop("waiting_for_custom_reminder", None)
@@ -495,9 +517,12 @@ def quiz_menu_keyboard(quiz_id: int):
         ],
         [
             InlineKeyboardButton("⚙️ ضبط مرحلة وموعد المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
-            InlineKeyboardButton("📁 نقل لمجلد", callback_data=f"my_move_quiz_{quiz_id}"),
+            InlineKeyboardButton("✏️ تعديل اسم الكويز", callback_data=f"rename_quiz_{quiz_id}"),
         ],
-        [InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")],
+        [
+            InlineKeyboardButton("📁 نقل لمجلد", callback_data=f"my_move_quiz_{quiz_id}"),
+            InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}"),
+        ],
         [InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")],
     ])
 
@@ -757,37 +782,69 @@ async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if query_str in name or query_str in str(q["id"]):
                 matched.append(q)
         title = f"🔍 <b>نتائج البحث عن: «{html.escape(query_str)}»</b> ({len(matched)} نتيجة)\n"
+        
+        if not matched:
+            text = "❌ لم يتم العثور على أي كويز يطابق بحثك."
+            kb = [
+                [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+                [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
+            ]
+        else:
+            lines = [title]
+            kb = []
+            for q in matched[:15]:
+                q_id = q["id"]
+                q_name = q.get("name", "كويز")
+                q_count = len(db.get_questions(q_id))
+                lines.append(f"• 📋 <b>{html.escape(q_name)}</b>\n  └ معرف (ID): <code>{q_id}</code> | الأسئلة: {q_count} سؤال\n")
+                kb.append([InlineKeyboardButton(f"⚙️ إدارة: {q_name[:25]}", callback_data=f"bank_quiz_{q_id}")])
+                
+            lines.append("اضغط على زر الكويز بالأسفل لفتحه، تعديله، أو حذفه:")
+            kb.append([InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")])
+            kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+            text = "\n".join(lines)
+
     else:
-        # Find unnumbered quizzes first
-        matched = []
+        # Default mode: Show the latest uploaded quiz + any unnumbered quizzes
+        latest_quiz = max(all_quizzes, key=lambda x: x["id"]) if all_quizzes else None
+        
+        unnumbered = []
         for q in all_quizzes:
             norm = normalize_arabic_digits(q.get("name", ""))
             if not re.match(r'^\s*\d+', norm):
-                matched.append(q)
+                unnumbered.append(q)
         
-        if not matched:
-            matched = sorted(all_quizzes, key=lambda x: x["id"], reverse=True)[:10]
-            title = f"🔍 <b>أحدث الكويزات المرفوعة في حسابك:</b> ({len(matched)} كويز)\n"
-        else:
-            title = f"🔍 <b>الكويزات الإضافية / غير المرقمة:</b> ({len(matched)} كويز)\n"
-
-    if not matched:
-        text = "❌ لم يتم العثور على أي كويز يطابق بحثك."
-        kb = [
-            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
-            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
+        lines = [
+            f"🔍 <b>كاشف وباحث الكويزات الذكي</b> 🧠\n",
+            f"إجمالي كويزاتك الخاصة: <b>{len(all_quizzes)}</b> كويز\n"
         ]
-    else:
-        lines = [title]
         kb = []
-        for q in matched[:15]:
-            q_id = q["id"]
-            q_name = q.get("name", "كويز")
-            q_count = len(db.get_questions(q_id))
-            lines.append(f"• 📋 <b>{html.escape(q_name)}</b>\n  └ معرف (ID): <code>{q_id}</code> | الأسئلة: {q_count} سؤال\n")
-            kb.append([InlineKeyboardButton(f"⚙️ إدارة: {q_name[:25]}", callback_data=f"bank_quiz_{q_id}")])
-            
-        lines.append("اضغط على زر الكويز بالأسفل لفتحه أو حذفه:")
+        
+        if latest_quiz:
+            l_id = latest_quiz["id"]
+            l_name = latest_quiz.get("name", "كويز")
+            l_count = len(db.get_questions(l_id))
+            lines.append(
+                f"🆕 <b>آخر كويز تم رفعه في حسابك (أحدث ID):</b>\n"
+                f"• 📋 <b>{html.escape(l_name)}</b>\n"
+                f"  └ معرف (ID): <code>{l_id}</code> | الأسئلة: {l_count} سؤال\n"
+            )
+            kb.append([
+                InlineKeyboardButton(f"✏️ تعديل اسم آخر كويز", callback_data=f"rename_quiz_{l_id}"),
+                InlineKeyboardButton(f"⚙️ فتحه", callback_data=f"bank_quiz_{l_id}"),
+            ])
+
+        if unnumbered:
+            lines.append(f"📋 <b>كويزات بدون ترقيم قياسي في العنوان:</b> ({len(unnumbered)} كويز)\n")
+            for q in unnumbered[:10]:
+                q_id = q["id"]
+                q_name = q.get("name", "كويز")
+                q_count = len(db.get_questions(q_id))
+                lines.append(f"• 📋 <b>{html.escape(q_name)}</b> (ID: <code>{q_id}</code> - {q_count} سؤال)")
+                kb.append([InlineKeyboardButton(f"⚙️ إدارة: {q_name[:25]}", callback_data=f"bank_quiz_{q_id}")])
+            lines.append("")
+
+        lines.append("💡 <i>للبحث عن أي كويز محدد أرسل:</i> <code>/find اسم_الكويز</code>")
         kb.append([InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")])
         kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
         text = "\n".join(lines)
@@ -969,8 +1026,9 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         is_owner = (user and quiz.get("owner_id") == user.id and not quiz.get("is_public"))
         if is_owner:
             kb.append([
-                InlineKeyboardButton("⚙️ ضبط مرحلة وموعد المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
-                InlineKeyboardButton("🔄 إعادة رفع (JSON)", callback_data=f"reupload_json_{quiz_id}"),
+                InlineKeyboardButton("⚙️ ضبط المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
+                InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"rename_quiz_{quiz_id}"),
+                InlineKeyboardButton("🔄 تحديث (JSON)", callback_data=f"reupload_json_{quiz_id}"),
             ])
             kb.append([
                 InlineKeyboardButton("📁 نقل لمجلد خاص", callback_data=f"my_move_quiz_{quiz_id}"),
@@ -978,8 +1036,9 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             ])
         elif user and is_admin(user.id):
             kb.append([
-                InlineKeyboardButton("⚙️ ضبط مرحلة وموعد المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
-                InlineKeyboardButton("🔄 إعادة رفع (JSON)", callback_data=f"reupload_json_{quiz_id}"),
+                InlineKeyboardButton("⚙️ ضبط المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
+                InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"rename_quiz_{quiz_id}"),
+                InlineKeyboardButton("🔄 تحديث (JSON)", callback_data=f"reupload_json_{quiz_id}"),
             ])
             kb.append([
                 InlineKeyboardButton("📂 نقل لمجلد", callback_data=f"admin_move_quiz_{quiz_id}"),
@@ -1520,6 +1579,24 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         quiz_id = int(data.split("_")[-1])
         from handlers.quiz_handler import start_quiz_session
         await start_quiz_session(update, context, quiz_id, session_type="quiz")
+
+    # ── Rename quiz ──
+    elif data.startswith("rename_quiz_"):
+        quiz_id = int(data.split("_")[-1])
+        quiz = db.get_quiz(quiz_id)
+        if not quiz:
+            await safe_edit(query, "الكويز غير موجود.", InlineKeyboardMarkup(back_btn))
+            return
+        context.user_data["waiting_for_quiz_rename"] = quiz_id
+        name_safe = html.escape(quiz.get("name", "كويز"))
+        text = (
+            f"✏️ <b>تعديل اسم الكويز</b>\n\n"
+            f"الاسم الحالي: <b>{name_safe}</b>\n\n"
+            f"أرسل الآن <b>الاسم الجديد</b> للكويز في رسالة نصية:\n"
+            f"<i>(مثال: 171. غاز الهيليوم وصناعة الورق)</i>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"bank_quiz_{quiz_id}")]])
+        await safe_edit(query, text, kb)
 
     # ── Delete quiz ──
     elif data.startswith("delete_quiz_"):
