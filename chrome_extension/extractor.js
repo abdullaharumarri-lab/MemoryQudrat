@@ -1,12 +1,20 @@
 /**
- * MemoryQudrat — Google Forms Quiz Extractor Engine v4.1 (Precision Engine)
+ * MemoryQudrat — Google Forms Quiz Extractor Engine v4.2 (Universal Reading & MCQ Engine)
  *
- * Core Enhancements (v4.1):
- *   • Fixed Option Row Scoping: Restricted option container traversal to immediate radio wrappers,
- *     preventing scope leakage into [role="listitem"] and ensuring all 4 options are extracted.
- *   • Smart Passage Filtering: Ignores disclaimers, oaths (أقسم/أتعهد), course ads, and general instructions.
- *   • Passage Relevance Guard: Never attaches passages to Verbal Analogy (تناظر لفظي: "أ : ب") or short context questions.
- *   • Multi-question Passage Retention: Accurately attaches reading passages (استيعاب المقروء) to all comprehension questions.
+ * Major Fixes & Enhancements:
+ *   1. Precise Reading Passage Extraction:
+ *      - Captures passages from section headers, standalone description cards, and multi-paragraph blocks.
+ *      - Distinguishes real reading passages from disclaimers, oaths (اقسم/أتعهد), and instructions.
+ *      - Never false-drops passages containing words like "دورة", "شروط", "ملاحظة", "الأستاذ".
+ *   2. Section Context Awareness:
+ *      - Automatically propagates active passages to all consecutive comprehension questions in that section.
+ *      - Clears active passage when encountering non-reading sections (التناظر اللفظي, الخطأ السياقي, إكمال الجمل, القسم الكمي).
+ *   3. Strict Analogy & Sentence Completion Protection:
+ *      - Preserves pure analogy questions ("رياضة : لياقة") without prepending irrelevant passages.
+ *      - Accurately identifies comprehension questions even when they contain colons (":").
+ *   4. Rock-Solid Option Isolation:
+ *      - Scopes each radio button strictly to its immediate container, guaranteeing all 4 options are extracted.
+ *      - Extracts correct answer indicators (green highlight, score box, checked answer).
  */
 
 function extractGoogleFormsQuiz() {
@@ -32,25 +40,20 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           2 — Helper: clean inner text
+           2 — Helpers: clean text & green highlights
         ══════════════════════════════════════════ */
         function clean(el) {
             if (!el) return '';
             return (el.innerText || '').replace(/\s+/g, ' ').trim();
         }
 
-        /* ══════════════════════════════════════════
-           3 — Helper: detect green (correct) highlight
-        ══════════════════════════════════════════ */
         const GREEN_FILLS = ['#137333', '#188038', '#1e8e3e', '#34a853', '#0f9d58'];
 
         function hasGreenHighlight(el) {
             if (!el) return false;
-            // Check SVG fills
             for (const node of el.querySelectorAll('[fill]')) {
                 if (GREEN_FILLS.includes((node.getAttribute('fill') || '').toLowerCase())) return true;
             }
-            // Check computed background
             const bg = window.getComputedStyle(el).backgroundColor;
             const m = bg && bg.match(/\d+/g);
             if (m && m.length >= 3) {
@@ -60,69 +63,107 @@ function extractGoogleFormsQuiz() {
             return false;
         }
 
-        /* ══════════════════════════════════════════
-           4 — Helper: strip option-letter prefix
-           Strips "أ) " "1. " "A- " (letter + separator), NOT "أ " alone
-        ══════════════════════════════════════════ */
         function stripPrefix(text) {
             if (!text) return '';
             return text.replace(/^[أ-يa-zA-Z\d٠-٩][.\:\-\)\/]\s*/, '').trim();
         }
 
         /* ══════════════════════════════════════════
-           5 — Helper: is Disclaimer / Pledge (Not a Passage)
+           3 — Precise Pledge / Disclaimer Filter
         ══════════════════════════════════════════ */
-        function isDisclaimerOrPledge(text) {
+        function isPledgeOrDisclaimer(text) {
             if (!text) return true;
-            const lower = text.toLowerCase();
-            const blacklist = [
-                'اقسم', 'أقسم', 'أتعهد', 'اتعهد', 'مشترك', 'دورة', 'الأستاذ',
-                'تعليمات', 'تنبيه', 'شروط', 'ملاحظة', 'درجات', 'النتيجة',
-                'اسمك', 'الاسم الثلاثي', 'رقم الجوال', 'البريد الإلكتروني',
-                'إيهاب عبد العظيم', 'محوسب أغسطس', 'كلمة المرور'
+            const t = text.trim();
+            const pledgeRegex = /(اقسم\s+انني|أقسم\s+أنني|اقسم\s+بالله|أقسم\s+بالله|أتعهد\s+بأن|اتعهد\s+بان|أقر\s+بأن|اقر\s+بان|تعهد\s+والتزام|شروط\s+وقواعد\s+الاختبار|أدخل\s+كلمة\s+المرور|الاسم\s+الثلاثي|رقم\s+الهوية|رقم\s+الجوال)/i;
+            return pledgeRegex.test(t);
+        }
+
+        /* ══════════════════════════════════════════
+           4 — Non-Reading Section Detector
+        ══════════════════════════════════════════ */
+        function isNonReadingSection(text) {
+            if (!text) return false;
+            const t = text.trim();
+            const nonReadingKeywords = [
+                'التناظر اللفظي', 'تناظر لفظي', 'الخطأ السياقي', 'خطأ سياقي',
+                'إكمال الجمل', 'اكمال الجمل', 'المفردة الشاذة', 'مفردة شاذة',
+                'القسم الكمي', 'الرياضيات', 'الجبر', 'الهندسة', 'الحساب'
             ];
-            for (const term of blacklist) {
-                if (lower.includes(term.toLowerCase())) return true;
+            for (const kw of nonReadingKeywords) {
+                if (t.includes(kw)) return true;
             }
             return false;
         }
 
         /* ══════════════════════════════════════════
-           6 — Helper: is Verbal Analogy or short non-passage question
+           5 — Precise Verbal Analogy (التناظر اللفظي) Filter
         ══════════════════════════════════════════ */
-        function isNonPassageQuestion(qText) {
+        function isVerbalAnalogy(qText) {
             if (!qText) return false;
-            // Analogy format: "كلمة : كلمة"
-            if (/[\u0600-\u06FFa-zA-Z]+\s*[:\：]\s*[\u0600-\u06FFa-zA-Z]+/.test(qText)) {
+            const t = qText.trim().replace(/[\*\.]+$/, '').trim();
+
+            // Comprehension question keywords must NEVER be treated as analogies
+            const compKeywords = [
+                'وفق', 'الفقرة', 'النص', 'القطعة', 'الضمير', 'معنى', 'علاقة',
+                'يفهم', 'يستنتج', 'المقصود', 'أنسب', 'عنوان', 'تشير', 'يدل',
+                'سبب', 'لماذا', 'كيف', 'متى', 'أين', 'كم', 'أي', 'ما'
+            ];
+            for (const kw of compKeywords) {
+                if (t.includes(kw)) return false;
+            }
+
+            // Analogy format: short string strictly matching "Word(s) : Word(s)"
+            if (t.length < 45 && /^[\u0600-\u06FF\s]+\s*[:\：]\s*[\u0600-\u06FF\s]+$/.test(t)) {
                 return true;
             }
             return false;
         }
 
         /* ══════════════════════════════════════════
-           7 — Top-down Passage & Question Extractor
+           6 — Top-down Page Scanner & Extractor
         ══════════════════════════════════════════ */
         const questions = [];
         const wrongIndices = [];
 
-        // Find all question items and passage items in DOM order
-        const allItems = Array.from(document.querySelectorAll(
-            '[role="listitem"], .Qr7Oae, .geS5n, .freebirdFormviewerViewItemsItemItem, .freebirdFormviewerViewHeaderHeader'
+        // Collect all top-level card containers in DOM order
+        const rawContainers = Array.from(document.querySelectorAll(
+            '.Qr7Oae, .geS5n, [role="listitem"], .freebirdFormviewerViewHeaderHeader, [role="region"], .m7Lvdc, .D1w1Sd, .j0L6Mc, .freebirdFormviewerViewItemsItemItem'
         ));
+
+        // Deduplicate nested containers
+        const allItems = [];
+        rawContainers.forEach((el) => {
+            // Only keep top-level containers (elements not contained within another selected element)
+            const isDescendant = rawContainers.some(other => other !== el && other.contains(el));
+            if (!isDescendant && !allItems.includes(el)) {
+                allItems.push(el);
+            }
+        });
 
         let currentActivePassage = '';
 
-        // Process all cards in DOM order to maintain active reading passage state
         allItems.forEach((item) => {
             const hasRadios = item.querySelector('[role="radiogroup"], [role="radio"]');
             const hasInputs = item.querySelector('input[type="text"], input[type="email"], textarea');
 
-            // ── Case A: Standalone Text Block / Reading Passage Card ──
+            // ── Case A: Standalone Text Card / Section Header / Passage ──
             if (!hasRadios && !hasInputs) {
                 const text = clean(item);
-                // Real passage must be > 60 chars, not a score banner, not a disclaimer
-                if (text.length > 60 && !/^\d+\s*\/\s*\d+/.test(text)) {
-                    if (!isDisclaimerOrPledge(text) && (!text.startsWith(quizTitle) || text.length > quizTitle.length + 40)) {
+
+                // If this is a section break for a non-reading section, clear active passage
+                if (isNonReadingSection(text)) {
+                    currentActivePassage = '';
+                    return;
+                }
+
+                // If this is a pledge/disclaimer or score banner, ignore it
+                if (isPledgeOrDisclaimer(text) || /^\d+\s*\/\s*\d+/.test(text)) {
+                    return;
+                }
+
+                // If it has substantial reading text (> 45 chars) and is not just the form title
+                if (text.length > 45) {
+                    if (!text.startsWith(quizTitle) || text.length > quizTitle.length + 30) {
                         currentActivePassage = text;
                     }
                 }
@@ -135,7 +176,7 @@ function extractGoogleFormsQuiz() {
 
             const qNum = questions.length + 1;
 
-            // 1. Extract question text
+            // 1. Extract question heading
             let questionText = '';
             const allHeadings = Array.from(item.querySelectorAll(
                 '[role="heading"], .M7eMe, .HoN1Ob, .F3n8vf, .freebirdFormviewerViewItemsItemItemTitle'
@@ -153,19 +194,19 @@ function extractGoogleFormsQuiz() {
                 clone.querySelectorAll('.R4nke, .DqBBlb').forEach(e => e.remove());
                 questionText = clean(clone);
             }
-            // Strip leading numbering e.g. "1. " "س1: "
+            // Strip leading question numbering
             questionText = questionText.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').trim();
             if (!questionText) questionText = `السؤال ${qNum}`;
 
-            // Attach active passage ONLY if question is not an analogy or standalone vocabulary question
-            if (currentActivePassage && !isNonPassageQuestion(questionText)) {
+            // Attach active passage ONLY to reading comprehension questions (never to analogies)
+            if (currentActivePassage && !isVerbalAnalogy(questionText)) {
                 const snippet = currentActivePassage.slice(0, 30);
                 if (!questionText.includes(snippet)) {
                     questionText = '📄 ' + currentActivePassage + '\n\n❓ ' + questionText;
                 }
             }
 
-            // 2. Wrong / score detection
+            // 2. Score & Wrong answer detection
             let isWrong = false;
             const blockText = item.innerText || '';
 
@@ -173,7 +214,7 @@ function extractGoogleFormsQuiz() {
                 isWrong = true;
             }
 
-            // "الإجابة الصحيحة" box
+            // "الإجابة الصحيحة" box detection
             let correctAnswerFromBox = '';
             const caPatterns = [
                 /(?:الإجابة الصحيحة|الإجابات الصحيحة)\s*[:\n]\s*([^\n]+)/,
@@ -203,35 +244,35 @@ function extractGoogleFormsQuiz() {
 
             if (isWrong) wrongIndices.push(qNum);
 
-            // 3. Extract options (SCOPED to each individual radio's own container)
+            // 3. Extract Options (STRICT container isolation)
             const radios = Array.from(rg.querySelectorAll('[role="radio"]'));
             const options = [];
             let checkedOptText = null;
             let greenOptText = null;
 
             for (const radio of radios) {
-                // Scope strictly to the radio's immediate option container — NEVER ascend to [role="listitem"]
-                let optContainer = radio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, div[jscontroller]');
-                if (!optContainer || optContainer === item || optContainer === rg) {
-                    optContainer = radio.parentElement || radio;
+                // Scope strictly to this specific option wrapper
+                let optBox = radio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, div[jscontroller]');
+                if (!optBox || optBox === item || optBox === rg) {
+                    optBox = radio.parentElement || radio;
                 }
 
                 let optText = '';
 
-                // Strategy 1: specific label classes inside this option container
-                const labelEl = optContainer.querySelector('.docssharedWizToggleLabeledLabelText, .aDTYNe, .ulDsOb, .OvPDhc, .M7eMe, .jLM23c, .NPEfkd, .WpHeLc');
+                // Try dedicated Google Forms label container inside this option box
+                const labelEl = optBox.querySelector('.docssharedWizToggleLabeledLabelText, .aDTYNe, .ulDsOb, .OvPDhc, .M7eMe, .jLM23c, .NPEfkd, .WpHeLc');
                 if (labelEl) {
                     optText = clean(labelEl).split('\n')[0].trim();
                 }
 
-                // Strategy 2: aria-label or data-value on radio itself
+                // Try radio attributes
                 if (!optText) {
                     optText = (radio.getAttribute('aria-label') || radio.getAttribute('data-value') || '').trim();
                 }
 
-                // Strategy 3: immediate innerText of the option container
-                if (!optText && optContainer !== item && optContainer !== rg) {
-                    const lines = (optContainer.innerText || '').split('\n').map(l => l.trim()).filter(l => l);
+                // Try direct innerText of option box
+                if (!optText && optBox !== item && optBox !== rg) {
+                    const lines = (optBox.innerText || '').split('\n').map(l => l.trim()).filter(l => l);
                     if (lines.length > 0) optText = lines[0];
                 }
 
@@ -246,7 +287,7 @@ function extractGoogleFormsQuiz() {
                     radio.getAttribute('aria-selected') === 'true';
                 if (isChecked) checkedOptText = optText;
 
-                if (hasGreenHighlight(optContainer) || hasGreenHighlight(radio)) {
+                if (hasGreenHighlight(optBox) || hasGreenHighlight(radio)) {
                     greenOptText = optText;
                 }
             }
@@ -287,7 +328,7 @@ function extractGoogleFormsQuiz() {
                     .trim();
             }
 
-            // Fallback: If only 1 option was detected
+            // Ensure at least 2 options for valid telegram poll
             if (options.length === 1) {
                 options.push("خيار بديل");
             }
@@ -301,7 +342,7 @@ function extractGoogleFormsQuiz() {
         });
 
         /* ══════════════════════════════════════════
-           8 — Return result
+           7 — Return result
         ══════════════════════════════════════════ */
         if (questions.length === 0) {
             return {
