@@ -274,9 +274,29 @@ def init_db():
             (first_cat["id"],)
         )
 
+    # Clean up empty/phantom quizzes (0 questions and no URL) and orphaned reviews
+    try:
+        cursor.execute("DELETE FROM quiz_reviews WHERE quiz_id NOT IN (SELECT id FROM quizzes)")
+        cursor.execute("""
+            DELETE FROM quiz_reviews 
+            WHERE quiz_id IN (
+                SELECT id FROM quizzes 
+                WHERE (url IS NULL OR url = '') 
+                AND NOT EXISTS (SELECT 1 FROM questions WHERE quiz_id = quizzes.id)
+            )
+        """)
+        cursor.execute("""
+            DELETE FROM quizzes 
+            WHERE (url IS NULL OR url = '') 
+            AND NOT EXISTS (SELECT 1 FROM questions WHERE quiz_id = quizzes.id)
+        """)
+    except Exception as e:
+        logger.warning("Error cleaning empty/orphaned quizzes: %s", e)
+
     conn.commit()
     conn.close()
     logger.info("Database initialized with multi-user support.")
+
 
 
 # ─── Users ────────────────────────────────────────────────────────────────────
@@ -492,27 +512,30 @@ def delete_category(cat_id: int, user_id: int = None):
 
 def get_quizzes_by_category(category_id: int = None, user_id: int = None, is_public: int = 1) -> list:
     """Returns quizzes belonging to a specific category, ordered by recency (newest first)."""
+    from utils import quiz_sort_key_desc
     conn = get_connection()
     cursor = conn.cursor()
     from config import is_admin
+    valid_filter = "((url IS NOT NULL AND url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = quizzes.id))"
     if is_public == 1:
         if category_id is not None:
-            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id DESC", (category_id,))
+            cursor.execute(f"SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? AND {valid_filter} ORDER BY id DESC", (category_id,))
         else:
-            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id IS NULL ORDER BY id DESC")
+            cursor.execute(f"SELECT * FROM quizzes WHERE is_public = 1 AND category_id IS NULL AND {valid_filter} ORDER BY id DESC")
     else:
         if user_id is not None and is_admin(user_id):
             if category_id is not None:
-                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id = ? ORDER BY id DESC", (user_id, category_id))
+                cursor.execute(f"SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id = ? AND {valid_filter} ORDER BY id DESC", (user_id, category_id))
             else:
-                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id IS NULL ORDER BY id DESC", (user_id,))
+                cursor.execute(f"SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id IS NULL AND {valid_filter} ORDER BY id DESC", (user_id,))
         else:
             if category_id is not None:
-                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id = ? ORDER BY id DESC", (user_id, category_id))
+                cursor.execute(f"SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id = ? AND {valid_filter} ORDER BY id DESC", (user_id, category_id))
             else:
-                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL ORDER BY id DESC", (user_id,))
+                cursor.execute(f"SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL AND {valid_filter} ORDER BY id DESC", (user_id,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=quiz_sort_key_desc, reverse=True)
     return rows
 
 
@@ -520,12 +543,13 @@ def get_category_quizzes_count(category_id: int, user_id: int = None) -> int:
     conn = get_connection()
     cursor = conn.cursor()
     from config import is_admin
+    valid_filter = "((url IS NOT NULL AND url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = quizzes.id))"
     if user_id is not None and is_admin(user_id):
-        cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND (owner_id = ? OR owner_id IS NULL)", (category_id, user_id))
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND (owner_id = ? OR owner_id IS NULL) AND {valid_filter}", (category_id, user_id))
     elif user_id is not None:
-        cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND owner_id = ? AND is_public = 0", (category_id, user_id))
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND owner_id = ? AND is_public = 0 AND {valid_filter}", (category_id, user_id))
     else:
-        cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND is_public = 1", (category_id,))
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND is_public = 1 AND {valid_filter}", (category_id,))
     row = cursor.fetchone()
     conn.close()
     return row["cnt"] if row else 0
@@ -628,55 +652,64 @@ def get_all_quizzes(user_id: int = None) -> list:
     Returns public quizzes + user's own private quizzes if user_id is provided.
     Ordered by recency (newest first).
     """
+    from utils import quiz_sort_key_desc
     conn = get_connection()
     cursor = conn.cursor()
+    valid_filter = "((url IS NOT NULL AND url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = quizzes.id))"
     if user_id is not None:
         cursor.execute(
-            """SELECT * FROM quizzes
-               WHERE is_public = 1 OR owner_id = ?
+            f"""SELECT * FROM quizzes
+               WHERE (is_public = 1 OR owner_id = ?) AND {valid_filter}
                ORDER BY id DESC""",
             (user_id,),
         )
     else:
-        cursor.execute("SELECT * FROM quizzes ORDER BY id DESC")
+        cursor.execute(f"SELECT * FROM quizzes WHERE {valid_filter} ORDER BY id DESC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=quiz_sort_key_desc, reverse=True)
     return rows
 
 
 def get_public_quizzes(category_id: int = None) -> list:
     """Returns quizzes in the public bank, ordered by recency (newest first)."""
+    from utils import quiz_sort_key_desc
     conn = get_connection()
     cursor = conn.cursor()
+    valid_filter = "((url IS NOT NULL AND url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = quizzes.id))"
     if category_id is not None:
         cursor.execute(
-            "SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id DESC",
+            f"SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? AND {valid_filter} ORDER BY id DESC",
             (category_id,),
         )
     else:
-        cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 ORDER BY id DESC")
+        cursor.execute(f"SELECT * FROM quizzes WHERE is_public = 1 AND {valid_filter} ORDER BY id DESC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=quiz_sort_key_desc, reverse=True)
     return rows
 
 
 def get_user_private_quizzes(user_id: int) -> list:
     """Returns quizzes uploaded privately by the given user, ordered by recency (newest first)."""
+    from utils import quiz_sort_key_desc
     conn = get_connection()
     cursor = conn.cursor()
     from config import is_admin
+    valid_filter = "((url IS NOT NULL AND url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = quizzes.id))"
     if is_admin(user_id):
         cursor.execute(
-            "SELECT * FROM quizzes WHERE owner_id = ? OR owner_id IS NULL ORDER BY id DESC",
+            f"SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND {valid_filter} ORDER BY id DESC",
             (user_id,),
         )
     else:
         cursor.execute(
-            "SELECT * FROM quizzes WHERE owner_id = ? AND is_public = 0 ORDER BY id DESC",
+            f"SELECT * FROM quizzes WHERE owner_id = ? AND is_public = 0 AND {valid_filter} ORDER BY id DESC",
             (user_id,),
         )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=quiz_sort_key_desc, reverse=True)
     return rows
 
 
@@ -819,54 +852,61 @@ def schedule_first_review(quiz_id: int, user_id: int = 6099429826, start_today: 
 
 def get_due_quiz_reviews(user_id: int = None) -> list:
     """Returns quiz_reviews due today or earlier for a user in Riyadh timezone, ordered by recency (newest first)."""
+    from utils import quiz_sort_key_desc
     conn = get_connection()
     cursor = conn.cursor()
     today_iso = get_riyadh_today_iso()
+    valid_filter = "((q.url IS NOT NULL AND q.url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = q.id))"
     if user_id is not None:
         cursor.execute(
-            """SELECT qr.*, q.name as quiz_name
+            f"""SELECT qr.*, q.name as quiz_name
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
-               WHERE qr.user_id = ? AND qr.next_review_date <= ?
+               WHERE qr.user_id = ? AND qr.next_review_date <= ? AND {valid_filter}
                ORDER BY qr.id DESC""",
             (user_id, today_iso),
         )
     else:
         cursor.execute(
-            """SELECT qr.*, q.name as quiz_name
+            f"""SELECT qr.*, q.name as quiz_name
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
-               WHERE qr.next_review_date <= ?
+               WHERE qr.next_review_date <= ? AND {valid_filter}
                ORDER BY qr.id DESC""",
             (today_iso,),
         )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=quiz_sort_key_desc, reverse=True)
     return rows
 
 
 def get_all_quiz_reviews(user_id: int = None) -> list:
     """Returns all scheduled quiz_reviews with quiz names, ordered by recency (newest first)."""
+    from utils import quiz_sort_key_desc
     conn = get_connection()
     cursor = conn.cursor()
+    valid_filter = "((q.url IS NOT NULL AND q.url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = q.id))"
     if user_id is not None:
         cursor.execute(
-            """SELECT qr.*, q.name as quiz_name
+            f"""SELECT qr.*, q.name as quiz_name
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
-               WHERE qr.user_id = ?
+               WHERE qr.user_id = ? AND {valid_filter}
                ORDER BY qr.id DESC""",
             (user_id,),
         )
     else:
         cursor.execute(
-            """SELECT qr.*, q.name as quiz_name
+            f"""SELECT qr.*, q.name as quiz_name
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
+               WHERE {valid_filter}
                ORDER BY qr.id DESC"""
         )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    rows.sort(key=quiz_sort_key_desc, reverse=True)
     return rows
 
 

@@ -236,10 +236,24 @@ def normalize_arabic_digits(s: str) -> str:
     return s
 
 
+def quiz_sort_key_desc(item: dict) -> tuple:
+    """
+    Sorts quizzes descending by number in title (170, 169, 168... 1)
+    and falls back to database ID descending.
+    """
+    name = item.get("name") or item.get("quiz_name") or ""
+    norm = normalize_arabic_digits(str(name))
+    match = re.search(r'\d+', norm)
+    q_num = int(match.group(0)) if match else None
+    item_id = item.get("id") or item.get("quiz_id") or 0
+    if q_num is not None:
+        return (1, q_num, item_id)
+    return (0, item_id, 0)
+
+
 def natural_sort_key(s: str) -> list:
     """
     Returns a sort key that orders strings naturally by numeric values.
-    e.g. 'كويز 1', 'كويز 2', 'كويز 10' -> sorted 1, 2, 10 instead of 1, 10, 2.
     """
     if not s:
         return [0, ""]
@@ -252,5 +266,7 @@ def natural_sort_key(s: str) -> list:
         else:
             key.append(p.strip().lower())
     return key
+
+
 
 

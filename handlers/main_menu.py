@@ -341,9 +341,8 @@ def public_bank_view(cat_id: int = None, page: int = 1, user_id: int = None):
         end = start + ITEMS_PER_PAGE
         page_quizzes = quizzes[start:end]
 
-        for idx, q in enumerate(page_quizzes):
-            item_num = start + idx + 1
-            kb.append([InlineKeyboardButton(f"📝 {item_num}. {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
+        for q in page_quizzes:
+            kb.append([InlineKeyboardButton(f"📝 {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
 
         # Pagination controls
         nav_row = []
@@ -408,7 +407,7 @@ def my_quizzes_view(folder_id: int = None, page: int = 1, user_id: int = None, s
     for idx, sf in enumerate(subfolders):
         count = db.get_category_quizzes_count(sf["id"], user_id=user_id)
         icon = sf.get("icon", "📁")
-        kb.append([InlineKeyboardButton(f"{icon} {idx + 1}. {sf['name']} ({count} كويز)", callback_data=f"my_cat_{sf['id']}_1")])
+        kb.append([InlineKeyboardButton(f"{icon} {sf['name']} ({count} كويز)", callback_data=f"my_cat_{sf['id']}_1")])
 
     # 3. Quizzes inside this view with 10 items per page
     ITEMS_PER_PAGE = 10
@@ -420,9 +419,8 @@ def my_quizzes_view(folder_id: int = None, page: int = 1, user_id: int = None, s
         end = start + ITEMS_PER_PAGE
         page_quizzes = quizzes[start:end]
 
-        for idx, q in enumerate(page_quizzes):
-            item_num = start + idx + 1
-            kb.append([InlineKeyboardButton(f"📝 {item_num}. {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
+        for q in page_quizzes:
+            kb.append([InlineKeyboardButton(f"📝 {q['name']}", callback_data=f"bank_quiz_{q['id']}")])
 
         nav_row = []
         page_prefix = "my_all_quizzes_" if show_all else f"my_cat_{folder_id or 0}_"
@@ -514,14 +512,13 @@ def due_reviews_keyboard(reviews: list, page: int = 1):
     page_reviews = reviews[start:end]
 
     kb = []
-    for idx, r in enumerate(page_reviews):
-        item_num = start + idx + 1
+    for r in page_reviews:
         label = stage_label(r["stage"])
         q_name = r.get("quiz_name", "كويز")
         if len(q_name) > 30:
             q_name = q_name[:27] + "..."
         kb.append([InlineKeyboardButton(
-            f"🔁 {item_num}. {q_name} — {label}",
+            f"🔁 {q_name} — {label}",
             callback_data=f"start_review_{r['id']}_{r['quiz_id']}"
         )])
 
@@ -538,6 +535,7 @@ def due_reviews_keyboard(reviews: list, page: int = 1):
 
 
 def weak_quizzes_keyboard(quizzes_with_weak: list):
+    ITEMS_PER_PAGE = 10
     kb = []
     for item in quizzes_with_weak:
         kb.append([InlineKeyboardButton(
@@ -645,12 +643,11 @@ def render_schedule_view(user_id: int, page: int = 1) -> tuple[str, InlineKeyboa
 
     lines = [
         f"📅 <b>جدول المراجعات</b> (صفحة {page} من {total_pages})",
-        f"إجمالي الكويزات: <b>{len(user_reviews)}</b> كويز (الأحدث أولاً)\n",
-        "────────────────────"
+        f"إجمالي الكويزات المجدولة: <b>{len(user_reviews)}</b> كويز\n",
+        "──────────────────"
     ]
 
-    for idx, item in enumerate(page_reviews):
-        item_num = start_idx + idx + 1
+    for item in page_reviews:
         name_safe = html.escape(item.get("quiz_name", "كويز"))
         stage = item.get("stage", 0) or 0
         
@@ -665,9 +662,9 @@ def render_schedule_view(user_id: int, page: int = 1) -> tuple[str, InlineKeyboa
         else:
             timing = "✅ مكتمل"
 
-        lines.append(f"{item_num}. 📚 <b>{name_safe}</b>\n   └ {timing} (المرحلة {stage}/5)")
+        lines.append(f"• 📚 <b>{name_safe}</b>\n  └ {timing} ╎ المرحلة ({stage}/5)\n")
 
-    lines.append("────────────────────")
+    lines.append("──────────────────")
 
     kb = []
     nav_row = []
@@ -783,7 +780,7 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
             q_name = q_name[:22] + "..."
 
         kb.append([InlineKeyboardButton(
-            f"🔧 {item_num}. {q_name} — {timing}",
+            f"🔧 {q_name} — {timing}",
             callback_data=f"fixstage_menu_{r['quiz_id']}"
         )])
 
