@@ -155,6 +155,7 @@ async def post_init(application):
             BotCommand("today", "🔁 مراجعات اليوم المستحقة"),
             BotCommand("weak", "❌ الأسئلة الضعيفة"),
             BotCommand("schedule", "📅 جدول مراجعاتي"),
+            BotCommand("find", "🔍 البحث وإدارة الكويزات"),
             BotCommand("stats", "📊 إحصائياتي وتقدمي"),
             BotCommand("help", "💡 شرح نظام التكرار المتباعد"),
         ]
@@ -219,13 +220,16 @@ def main():
     )
 
     from handlers.admin_handler import admin_command, admin_broadcast_command
-    from handlers.main_menu import today_command, weak_command, schedule_command, stats_command, help_command
+    from handlers.main_menu import today_command, weak_command, schedule_command, stats_command, help_command, find_command
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", main_menu_handler))
     app.add_handler(CommandHandler("today", today_command))
     app.add_handler(CommandHandler("weak", weak_command))
     app.add_handler(CommandHandler("schedule", schedule_command))
+    app.add_handler(CommandHandler("find", find_command))
+    app.add_handler(CommandHandler("check", find_command))
+    app.add_handler(CommandHandler("search", find_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("template", template_command))

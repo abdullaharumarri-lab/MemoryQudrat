@@ -735,6 +735,67 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_clean_message(context, chat_id, text, reply_markup=kb)
 
 
+async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Finds quizzes by search keyword, or lists unnumbered/special quizzes and newest uploads.
+    Usage: /find or /find <keyword>
+    """
+    from utils import clean_entire_chat, send_clean_message, normalize_arabic_digits
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    u_id = user.id if user else 6099429826
+
+    args = context.args or []
+    query_str = " ".join(args).strip().lower()
+
+    all_quizzes = db.get_user_private_quizzes(user_id=u_id)
+    
+    if query_str:
+        matched = []
+        for q in all_quizzes:
+            name = q.get("name", "").lower()
+            if query_str in name or query_str in str(q["id"]):
+                matched.append(q)
+        title = f"🔍 <b>نتائج البحث عن: «{html.escape(query_str)}»</b> ({len(matched)} نتيجة)\n"
+    else:
+        # Find unnumbered quizzes first
+        matched = []
+        for q in all_quizzes:
+            norm = normalize_arabic_digits(q.get("name", ""))
+            if not re.match(r'^\s*\d+', norm):
+                matched.append(q)
+        
+        if not matched:
+            matched = sorted(all_quizzes, key=lambda x: x["id"], reverse=True)[:10]
+            title = f"🔍 <b>أحدث الكويزات المرفوعة في حسابك:</b> ({len(matched)} كويز)\n"
+        else:
+            title = f"🔍 <b>الكويزات الإضافية / غير المرقمة:</b> ({len(matched)} كويز)\n"
+
+    if not matched:
+        text = "❌ لم يتم العثور على أي كويز يطابق بحثك."
+        kb = [
+            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
+        ]
+    else:
+        lines = [title]
+        kb = []
+        for q in matched[:15]:
+            q_id = q["id"]
+            q_name = q.get("name", "كويز")
+            q_count = len(db.get_questions(q_id))
+            lines.append(f"• 📋 <b>{html.escape(q_name)}</b>\n  └ معرف (ID): <code>{q_id}</code> | الأسئلة: {q_count} سؤال\n")
+            kb.append([InlineKeyboardButton(f"⚙️ إدارة: {q_name[:25]}", callback_data=f"bank_quiz_{q_id}")])
+            
+        lines.append("اضغط على زر الكويز بالأسفل لفتحه أو حذفه:")
+        kb.append([InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")])
+        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+        text = "\n".join(lines)
+
+    await clean_entire_chat(context, chat_id, extra_ids=[update.message.message_id] if update.message else None)
+    await send_clean_message(context, chat_id, text, reply_markup=InlineKeyboardMarkup(kb))
+
+
 async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     # ── Admin-only command ────────────────────────────────────────────────────
     user = update.effective_user
