@@ -1,13 +1,12 @@
 /**
- * MemoryQudrat — Google Forms Quiz Extractor Engine v4.0 (Enhanced Passage & Option Engine)
+ * MemoryQudrat — Google Forms Quiz Extractor Engine v4.1 (Precision Engine)
  *
- * Core Enhancements (v4.0):
- *   • Multi-question Reading Passage Tracking: Tracks the active reading passage (استيعاب المقروء)
- *     and attaches it to ALL consecutive questions referencing that passage, not just the first one!
- *   • Section & Description Card Support: Captures passages from section headers, description blocks, and cards.
- *   • Robust Option Row Detection: Traverses parent option containers to extract labels from sibling spans,
- *     .docssharedWizToggleLabeledLabelText, .aDTYNe, aria-label, etc.
- *   • Accurate Correct Answer Resolution: Supports green SVG highlights, score boxes, checked options, and feedback.
+ * Core Enhancements (v4.1):
+ *   • Fixed Option Row Scoping: Restricted option container traversal to immediate radio wrappers,
+ *     preventing scope leakage into [role="listitem"] and ensuring all 4 options are extracted.
+ *   • Smart Passage Filtering: Ignores disclaimers, oaths (أقسم/أتعهد), course ads, and general instructions.
+ *   • Passage Relevance Guard: Never attaches passages to Verbal Analogy (تناظر لفظي: "أ : ب") or short context questions.
+ *   • Multi-question Passage Retention: Accurately attaches reading passages (استيعاب المقروء) to all comprehension questions.
  */
 
 function extractGoogleFormsQuiz() {
@@ -71,7 +70,37 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           5 — Top-down Passage & Question Extractor
+           5 — Helper: is Disclaimer / Pledge (Not a Passage)
+        ══════════════════════════════════════════ */
+        function isDisclaimerOrPledge(text) {
+            if (!text) return true;
+            const lower = text.toLowerCase();
+            const blacklist = [
+                'اقسم', 'أقسم', 'أتعهد', 'اتعهد', 'مشترك', 'دورة', 'الأستاذ',
+                'تعليمات', 'تنبيه', 'شروط', 'ملاحظة', 'درجات', 'النتيجة',
+                'اسمك', 'الاسم الثلاثي', 'رقم الجوال', 'البريد الإلكتروني',
+                'إيهاب عبد العظيم', 'محوسب أغسطس', 'كلمة المرور'
+            ];
+            for (const term of blacklist) {
+                if (lower.includes(term.toLowerCase())) return true;
+            }
+            return false;
+        }
+
+        /* ══════════════════════════════════════════
+           6 — Helper: is Verbal Analogy or short non-passage question
+        ══════════════════════════════════════════ */
+        function isNonPassageQuestion(qText) {
+            if (!qText) return false;
+            // Analogy format: "كلمة : كلمة"
+            if (/[\u0600-\u06FFa-zA-Z]+\s*[:\：]\s*[\u0600-\u06FFa-zA-Z]+/.test(qText)) {
+                return true;
+            }
+            return false;
+        }
+
+        /* ══════════════════════════════════════════
+           7 — Top-down Passage & Question Extractor
         ══════════════════════════════════════════ */
         const questions = [];
         const wrongIndices = [];
@@ -91,10 +120,9 @@ function extractGoogleFormsQuiz() {
             // ── Case A: Standalone Text Block / Reading Passage Card ──
             if (!hasRadios && !hasInputs) {
                 const text = clean(item);
-                // Exclude quiz title banners, short labels, and score banners (e.g. "50 / 50")
-                if (text.length > 35 && !/^\d+\s*\/\s*\d+/.test(text)) {
-                    // Filter out form description headers if identical to quiz title
-                    if (!text.startsWith(quizTitle) || text.length > quizTitle.length + 30) {
+                // Real passage must be > 60 chars, not a score banner, not a disclaimer
+                if (text.length > 60 && !/^\d+\s*\/\s*\d+/.test(text)) {
+                    if (!isDisclaimerOrPledge(text) && (!text.startsWith(quizTitle) || text.length > quizTitle.length + 40)) {
                         currentActivePassage = text;
                     }
                 }
@@ -129,8 +157,8 @@ function extractGoogleFormsQuiz() {
             questionText = questionText.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').trim();
             if (!questionText) questionText = `السؤال ${qNum}`;
 
-            // Attach active passage if present
-            if (currentActivePassage) {
+            // Attach active passage ONLY if question is not an analogy or standalone vocabulary question
+            if (currentActivePassage && !isNonPassageQuestion(questionText)) {
                 const snippet = currentActivePassage.slice(0, 30);
                 if (!questionText.includes(snippet)) {
                     questionText = '📄 ' + currentActivePassage + '\n\n❓ ' + questionText;
@@ -175,31 +203,35 @@ function extractGoogleFormsQuiz() {
 
             if (isWrong) wrongIndices.push(qNum);
 
-            // 3. Extract options
+            // 3. Extract options (SCOPED to each individual radio's own container)
             const radios = Array.from(rg.querySelectorAll('[role="radio"]'));
             const options = [];
             let checkedOptText = null;
             let greenOptText = null;
 
             for (const radio of radios) {
-                const rowContainer = radio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, [role="listitem"]') || radio.parentElement || radio;
+                // Scope strictly to the radio's immediate option container — NEVER ascend to [role="listitem"]
+                let optContainer = radio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, div[jscontroller]');
+                if (!optContainer || optContainer === item || optContainer === rg) {
+                    optContainer = radio.parentElement || radio;
+                }
 
                 let optText = '';
 
-                // Try label containers in row
-                const labelEl = rowContainer.querySelector('.docssharedWizToggleLabeledLabelText, .aDTYNe, .ulDsOb, .OvPDhc, .M7eMe, .jLM23c, .NPEfkd, .WpHeLc');
+                // Strategy 1: specific label classes inside this option container
+                const labelEl = optContainer.querySelector('.docssharedWizToggleLabeledLabelText, .aDTYNe, .ulDsOb, .OvPDhc, .M7eMe, .jLM23c, .NPEfkd, .WpHeLc');
                 if (labelEl) {
                     optText = clean(labelEl).split('\n')[0].trim();
                 }
 
-                // Try radio aria-label or data-value
+                // Strategy 2: aria-label or data-value on radio itself
                 if (!optText) {
                     optText = (radio.getAttribute('aria-label') || radio.getAttribute('data-value') || '').trim();
                 }
 
-                // Try container innerText
-                if (!optText) {
-                    const lines = (rowContainer.innerText || '').split('\n').map(l => l.trim()).filter(l => l);
+                // Strategy 3: immediate innerText of the option container
+                if (!optText && optContainer !== item && optContainer !== rg) {
+                    const lines = (optContainer.innerText || '').split('\n').map(l => l.trim()).filter(l => l);
                     if (lines.length > 0) optText = lines[0];
                 }
 
@@ -214,7 +246,7 @@ function extractGoogleFormsQuiz() {
                     radio.getAttribute('aria-selected') === 'true';
                 if (isChecked) checkedOptText = optText;
 
-                if (hasGreenHighlight(rowContainer) || hasGreenHighlight(radio)) {
+                if (hasGreenHighlight(optContainer) || hasGreenHighlight(radio)) {
                     greenOptText = optText;
                 }
             }
@@ -255,7 +287,7 @@ function extractGoogleFormsQuiz() {
                     .trim();
             }
 
-            // Ensure at least 2 options
+            // Fallback: If only 1 option was detected
             if (options.length === 1) {
                 options.push("خيار بديل");
             }
@@ -269,7 +301,7 @@ function extractGoogleFormsQuiz() {
         });
 
         /* ══════════════════════════════════════════
-           6 — Return result
+           8 — Return result
         ══════════════════════════════════════════ */
         if (questions.length === 0) {
             return {
