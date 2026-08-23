@@ -439,22 +439,20 @@ def create_category(name: str, intervals_json: str = "[1, 3, 7, 14, 30]", parent
 
 
 def get_categories(parent_id: int = None, user_id: int = None, is_public: int = 1) -> list:
-    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
     if is_public == 1:
         if parent_id is None:
-            cursor.execute("SELECT * FROM categories WHERE is_public = 1 AND parent_id IS NULL ORDER BY sort_order ASC, id ASC")
+            cursor.execute("SELECT * FROM categories WHERE is_public = 1 AND parent_id IS NULL ORDER BY sort_order ASC, id DESC")
         else:
-            cursor.execute("SELECT * FROM categories WHERE is_public = 1 AND parent_id = ? ORDER BY sort_order ASC, id ASC", (parent_id,))
+            cursor.execute("SELECT * FROM categories WHERE is_public = 1 AND parent_id = ? ORDER BY sort_order ASC, id DESC", (parent_id,))
     else:
         if parent_id is None:
-            cursor.execute("SELECT * FROM categories WHERE is_public = 0 AND owner_id = ? AND parent_id IS NULL ORDER BY id ASC", (user_id,))
+            cursor.execute("SELECT * FROM categories WHERE is_public = 0 AND owner_id = ? AND parent_id IS NULL ORDER BY id DESC", (user_id,))
         else:
-            cursor.execute("SELECT * FROM categories WHERE is_public = 0 AND owner_id = ? AND parent_id = ? ORDER BY id ASC", (user_id, parent_id))
+            cursor.execute("SELECT * FROM categories WHERE is_public = 0 AND owner_id = ? AND parent_id = ? ORDER BY id DESC", (user_id, parent_id))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    rows.sort(key=lambda c: natural_sort_key(c.get("name", "")))
     return rows
 
 
@@ -493,30 +491,28 @@ def delete_category(cat_id: int, user_id: int = None):
 
 
 def get_quizzes_by_category(category_id: int = None, user_id: int = None, is_public: int = 1) -> list:
-    """Returns quizzes belonging to a specific category, sorted naturally by numeric value in name."""
-    from utils import natural_sort_key
+    """Returns quizzes belonging to a specific category, ordered by recency (newest first)."""
     conn = get_connection()
     cursor = conn.cursor()
     from config import is_admin
     if is_public == 1:
         if category_id is not None:
-            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id ASC", (category_id,))
+            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id DESC", (category_id,))
         else:
-            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id IS NULL ORDER BY id ASC")
+            cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 AND category_id IS NULL ORDER BY id DESC")
     else:
         if user_id is not None and is_admin(user_id):
             if category_id is not None:
-                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id = ? ORDER BY id ASC", (user_id, category_id))
+                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id = ? ORDER BY id DESC", (user_id, category_id))
             else:
-                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id IS NULL ORDER BY id ASC", (user_id,))
+                cursor.execute("SELECT * FROM quizzes WHERE (owner_id = ? OR owner_id IS NULL) AND category_id IS NULL ORDER BY id DESC", (user_id,))
         else:
             if category_id is not None:
-                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id = ? ORDER BY id ASC", (user_id, category_id))
+                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id = ? ORDER BY id DESC", (user_id, category_id))
             else:
-                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL ORDER BY id ASC", (user_id,))
+                cursor.execute("SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL ORDER BY id DESC", (user_id,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    rows.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     return rows
 
 
@@ -630,63 +626,57 @@ def save_quiz(name: str, questions: list, category_id: int = None, user_id: int 
 def get_all_quizzes(user_id: int = None) -> list:
     """
     Returns public quizzes + user's own private quizzes if user_id is provided.
-    Sorted naturally by number/name.
+    Ordered by recency (newest first).
     """
-    from utils import natural_sort_key
     conn = get_connection()
     cursor = conn.cursor()
     if user_id is not None:
         cursor.execute(
             """SELECT * FROM quizzes
                WHERE is_public = 1 OR owner_id = ?
-               ORDER BY id ASC""",
+               ORDER BY id DESC""",
             (user_id,),
         )
     else:
-        cursor.execute("SELECT * FROM quizzes ORDER BY id ASC")
+        cursor.execute("SELECT * FROM quizzes ORDER BY id DESC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    rows.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     return rows
 
 
 def get_public_quizzes(category_id: int = None) -> list:
-    """Returns quizzes in the public bank, sorted naturally by number/name."""
-    from utils import natural_sort_key
+    """Returns quizzes in the public bank, ordered by recency (newest first)."""
     conn = get_connection()
     cursor = conn.cursor()
     if category_id is not None:
         cursor.execute(
-            "SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id ASC",
+            "SELECT * FROM quizzes WHERE is_public = 1 AND category_id = ? ORDER BY id DESC",
             (category_id,),
         )
     else:
-        cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 ORDER BY id ASC")
+        cursor.execute("SELECT * FROM quizzes WHERE is_public = 1 ORDER BY id DESC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    rows.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     return rows
 
 
 def get_user_private_quizzes(user_id: int) -> list:
-    """Returns quizzes uploaded privately by the given user, sorted naturally by number/name."""
-    from utils import natural_sort_key
+    """Returns quizzes uploaded privately by the given user, ordered by recency (newest first)."""
     conn = get_connection()
     cursor = conn.cursor()
     from config import is_admin
     if is_admin(user_id):
         cursor.execute(
-            "SELECT * FROM quizzes WHERE owner_id = ? OR owner_id IS NULL ORDER BY id ASC",
+            "SELECT * FROM quizzes WHERE owner_id = ? OR owner_id IS NULL ORDER BY id DESC",
             (user_id,),
         )
     else:
         cursor.execute(
-            "SELECT * FROM quizzes WHERE owner_id = ? AND is_public = 0 ORDER BY id ASC",
+            "SELECT * FROM quizzes WHERE owner_id = ? AND is_public = 0 ORDER BY id DESC",
             (user_id,),
         )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    rows.sort(key=lambda q: natural_sort_key(q.get("name", "")))
     return rows
 
 
@@ -828,8 +818,7 @@ def schedule_first_review(quiz_id: int, user_id: int = 6099429826, start_today: 
 
 
 def get_due_quiz_reviews(user_id: int = None) -> list:
-    """Returns quiz_reviews due today or earlier for a user in Riyadh timezone, sorted naturally by quiz name/number."""
-    from utils import natural_sort_key
+    """Returns quiz_reviews due today or earlier for a user in Riyadh timezone, ordered by recency (newest first)."""
     conn = get_connection()
     cursor = conn.cursor()
     today_iso = get_riyadh_today_iso()
@@ -839,7 +828,7 @@ def get_due_quiz_reviews(user_id: int = None) -> list:
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.user_id = ? AND qr.next_review_date <= ?
-               ORDER BY qr.next_review_date ASC""",
+               ORDER BY qr.id DESC""",
             (user_id, today_iso),
         )
     else:
@@ -848,18 +837,16 @@ def get_due_quiz_reviews(user_id: int = None) -> list:
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.next_review_date <= ?
-               ORDER BY qr.next_review_date ASC""",
+               ORDER BY qr.id DESC""",
             (today_iso,),
         )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    rows.sort(key=lambda r: natural_sort_key(r.get("quiz_name", "")))
     return rows
 
 
 def get_all_quiz_reviews(user_id: int = None) -> list:
-    """Returns all scheduled quiz_reviews with quiz names, ordered by date and naturally by quiz number."""
-    from utils import natural_sort_key
+    """Returns all scheduled quiz_reviews with quiz names, ordered by recency (newest first)."""
     conn = get_connection()
     cursor = conn.cursor()
     if user_id is not None:
@@ -868,7 +855,7 @@ def get_all_quiz_reviews(user_id: int = None) -> list:
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.user_id = ?
-               ORDER BY qr.next_review_date""",
+               ORDER BY qr.id DESC""",
             (user_id,),
         )
     else:
@@ -876,7 +863,7 @@ def get_all_quiz_reviews(user_id: int = None) -> list:
             """SELECT qr.*, q.name as quiz_name
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
-               ORDER BY qr.next_review_date"""
+               ORDER BY qr.id DESC"""
         )
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
