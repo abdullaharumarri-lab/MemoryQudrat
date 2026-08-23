@@ -137,6 +137,25 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
             [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
+    elif data.startswith("manual_set_correct_"):
+        correct_idx = int(data.split("_")[-1])
+        current_q = context.user_data.pop("current_q", {})
+        options = current_q.get("options", [])
+        if 0 <= correct_idx < len(options):
+            current_q["answer"] = options[correct_idx]
+            manual_quiz = context.user_data.setdefault("manual_quiz", {"name": "كويز مخصص", "questions": []})
+            manual_quiz.setdefault("questions", []).append(current_q)
+            context.user_data["manual_state"] = "awaiting_poll_questions"
+            text, kb = build_manual_quiz_dashboard(context)
+            ack_text = f"✅ <b>تمت إضافة السؤال رقم {len(manual_quiz['questions'])} بنجاح!</b> 🎯\n\n" + text
+            await safe_edit(query, ack_text, kb)
+        else:
+            await query.answer("⚠️ خيار غير صالح.", show_alert=True)
+
+    elif data == "manual_dashboard":
+        context.user_data.pop("current_q", None)
+        context.user_data["manual_state"] = "awaiting_poll_questions"
+        text, kb = build_manual_quiz_dashboard(context)
         await safe_edit(query, text, kb)
 
 

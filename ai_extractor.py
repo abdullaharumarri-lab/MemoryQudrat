@@ -114,7 +114,10 @@ async def extract_questions_from_text(raw_text: str) -> dict:
                 lines = lines[:-1]
             raw = "\n".join(lines).strip()
 
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Gemini returned non-JSON response: {e}\nRaw: {raw[:200]}")
 
     return await asyncio.to_thread(_extract_text_sync)
 

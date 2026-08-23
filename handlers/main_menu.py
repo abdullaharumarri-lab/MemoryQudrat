@@ -800,7 +800,6 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=InlineKeyboardMarkup(kb))
     elif update.callback_query:
         await safe_edit(update.callback_query, text, InlineKeyboardMarkup(kb))
-        await safe_edit(update.callback_query, text, InlineKeyboardMarkup(kb))
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1764,6 +1763,11 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
 
         await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(back_btn))
 
+    # ── Start weak (all weak questions) ──
+    elif data == "start_weak_all":
+        from handlers.quiz_handler import start_quiz_session
+        await start_quiz_session(update, context, quiz_id=0, session_type="weakall")
+
     # ── Start weak (spaced repetition) ──
     elif data.startswith("start_weak_"):
         quiz_id = int(data.split("_")[-1])
@@ -2084,24 +2088,6 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("🗑 تم حذف السؤال!")
         query.data = f"fixstage_qlist_{quiz_id}_0"
         await main_menu_handler(update, context)
-    elif data.startswith("fixstage_done_"):
-        parts = data.split("_")
-        review_id = int(parts[2])
-        quiz_id = int(parts[3])
-        db.advance_quiz_review(review_id)
-        
-        quiz = db.get_quiz(quiz_id)
-        q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
-        
-        await safe_edit(
-            query,
-            f"✅ <b>تمت المراجعة!</b>\n\n"
-            f"تم تحديث موعد كويز <b>{q_name}</b> للمرحلة التالية بنجاح.",
-            InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚙️ تعديل الكويز مجدداً", callback_data=f"fixstage_menu_{quiz_id}")],
-                [InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="fixstage_page_1")]
-            ])
-        )
 
     # ── Fix date (set next_review_date directly, keep stage) ──
     elif data.startswith("fixdate_"):

@@ -3,6 +3,11 @@ import pytz
 
 DEFAULT_REVIEW_INTERVALS = [0, 3, 7, 14, 30]
 
+def get_riyadh_today() -> datetime.date:
+    riyadh_tz = pytz.timezone("Asia/Riyadh")
+    return datetime.datetime.now(riyadh_tz).date()
+
+
 def next_review_date(stage: int, previous_date_str: str, intervals: list = None) -> str:
     if intervals is None:
         intervals = DEFAULT_REVIEW_INTERVALS
@@ -18,7 +23,7 @@ def next_review_date(stage: int, previous_date_str: str, intervals: list = None)
     try:
         prev_date = datetime.date.fromisoformat(str(previous_date_str))
     except Exception:
-        prev_date = datetime.date.today()
+        prev_date = get_riyadh_today()
     
     next_date = prev_date + datetime.timedelta(days=days_to_add)
     return next_date.isoformat()
