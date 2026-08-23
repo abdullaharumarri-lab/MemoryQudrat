@@ -238,13 +238,21 @@ def normalize_arabic_digits(s: str) -> str:
 
 def quiz_sort_key_desc(item: dict) -> tuple:
     """
-    Sorts quizzes descending by number in title (170, 169, 168... 1)
+    Sorts quizzes descending by number in title (171, 170, 169... 1)
     and falls back to database ID descending.
     """
     name = item.get("name") or item.get("quiz_name") or ""
     norm = normalize_arabic_digits(str(name))
-    match = re.search(r'\d+', norm)
-    q_num = int(match.group(0)) if match else None
+    
+    # Check leading number first (e.g. "171. غاز الهيليوم")
+    leading = re.match(r'^\s*(\d+)', norm)
+    if leading:
+        q_num = int(leading.group(1))
+    else:
+        # Check all numbers in the string and take the highest (e.g. "كويز 171")
+        nums = re.findall(r'\d+', norm)
+        q_num = max(int(n) for n in nums) if nums else None
+
     item_id = item.get("id") or item.get("quiz_id") or 0
     if q_num is not None:
         return (1, q_num, item_id)

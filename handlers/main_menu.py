@@ -494,9 +494,10 @@ def quiz_menu_keyboard(quiz_id: int):
             InlineKeyboardButton("🛠 تعديل الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0"),
         ],
         [
+            InlineKeyboardButton("⚙️ ضبط مرحلة وموعد المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
             InlineKeyboardButton("📁 نقل لمجلد", callback_data=f"my_move_quiz_{quiz_id}"),
-            InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}"),
         ],
+        [InlineKeyboardButton("❌ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")],
         [InlineKeyboardButton("🔙 كويزاتي", callback_data="my_quizzes")],
     ])
 
@@ -907,10 +908,18 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         is_owner = (user and quiz.get("owner_id") == user.id and not quiz.get("is_public"))
         if is_owner:
             kb.append([
+                InlineKeyboardButton("⚙️ ضبط مرحلة وموعد المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
+                InlineKeyboardButton("🔄 إعادة رفع (JSON)", callback_data=f"reupload_json_{quiz_id}"),
+            ])
+            kb.append([
                 InlineKeyboardButton("📁 نقل لمجلد خاص", callback_data=f"my_move_quiz_{quiz_id}"),
                 InlineKeyboardButton("🗑️ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")
             ])
         elif user and is_admin(user.id):
+            kb.append([
+                InlineKeyboardButton("⚙️ ضبط مرحلة وموعد المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
+                InlineKeyboardButton("🔄 إعادة رفع (JSON)", callback_data=f"reupload_json_{quiz_id}"),
+            ])
             kb.append([
                 InlineKeyboardButton("📂 نقل لمجلد", callback_data=f"admin_move_quiz_{quiz_id}"),
                 InlineKeyboardButton("🗑️ حذف من البنك", callback_data=f"delete_quiz_{quiz_id}")
