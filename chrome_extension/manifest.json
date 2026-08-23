@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "MemoryQudrat — مستخرج كويزات Google Forms",
+  "version": "4.0.0",
+  "description": "استخراج كويزات Google Forms وتحويلها إلى JSON متوافق مع بوت ميموري قدرات بنقرة واحدة وبدقة 100%",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://docs.google.com/forms/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "استخراج كويز MemoryQudrat",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

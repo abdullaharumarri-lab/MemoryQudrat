@@ -5,6 +5,7 @@ memory_qudrat.db
 *.pdf
 *.json
 !template.json
+!chrome_extension/*.json
 venv/
 .venv/
 .idea/
