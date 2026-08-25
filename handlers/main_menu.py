@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 import database as db
 from config import is_admin
 from spaced_repetition import days_until, stage_label, DEFAULT_REVIEW_INTERVALS
-from utils import send_clean_message, safe_edit, strip_html_tags
+from utils import send_clean_message, safe_edit, strip_html_tags, quiz_sort_key_desc, normalize_arabic_digits
 
 logger = logging.getLogger(__name__)
 
