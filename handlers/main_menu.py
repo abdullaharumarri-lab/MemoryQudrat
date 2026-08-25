@@ -141,6 +141,99 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
         return
 
+    # ── Custom Review Date for /fixstage ───────────────────────────────────────
+    if context.user_data.get("waiting_for_fixdate_custom") is not None:
+        quiz_id = context.user_data.pop("waiting_for_fixdate_custom")
+        raw_input = normalize_arabic_digits(msg.strip())
+        
+        parsed_date = None
+        day_label = ""
+        # Format 1: Number of days offset (e.g. "5", "0", "+3")
+        if re.match(r'^[+-]?\d+$', raw_input):
+            days_offset = int(raw_input)
+            if days_offset <= 0:
+                parsed_date = (date.today() - timedelta(days=1)).isoformat()
+                day_label = "الآن فوراً 🔴"
+            elif days_offset == 1:
+                parsed_date = (date.today() + timedelta(days=1)).isoformat()
+                day_label = "غداً 🟡"
+            else:
+                parsed_date = (date.today() + timedelta(days=days_offset)).isoformat()
+                day_label = f"بعد {days_offset} يوم"
+        else:
+            # Format 2: YYYY-MM-DD or YYYY/MM/DD
+            m1 = re.match(r'^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$', raw_input)
+            # Format 3: DD-MM-YYYY or DD/MM/YYYY
+            m2 = re.match(r'^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$', raw_input)
+            
+            if m1:
+                y, m, d = int(m1.group(1)), int(m1.group(2)), int(m1.group(3))
+                try:
+                    target_d = date(y, m, d)
+                    parsed_date = target_d.isoformat()
+                    day_diff = (target_d - date.today()).days
+                    if day_diff <= 0:
+                        day_label = "الآن فوراً 🔴"
+                    elif day_diff == 1:
+                        day_label = "غداً 🟡"
+                    else:
+                        day_label = f"بعد {day_diff} يوم"
+                except ValueError:
+                    pass
+            elif m2:
+                d, m, y = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+                try:
+                    target_d = date(y, m, d)
+                    parsed_date = target_d.isoformat()
+                    day_diff = (target_d - date.today()).days
+                    if day_diff <= 0:
+                        day_label = "الآن فوراً 🔴"
+                    elif day_diff == 1:
+                        day_label = "غداً 🟡"
+                    else:
+                        day_label = f"بعد {day_diff} يوم"
+                except ValueError:
+                    pass
+
+        if parsed_date:
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE quiz_reviews SET next_review_date = ? WHERE quiz_id = ?",
+                (parsed_date, quiz_id)
+            )
+            conn.commit()
+            conn.close()
+
+            quiz = db.get_quiz(quiz_id)
+            q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
+
+            text = (
+                f"✅ <b>تم تحديد موعد المراجعة المخصص بنجاح!</b>\n\n"
+                f"📚 <b>{q_name}</b>\n"
+                f"📅 موعد المراجعة الجديد: <b>{parsed_date}</b> ({day_label})\n\n"
+                f"<i>تم حفظ الموعد في جدول التكرار المتباعد 🧠.</i>"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ إعدادات الكويز", callback_data=f"fixstage_menu_{quiz_id}")],
+                [InlineKeyboardButton("📅 جدول المراجعات", callback_data="review_schedule")],
+                [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+            ])
+            await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
+            return
+        else:
+            text = (
+                f"❌ <b>صيغة التاريخ غير صحيحة!</b>\n\n"
+                f"يرجى إرسال التاريخ بإحدى الصيغ التالية:\n"
+                f"• <code>2026-08-30</code> أو <code>30-08-2026</code>\n"
+                f"• أو بعدد الأيام: مثلاً <code>5</code> (بعد 5 أيام) أو <code>0</code> (اليوم فوراً)\n\n"
+                f"أعد المحاولة الآن:"
+            )
+            context.user_data["waiting_for_fixdate_custom"] = quiz_id
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"fixstage_menu_{quiz_id}")]])
+            await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
+            return
+
     # Check if waiting for custom reminder time
     if context.user_data.get("waiting_for_custom_reminder"):
         context.user_data.pop("waiting_for_custom_reminder", None)
@@ -1771,7 +1864,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         await safe_edit(query, text, kb)
 
     # ── Weak questions ──
-    elif data == "weak_questions":
+    elif data == "weak_questions" or data.startswith("weak_questions_page_"):
         user = update.effective_user
         u_id = user.id if user else 6099429826
         all_weak = db.get_all_weak_questions(user_id=u_id)
@@ -1790,8 +1883,31 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         for wq in all_weak:
             qid = wq["quiz_id"]
             if qid not in quiz_map:
-                quiz_map[qid] = {"quiz_id": qid, "quiz_name": wq["quiz_name"], "count": 0}
+                quiz_map[qid] = {
+                    "id": qid,
+                    "quiz_id": qid,
+                    "name": wq["quiz_name"],
+                    "quiz_name": wq["quiz_name"],
+                    "count": 0
+                }
             quiz_map[qid]["count"] += 1
+
+        # Sort quizzes by quiz number descending (170 down to 1)
+        sorted_quizzes = sorted(quiz_map.values(), key=quiz_sort_key_desc, reverse=True)
+        
+        # Pagination support (10 per page)
+        try:
+            page = int(data.split("_")[-1]) if "page_" in data else 1
+        except (ValueError, TypeError):
+            page = 1
+            
+        ITEMS_PER_PAGE = 10
+        total_pages = max(1, (len(sorted_quizzes) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+        page = max(1, min(page, total_pages))
+        
+        start_idx = (page - 1) * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        page_quizzes = sorted_quizzes[start_idx:end_idx]
 
         kb = []
         if all_weak_count > 0:
@@ -1799,16 +1915,33 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"📚 مراجعة الكل — {all_weak_count} سؤال (الأحدث أولاً)",
                 callback_data="start_weakall"
             )])
-        for item in quiz_map.values():
+
+        for item in page_quizzes:
+            qid = item["quiz_id"]
+            q_name = item["quiz_name"]
+            if len(q_name) > 28:
+                q_name = q_name[:25] + "..."
             kb.append([InlineKeyboardButton(
-                f"❌ {item['quiz_name']} ({item['count']} سؤال ضعيف)",
-                callback_data=f"weak_menu_{item['quiz_id']}"
+                f"❌ {q_name} ({item['count']} خطأ — الكويز كاملاً)",
+                callback_data=f"weak_menu_{qid}"
             )])
+
+        nav_row = []
+        if page > 1:
+            nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"weak_questions_page_{page-1}"))
+        if page < total_pages:
+            nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"weak_questions_page_{page+1}"))
+        if nav_row:
+            kb.append(nav_row)
+
         kb.append(back_btn[0])
 
         await safe_edit(query,
-            f"❌ <b>الأسئلة الضعيفة</b> — {all_weak_count} سؤال كلي\n"
-            f"🔴 مستحق اليوم: <b>{due_count}</b>",
+            f"❌ <b>بنك الأسئلة والكويزات الضعيفة</b> — {all_weak_count} سؤال كلي\n"
+            f"📚 الكويزات التي بها أخطاء: <b>{len(sorted_quizzes)} كويز</b>\n"
+            f"🎯 <b>الخطة اليومية:</b> مراجعة حتى 5 كويزات يومياً بالتكرار المتباعد 🧠\n"
+            f"🔴 الأسئلة المستحقة اليوم: <b>{due_count}</b>\n\n"
+            f"<i>اضغط على أي كويز بالأسفل لمراجعته وحله كاملاً:</i>",
             InlineKeyboardMarkup(kb)
         )
 
@@ -1825,28 +1958,24 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             return
             
         quiz_name = quiz_weak[0]["quiz_name"]
-        
-        riyadh_tz = pytz.timezone("Asia/Riyadh")
-        now = datetime.now(riyadh_tz)
-        today_date = now.date().isoformat()
-        
-        # Calculate how many are due today/overdue
-        due_weak = [wq for wq in quiz_weak if wq["next_review_date"] <= today_date]
+        questions = db.get_questions(quiz_id) or []
+        total_q = len(questions)
+        weak_count = len(quiz_weak)
         
         kb = [
-            [InlineKeyboardButton("📚 تدريب على جميع الأخطاء", callback_data=f"start_weakpractice_{quiz_id}")]
+            [InlineKeyboardButton(f"▶️ بدء مراجعة الكويز كاملاً ({total_q} سؤال)", callback_data=f"start_quiz_{quiz_id}")],
+            [InlineKeyboardButton(f"🎯 تدريب على الأخطاء فقط ({weak_count} سؤال)", callback_data=f"start_weakpractice_{quiz_id}")],
+            [InlineKeyboardButton("⚙️ ضبط مرحلة وموعد المراجعة", callback_data=f"fixstage_menu_{quiz_id}")],
+            [InlineKeyboardButton("🔙 رجوع للأسئلة الضعيفة", callback_data="weak_questions")]
         ]
-        if due_weak:
-            kb.insert(0, [InlineKeyboardButton(f"🔁 مراجعة المستحق ({len(due_weak)})", callback_data=f"start_weak_{quiz_id}")])
-            
-        kb.append([InlineKeyboardButton("🔙 رجوع", callback_data="weak_questions")])
         
         await safe_edit(
             query,
             f"📋 <b>{html.escape(quiz_name)}</b>\n\n"
-            f"مجموع الأخطاء: {len(quiz_weak)}\n"
-            f"المستحق للمراجعة اليوم: {len(due_weak)}\n\n"
-            f"اختر كيف تريد المراجعة:",
+            f"📝 إجمالي أسئلة الكويز: <b>{total_q} سؤال</b>\n"
+            f"❌ عدد الأسئلة الضعيفة المسجلة: <b>{weak_count} سؤال</b>\n\n"
+            f"🧠 <i>ملاحظة: عند حل الكويز كاملاً، ستتم إزالة الأسئلة الضعيفة وترقيتها في التكرار المتباعد تلقائياً عند إجابتك عليها بشكل صحيح.</i>\n\n"
+            f"اختر طريقة المراجعة:",
             InlineKeyboardMarkup(kb)
         )
 
@@ -2088,6 +2217,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("🔵 بعد 3 أيام", callback_data=f"fixdate_{quiz_id}_3")],
             [InlineKeyboardButton("🔵 بعد 7 أيام", callback_data=f"fixdate_{quiz_id}_7"),
              InlineKeyboardButton("🔵 بعد 14 يوم", callback_data=f"fixdate_{quiz_id}_14")],
+            [InlineKeyboardButton("📅 تحديد تاريخ مخصص", callback_data=f"fixdate_custom_{quiz_id}")],
             [InlineKeyboardButton("✅ تم الحل (إكمال المراجعة)", callback_data=f"fixstage_done_{review['id']}_{quiz_id}")],
             [InlineKeyboardButton("🛠 تعديل أسئلة الكويز", callback_data=f"fixstage_qlist_{quiz_id}_0")],
             [InlineKeyboardButton("🔙 رجوع", callback_data="fixstage_page_1")]
@@ -2235,6 +2365,25 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("🗑 تم حذف السؤال!")
         query.data = f"fixstage_qlist_{quiz_id}_0"
         await main_menu_handler(update, context)
+
+    # ── Fix custom date prompt ──
+    elif data.startswith("fixdate_custom_"):
+        quiz_id = int(data.split("_")[-1])
+        quiz = db.get_quiz(quiz_id)
+        if not quiz:
+            await safe_edit(query, "الكويز غير موجود.", InlineKeyboardMarkup(back_btn))
+            return
+        context.user_data["waiting_for_fixdate_custom"] = quiz_id
+        q_name = html.escape(quiz.get("name", "كويز"))
+        text = (
+            f"📅 <b>تحديد موعد مراجعة مخصص</b>\n"
+            f"📚 <b>{q_name}</b>\n\n"
+            f"أرسل الآن <b>تاريخ المراجعة المطلوب</b> في رسالة نصية:\n"
+            f"• <b>كتاريخ:</b> <code>2026-08-30</code> أو <code>30-08-2026</code>\n"
+            f"• <b>أو بعدد الأيام:</b> مثلاً <code>5</code> (بعد 5 أيام) أو <code>0</code> (اليوم فوراً)\n"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"fixstage_menu_{quiz_id}")]])
+        await safe_edit(query, text, kb)
 
     # ── Fix date (set next_review_date directly, keep stage) ──
     elif data.startswith("fixdate_"):

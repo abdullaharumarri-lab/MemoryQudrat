@@ -487,6 +487,18 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
 
     if advanced:
         sr_text = "✅ تم تسجيل حلك وتقدم الكويز للمرحلة التالية في التكرار المتباعد 🧠!"
+        # When solving a full quiz: also advance/resolve any weak questions that were answered correctly
+        user_weak_list = db.get_weak_questions_by_quiz(quiz_id, user_id=user_id)
+        if user_weak_list:
+            user_weak_map = {w["question_id"]: w for w in user_weak_list}
+            correct_ids = [qid for qid in session["question_ids"] if qid not in wrong_ids]
+            resolved_count = 0
+            for qid in correct_ids:
+                if qid in user_weak_map:
+                    db.advance_weak_question(user_weak_map[qid]["id"])
+                    resolved_count += 1
+            if resolved_count > 0:
+                sr_text += f"\n🎯 تم ترقية وإتقان {resolved_count} سؤال ضعيف في هذا الكويز!"
     elif session_type == "weak":
         weak_all = db.get_due_weak_questions(user_id=user_id)
         quiz_weak = {w["question_id"]: w for w in weak_all if w["quiz_id"] == quiz_id}
