@@ -1879,9 +1879,15 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         all_due_weak = db.get_due_all_weak_questions_sorted(user_id=u_id)
         due_count = len(all_due_weak)
         
+        # Get set of mastered quiz IDs (5 consecutive 100% runs)
+        mastered_ids = db.get_mastered_weak_quiz_ids(user_id=u_id)
+        
         quiz_map = {}
         for wq in all_weak:
             qid = wq["quiz_id"]
+            if qid in mastered_ids:
+                # Exclude mastered quizzes from the weak quizzes list
+                continue
             if qid not in quiz_map:
                 quiz_map[qid] = {
                     "id": qid,
@@ -1919,10 +1925,15 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         for item in page_quizzes:
             qid = item["quiz_id"]
             q_name = item["quiz_name"]
-            if len(q_name) > 28:
-                q_name = q_name[:25] + "..."
+            mastery_info = db.get_quiz_mastery_info(qid, user_id=u_id)
+            streak = mastery_info.get("streak", 0)
+            
+            if len(q_name) > 24:
+                q_name = q_name[:21] + "..."
+                
+            badge = f"🔥 {streak}/5" if streak > 0 else f"{item['count']} خطأ"
             kb.append([InlineKeyboardButton(
-                f"❌ {q_name} ({item['count']} خطأ — الكويز كاملاً)",
+                f"❌ {q_name} ({badge})",
                 callback_data=f"weak_menu_{qid}"
             )])
 
@@ -1938,8 +1949,8 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
 
         await safe_edit(query,
             f"❌ <b>بنك الأسئلة والكويزات الضعيفة</b> — {all_weak_count} سؤال كلي\n"
-            f"📚 الكويزات التي بها أخطاء: <b>{len(sorted_quizzes)} كويز</b>\n"
-            f"🎯 <b>الخطة اليومية:</b> مراجعة حتى 5 كويزات يومياً بالتكرار المتباعد 🧠\n"
+            f"📚 الكويزات المتبقية للمراجعة: <b>{len(sorted_quizzes)} كويز</b>\n"
+            f"🏆 <b>نظام الإتقان الذكي:</b> حل الكويز 5 مرات متتالية بالعلامة الكاملة يُخرجه من القائمة تلقائياً 🌟\n"
             f"🔴 الأسئلة المستحقة اليوم: <b>{due_count}</b>\n\n"
             f"<i>اضغط على أي كويز بالأسفل لمراجعته وحله كاملاً:</i>",
             InlineKeyboardMarkup(kb)
@@ -1962,6 +1973,9 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         total_q = len(questions)
         weak_count = len(quiz_weak)
         
+        mastery_info = db.get_quiz_mastery_info(quiz_id, user_id=u_id)
+        streak = mastery_info.get("streak", 0)
+        
         kb = [
             [InlineKeyboardButton(f"▶️ بدء مراجعة الكويز كاملاً ({total_q} سؤال)", callback_data=f"start_quiz_{quiz_id}")],
             [InlineKeyboardButton(f"🎯 تدريب على الأخطاء فقط ({weak_count} سؤال)", callback_data=f"start_weakpractice_{quiz_id}")],
@@ -1969,12 +1983,15 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🔙 رجوع للأسئلة الضعيفة", callback_data="weak_questions")]
         ]
         
+        streak_text = f"🔥 تقدم الإتقان المتتالي: <b>{streak}/5 مرات بالعلامة الكاملة</b>\n" if streak > 0 else ""
+        
         await safe_edit(
             query,
             f"📋 <b>{html.escape(quiz_name)}</b>\n\n"
             f"📝 إجمالي أسئلة الكويز: <b>{total_q} سؤال</b>\n"
-            f"❌ عدد الأسئلة الضعيفة المسجلة: <b>{weak_count} سؤال</b>\n\n"
-            f"🧠 <i>ملاحظة: عند حل الكويز كاملاً، ستتم إزالة الأسئلة الضعيفة وترقيتها في التكرار المتباعد تلقائياً عند إجابتك عليها بشكل صحيح.</i>\n\n"
+            f"❌ عدد الأسئلة الضعيفة المسجلة: <b>{weak_count} سؤال</b>\n"
+            f"{streak_text}\n"
+            f"🧠 <i>ملاحظة: عند حل الكويز كاملاً 5 مرات متتالية بدون أخطاء، سيتم إخراجه من القائمة نهائياً، مع بقاء أسئلته في مراجعة الكل.</i>\n\n"
             f"اختر طريقة المراجعة:",
             InlineKeyboardMarkup(kb)
         )

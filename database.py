@@ -163,6 +163,19 @@ def init_db():
         )
     """)
 
+    # ── 10. Quiz Weak Mastery (5 consecutive perfect scores to master) ──
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS quiz_weak_mastery (
+            user_id INTEGER DEFAULT 6099429826,
+            quiz_id INTEGER NOT NULL,
+            consecutive_perfect INTEGER DEFAULT 0,
+            is_mastered INTEGER DEFAULT 0,
+            mastered_at TIMESTAMP,
+            PRIMARY KEY (user_id, quiz_id),
+            FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+        )
+    """)
+
     # ── AUTO-MIGRATIONS FOR EXISTING PRODUCTION DATABASES ──
 
     # Quizzes: add owner_id, is_public, url, category_id if missing
@@ -1472,4 +1485,79 @@ def clear_chat_history(chat_id: int):
     cursor.execute("DELETE FROM chat_history_ids WHERE chat_id = ?", (chat_id,))
     conn.commit()
     conn.close()
+
+
+# ─── Quiz Weak Mastery (5 Consecutive Perfect Scores) ─────────────────────────
+
+def record_quiz_mastery_run(quiz_id: int, user_id: int = 6099429826, is_perfect: bool = False) -> tuple[int, bool]:
+    """
+    Updates consecutive perfect runs for a quiz.
+    If is_perfect is True, increments streak. If streak >= 5, sets is_mastered = 1.
+    If is_perfect is False, resets streak to 0 and unsets is_mastered = 0.
+    Returns (current_streak, is_mastered_now).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT consecutive_perfect, is_mastered FROM quiz_weak_mastery WHERE user_id = ? AND quiz_id = ?",
+        (user_id, quiz_id)
+    )
+    row = cursor.fetchone()
+    
+    if not row:
+        streak = 1 if is_perfect else 0
+        mastered = 1 if streak >= 5 else 0
+        cursor.execute(
+            """INSERT INTO quiz_weak_mastery (user_id, quiz_id, consecutive_perfect, is_mastered, mastered_at)
+               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (user_id, quiz_id, streak, mastered)
+        )
+    else:
+        prev_streak = row["consecutive_perfect"] or 0
+        if is_perfect:
+            streak = prev_streak + 1
+            mastered = 1 if streak >= 5 else 0
+        else:
+            streak = 0
+            mastered = 0
+            
+        cursor.execute(
+            """UPDATE quiz_weak_mastery 
+               SET consecutive_perfect = ?, is_mastered = ?, mastered_at = CURRENT_TIMESTAMP
+               WHERE user_id = ? AND quiz_id = ?""",
+            (streak, mastered, user_id, quiz_id)
+        )
+        
+    conn.commit()
+    conn.close()
+    return streak, bool(mastered)
+
+
+def get_mastered_weak_quiz_ids(user_id: int = 6099429826) -> set[int]:
+    """Returns set of quiz_ids that are mastered (5 consecutive 100% scores)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT quiz_id FROM quiz_weak_mastery WHERE user_id = ? AND is_mastered = 1",
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return {r["quiz_id"] for r in rows}
+
+
+def get_quiz_mastery_info(quiz_id: int, user_id: int = 6099429826) -> dict:
+    """Returns mastery streak and status for a quiz."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT consecutive_perfect, is_mastered FROM quiz_weak_mastery WHERE user_id = ? AND quiz_id = ?",
+        (user_id, quiz_id)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"streak": row["consecutive_perfect"] or 0, "is_mastered": bool(row["is_mastered"])}
+    return {"streak": 0, "is_mastered": False}
+
 

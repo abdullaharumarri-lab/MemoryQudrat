@@ -517,6 +517,15 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
                 db.advance_weak_question(all_weak_map[qid]["id"])
         sr_text = f"✅ تم تثبيت إجاباتك وجدولة التكرار لـ {len(correct_ids)} سؤال."
 
+    # ── Weak Quiz Mastery Tracking (5 consecutive 100% runs) ──
+    if quiz_id and session_type not in ("weakall", "weak", "weakpractice"):
+        is_perfect = (len(wrong_ids) == 0 and total > 0)
+        streak, is_mastered = db.record_quiz_mastery_run(quiz_id, user_id=user_id, is_perfect=is_perfect)
+        if is_mastered:
+            sr_text += "\n🏆 <b>إنجاز استثنائي!</b> حققت الدرجة الكاملة 5 مرات متتالية، تم إتقان هذا الكويز وإخراجه من قائمة الأخطاء بنجاح! 🌟"
+        elif is_perfect and streak > 0:
+            sr_text += f"\n🔥 <b>إتقان الكويز:</b> {streak}/5 مرات متتالية بالدرجة الكاملة."
+
     # Log session for stats
     db.log_session(quiz_id if quiz_id != 0 else None, session_type, total, correct, len(wrong_ids), user_id=user_id)
 
