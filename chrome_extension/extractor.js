@@ -1,19 +1,19 @@
 /**
- * MemoryQudrat — Google Forms Quiz Extractor Engine v4.4 (Master Edition)
+ * MemoryQudrat — Google Forms Quiz Extractor Engine v4.5 (Universal AI Precision)
  *
  * Core Fixes:
- *   1. Precise Reading Passage & Text Extraction:
- *      - Captures passages regardless of card type (Section description, Standalone text, or Short Answer text).
- *      - Eliminates false-positive score/keyword exclusions (allows normal words like نقطة, درجة, النتيجة, fractions).
- *      - Strictly ignores student info and pledge cards only.
- *   2. Bulletproof Number & Math Option Handling:
- *      - Strips only choice identifiers (أ, ب, ج, د, A, B, C, D, 1), (1)) without touching numbers.
+ *   1. Dynamic Passage Detection:
+ *      - Tracks and updates active passages dynamically across single or multiple reading sections in the same quiz.
+ *      - Captures passages regardless of card type (Section description, Standalone text, Short-answer text block).
+ *   2. Strict Analogy vs Sentence-Ending Colon Distinction:
+ *      - Pure analogies ("Word1 : Word2") are strictly preserved without attached passages.
+ *      - Questions ending with colons (e.g. "البصمة ستطبق للفنانين :") are correctly identified as comprehension questions
+ *        and receive their corresponding reading passages automatically.
+ *   3. Math & Number Safety:
+ *      - Strips only choice identifiers (أ, ب, ج, د, A, B, C, D, (1)) without touching numbers.
  *      - Completely protects decimals (3.5, 0.25), fractions (1/2, 3/4), ranges (4-8), percentages (25%), and negatives (-5).
- *   3. Intelligent Section & Passage Propagation:
- *      - Propagates reading passages to comprehension questions seamlessly.
- *      - Preserves pure analogy, sentence completion, and odd-one-out questions cleanly without attached text.
- *   4. Rock-Solid Option Isolation:
- *      - Extracts all 4 options accurately with correct answers and explanations.
+ *   4. Rock-Solid 4-Option MCQ Isolation:
+ *      - Extracts all choices cleanly with correct answer resolution and explanations.
  */
 
 function extractGoogleFormsQuiz() {
@@ -64,7 +64,7 @@ function extractGoogleFormsQuiz() {
 
         /* ══════════════════════════════════════════
            3 — Clean Prefix Filter (Math & Number Safe)
-           Strips only option labels (أ, ب, ج, د, A, B, C, D)
+           Strips only option labels (أ, ب, ج, د, A, B, C, D, (1), 1))
            Preserves 3.5, 1/2, 0.25, -5, 4-8 perfectly!
         ══════════════════════════════════════════ */
         function stripPrefix(text) {
@@ -79,7 +79,7 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           4 — Student Info & Pledge Filter
+           4 — Student Info & Score Filters
         ══════════════════════════════════════════ */
         function isStudentOrPledge(text) {
             if (!text) return true;
@@ -97,10 +97,10 @@ function extractGoogleFormsQuiz() {
         function isValidReadingPassage(text) {
             if (!text) return false;
             const t = text.trim();
-            if (t.length < 60) return false;
+            if (t.length < 50) return false;
             if (isStudentOrPledge(t)) return false;
             if (isScoreOnly(t)) return false;
-            if (quizTitle && t.startsWith(quizTitle) && t.length < quizTitle.length + 50) {
+            if (quizTitle && t.startsWith(quizTitle) && t.length < quizTitle.length + 40) {
                 return false;
             }
             return true;
@@ -124,23 +124,29 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           6 — Precise Verbal Analogy Filter
+           6 — Universal Analogy vs Question Distinguisher
         ══════════════════════════════════════════ */
         function isVerbalAnalogy(qText) {
             if (!qText) return false;
-            const t = qText.trim().replace(/[\*\.\s]+$/, '').trim();
+            let t = qText.trim().replace(/[\*\s]+$/, '').trim();
 
-            const compKeywords = [
-                'وفق', 'الفقرة', 'النص', 'القطعة', 'الضمير', 'معنى', 'علاقة',
-                'يفهم', 'يستنتج', 'المقصود', 'أنسب', 'عنوان', 'تشير', 'يدل',
-                'سبب', 'لماذا', 'كيف', 'متى', 'أين', 'كم', 'أي', 'ما', 'مضمون'
-            ];
-            for (const kw of compKeywords) {
-                if (t.includes(kw)) return false;
+            // If question ends with colon or question mark, it's a question, NOT an analogy
+            if (t.endsWith(':') || t.endsWith('：') || t.endsWith('؟') || t.endsWith('?')) {
+                return false;
             }
 
-            if (t.length < 50 && /^[\u0600-\u06FF\s]+\s*[:\：]\s*[\u0600-\u06FF\s]+$/.test(t)) {
-                return true;
+            // An analogy is strictly two short words/terms: "Word1 : Word2"
+            const parts = t.split(/[:\：]/);
+            if (parts.length === 2) {
+                const left = parts[0].trim();
+                const right = parts[1].trim();
+                if (left && right && left.split(/\s+/).length <= 4 && right.split(/\s+/).length <= 4 && t.length < 40) {
+                    const nonAnalogyWords = ['ما', 'لماذا', 'كيف', 'متى', 'أين', 'كم', 'أي', 'هل', 'من', 'ماذا', 'علاقة', 'معنى', 'يدل', 'تعني', 'يقصد', 'وفق', 'النص', 'القطعة', 'الفقرة'];
+                    for (const w of nonAnalogyWords) {
+                        if (left.includes(w) || right.includes(w)) return false;
+                    }
+                    return true;
+                }
             }
             return false;
         }
@@ -152,9 +158,11 @@ function extractGoogleFormsQuiz() {
         const wrongIndices = [];
 
         // Collect all top-level card containers in DOM order
-        const allItems = Array.from(document.querySelectorAll('.Qr7Oae, [role="listitem"]'));
-        
-        // Fallback if Qr7Oae / listitem not found
+        const allItems = Array.from(document.querySelectorAll(
+            '.Qr7Oae, [role="listitem"], .freebirdFormviewerViewHeaderHeader, .m7Lvdc, .D1w1Sd, .j0L6Mc'
+        ));
+
+        // Fallback if none found
         if (allItems.length === 0) {
             allItems.push(...Array.from(document.querySelectorAll('.geS5n, .freebirdFormviewerViewItemsItemItem')));
         }
@@ -184,7 +192,7 @@ function extractGoogleFormsQuiz() {
                     return;
                 }
 
-                // If this is a valid reading passage, store it
+                // If this is a valid reading passage, update active passage
                 if (isValidReadingPassage(text)) {
                     currentActivePassage = text;
                 }
@@ -215,7 +223,7 @@ function extractGoogleFormsQuiz() {
                 questionText = clean(clone);
             }
 
-            // Clean question text: strip leading numbers and asterisks
+            // Clean question text: strip leading numbering and asterisks
             questionText = questionText.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').trim();
             questionText = questionText.replace(/\s*\*\s*$/, '').trim();
             if (!questionText) questionText = `السؤال ${qNum}`;
