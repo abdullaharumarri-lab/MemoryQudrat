@@ -1,17 +1,19 @@
 /**
- * MemoryQudrat — Google Forms Quiz Extractor Engine v4.3 (Bulletproof Reading & MCQ Engine)
+ * MemoryQudrat — Google Forms Quiz Extractor Engine v4.4 (Master Edition)
  *
- * Key Precision Upgrades:
- *   1. Complete Student Info / Score / Pledge Elimination:
- *      - Rejects student name cards ("اسم الطالب : عبدالله جمعان"), emails, phone numbers, passwords,
- *        score banners ("0 من إجمالي 0 نقطة"), oaths (اقسم/أتعهد), and course announcements.
- *   2. Strict Passage Validation:
- *      - Only accepts genuine multi-sentence reading passages (استيعاب المقروء) (> 70 chars with zero metadata/score words).
- *   3. Universal Analogy & Question Formatting:
- *      - Strips asterisks, trailing symbols, and numbers cleanly.
- *      - Preserves pure analogy questions ("قماش : ملابس", "إهمال: رسوب") cleanly without attached text.
- *   4. Perfect 4-Option MCQ Isolation:
- *      - Extracts all 4 choices cleanly for every question.
+ * Core Fixes:
+ *   1. Precise Reading Passage & Text Extraction:
+ *      - Captures passages regardless of card type (Section description, Standalone text, or Short Answer text).
+ *      - Eliminates false-positive score/keyword exclusions (allows normal words like نقطة, درجة, النتيجة, fractions).
+ *      - Strictly ignores student info and pledge cards only.
+ *   2. Bulletproof Number & Math Option Handling:
+ *      - Strips only choice identifiers (أ, ب, ج, د, A, B, C, D, 1), (1)) without touching numbers.
+ *      - Completely protects decimals (3.5, 0.25), fractions (1/2, 3/4), ranges (4-8), percentages (25%), and negatives (-5).
+ *   3. Intelligent Section & Passage Propagation:
+ *      - Propagates reading passages to comprehension questions seamlessly.
+ *      - Preserves pure analogy, sentence completion, and odd-one-out questions cleanly without attached text.
+ *   4. Rock-Solid Option Isolation:
+ *      - Extracts all 4 options accurately with correct answers and explanations.
  */
 
 function extractGoogleFormsQuiz() {
@@ -60,43 +62,52 @@ function extractGoogleFormsQuiz() {
             return false;
         }
 
+        /* ══════════════════════════════════════════
+           3 — Clean Prefix Filter (Math & Number Safe)
+           Strips only option labels (أ, ب, ج, د, A, B, C, D)
+           Preserves 3.5, 1/2, 0.25, -5, 4-8 perfectly!
+        ══════════════════════════════════════════ */
         function stripPrefix(text) {
             if (!text) return '';
-            return text.replace(/^[أ-يa-zA-Z\d٠-٩][.\:\-\)\/]\s*/, '').trim();
+            let t = text.trim();
+            // Match (أ), أ), أ -, أ:, أ. , (A), A), A.
+            t = t.replace(/^[(\uff08]?[أ-دa-dA-D\u0623\u0628\u062c\u062f][)\uff09.:\-\/\s]+\s*/, '');
+            // Match (1), 1), (2), 2)
+            t = t.replace(/^[(\uff08][\d\u0660-\u0669]+[)\uff09]\s*/, '');
+            t = t.replace(/^[1-4\u0661-\u0664][)\uff09]\s*/, '');
+            return t.trim();
         }
 
         /* ══════════════════════════════════════════
-           3 — Strict Reading Passage Validator
-           Rejects student names, scores, emails, pledges, passwords
+           4 — Student Info & Pledge Filter
         ══════════════════════════════════════════ */
+        function isStudentOrPledge(text) {
+            if (!text) return true;
+            const t = text.trim();
+            const pattern = /(?:اسم\s+الطالب|اسم\s+المشترك|الاسم\s+الثلاثي|البريد\s+الإلكتروني|email|رقم\s+الجوال|رقم\s+الهاتف|phone|الفصل|المدرسة|المجموعة|كلمة\s+المرور|password|اقسم\s+انني|أقسم\s+بالله|أتعهد\s+بأن|اتعهد\s+بان|أقر\s+بأن|تعهد\s+والتزام|شروط\s+وقواعد\s+الاختبار)/i;
+            return pattern.test(t);
+        }
+
+        function isScoreOnly(text) {
+            if (!text) return true;
+            const t = text.trim();
+            return /^\s*(?:\d+\s*\/\s*\d+|\d+\s*من\s+إجمالي\s+\d+\s*نقطة|\d+\s*من\s+\d+\s*نقطة)\s*$/.test(t);
+        }
+
         function isValidReadingPassage(text) {
             if (!text) return false;
             const t = text.trim();
-
-            // 1. Length requirement: Real reading passages are substantial
-            if (t.length < 70) return false;
-
-            // 2. Score indicators (e.g. "0 من إجمالي 0 نقطة", "5/5 points")
-            if (/من\s+إجمالي\s+\d+\s+نقطة|\b\d+\s*\/\s*\d+\b|\bpoints?\b|\bنقطة\b|\bنقاط\b|\bالدرجة\b|\bالنتيجة\b/i.test(t)) {
-                return false;
-            }
-
-            // 3. Student info, form inputs, pledges, passwords, course headers
-            const forbiddenPattern = /(اسم\s+الطالب|اسم\s+المشترك|الاسم\s+الثلاثي|الاسم\s*:|البريد|الإيميل|email|رقم\s+الجوال|رقم\s+الهاتف|phone|الفصل|المدرسة|المجموعة|كلمة\s+المرور|password|اقسم|أقسم|أتعهد|اتعهد|أقر\s+بأن|تعهد\s+والتزام|شروط\s+وقواعد|محوسب\s+أغسطس|إيهاب\s+عبد\s+العظيم)/i;
-            if (forbiddenPattern.test(t)) {
-                return false;
-            }
-
-            // 4. Form title redundancy
+            if (t.length < 60) return false;
+            if (isStudentOrPledge(t)) return false;
+            if (isScoreOnly(t)) return false;
             if (quizTitle && t.startsWith(quizTitle) && t.length < quizTitle.length + 50) {
                 return false;
             }
-
             return true;
         }
 
         /* ══════════════════════════════════════════
-           4 — Non-Reading Section Detector
+           5 — Non-Reading Section Detector
         ══════════════════════════════════════════ */
         function isNonReadingSection(text) {
             if (!text) return false;
@@ -113,7 +124,7 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           5 — Precise Verbal Analogy Filter
+           6 — Precise Verbal Analogy Filter
         ══════════════════════════════════════════ */
         function isVerbalAnalogy(qText) {
             if (!qText) return false;
@@ -122,7 +133,7 @@ function extractGoogleFormsQuiz() {
             const compKeywords = [
                 'وفق', 'الفقرة', 'النص', 'القطعة', 'الضمير', 'معنى', 'علاقة',
                 'يفهم', 'يستنتج', 'المقصود', 'أنسب', 'عنوان', 'تشير', 'يدل',
-                'سبب', 'لماذا', 'كيف', 'متى', 'أين', 'كم', 'أي', 'ما'
+                'سبب', 'لماذا', 'كيف', 'متى', 'أين', 'كم', 'أي', 'ما', 'مضمون'
             ];
             for (const kw of compKeywords) {
                 if (t.includes(kw)) return false;
@@ -135,33 +146,36 @@ function extractGoogleFormsQuiz() {
         }
 
         /* ══════════════════════════════════════════
-           6 — Top-down Page Scanner & Extractor
+           7 — Top-down Page Scanner & Extractor
         ══════════════════════════════════════════ */
         const questions = [];
         const wrongIndices = [];
 
         // Collect all top-level card containers in DOM order
-        const rawContainers = Array.from(document.querySelectorAll(
-            '.Qr7Oae, .geS5n, [role="listitem"], .freebirdFormviewerViewHeaderHeader, [role="region"], .m7Lvdc, .D1w1Sd, .j0L6Mc, .freebirdFormviewerViewItemsItemItem'
-        ));
+        const allItems = Array.from(document.querySelectorAll('.Qr7Oae, [role="listitem"]'));
+        
+        // Fallback if Qr7Oae / listitem not found
+        if (allItems.length === 0) {
+            allItems.push(...Array.from(document.querySelectorAll('.geS5n, .freebirdFormviewerViewItemsItemItem')));
+        }
 
         // Deduplicate nested containers
-        const allItems = [];
-        rawContainers.forEach((el) => {
-            const isDescendant = rawContainers.some(other => other !== el && other.contains(el));
-            if (!isDescendant && !allItems.includes(el)) {
-                allItems.push(el);
+        const topContainers = [];
+        allItems.forEach((el) => {
+            const isDescendant = allItems.some(other => other !== el && other.contains(el));
+            if (!isDescendant && !topContainers.includes(el)) {
+                topContainers.push(el);
             }
         });
 
         let currentActivePassage = '';
 
-        allItems.forEach((item) => {
-            const hasRadios = item.querySelector('[role="radiogroup"], [role="radio"]');
-            const hasInputs = item.querySelector('input[type="text"], input[type="email"], textarea');
+        topContainers.forEach((item) => {
+            const rg = item.querySelector('[role="radiogroup"]');
+            const hasRadios = !!rg || !!item.querySelector('[role="radio"]');
 
-            // ── Case A: Standalone Card / Section Header / Text Block ──
-            if (!hasRadios && !hasInputs) {
+            // ── Case A: Standalone Card / Section Header / Passage ──
+            if (!hasRadios) {
                 const text = clean(item);
 
                 // Clear active passage if non-reading section begins
@@ -178,7 +192,6 @@ function extractGoogleFormsQuiz() {
             }
 
             // ── Case B: MCQ Question Item ──
-            const rg = item.querySelector('[role="radiogroup"]');
             if (!rg) return;
 
             const qNum = questions.length + 1;
@@ -201,8 +214,8 @@ function extractGoogleFormsQuiz() {
                 clone.querySelectorAll('.R4nke, .DqBBlb').forEach(e => e.remove());
                 questionText = clean(clone);
             }
-            
-            // Clean question text: strip leading numbers and clean trailing score artifacts
+
+            // Clean question text: strip leading numbers and asterisks
             questionText = questionText.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').trim();
             questionText = questionText.replace(/\s*\*\s*$/, '').trim();
             if (!questionText) questionText = `السؤال ${qNum}`;
@@ -304,11 +317,12 @@ function extractGoogleFormsQuiz() {
             let correctAnswer = '';
 
             if (correctAnswerFromBox) {
-                const exact = options.find(o => o.trim() === correctAnswerFromBox.trim());
+                const cleanedBoxAns = stripPrefix(correctAnswerFromBox);
+                const exact = options.find(o => o.trim() === cleanedBoxAns.trim() || o.trim() === correctAnswerFromBox.trim());
                 const partial = options.find(o =>
-                    correctAnswerFromBox.includes(o.trim()) || o.trim().includes(correctAnswerFromBox.trim())
+                    cleanedBoxAns.includes(o.trim()) || o.trim().includes(cleanedBoxAns.trim())
                 );
-                correctAnswer = exact || partial || correctAnswerFromBox;
+                correctAnswer = exact || partial || cleanedBoxAns;
                 if (!options.includes(correctAnswer)) options.push(correctAnswer);
             }
 
@@ -350,7 +364,7 @@ function extractGoogleFormsQuiz() {
         });
 
         /* ══════════════════════════════════════════
-           7 — Return result
+           8 — Return result
         ══════════════════════════════════════════ */
         if (questions.length === 0) {
             return {
