@@ -1065,10 +1065,14 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         if data == "public_bank_root":
             cat_id = None
             page = 1
+            context.user_data["last_quiz_view_callback"] = "public_bank_root"
+            context.user_data["last_quiz_view_title"] = "البنك العام"
         else:
             raw_cat_id = int(parts[2])
             cat_id = raw_cat_id if raw_cat_id != 0 else None
             page = int(parts[3]) if len(parts) > 3 else 1
+            context.user_data["last_quiz_view_callback"] = data
+            context.user_data["last_quiz_view_title"] = f"صفحة {page} من القسم"
 
         user = update.effective_user
         text, kb = public_bank_view(cat_id=cat_id, page=page, user_id=user.id if user else None)
@@ -1139,7 +1143,12 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             ])
 
         parent_cat_id = quiz.get("category_id") or 0
-        if is_owner:
+        last_view_cb = context.user_data.get("last_quiz_view_callback")
+        last_view_title = context.user_data.get("last_quiz_view_title")
+        if last_view_cb:
+            lbl = f"🔙 رجوع إلى {last_view_title}" if last_view_title else "🔙 رجوع لقائمة الكويزات"
+            kb.append([InlineKeyboardButton(lbl, callback_data=last_view_cb)])
+        elif is_owner:
             kb.append([InlineKeyboardButton("🔙 رجوع لكويزاتي", callback_data=f"my_cat_{parent_cat_id}_1" if parent_cat_id else "my_quizzes")])
         else:
             kb.append([InlineKeyboardButton("🔙 رجوع للمجلد", callback_data=f"bank_cat_{parent_cat_id}_1")])
@@ -1332,6 +1341,11 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             fid = int(parts[2])
             folder_id = fid if fid != 0 else None
             page = int(parts[3]) if len(parts) > 3 else 1
+            context.user_data["last_quiz_view_callback"] = data
+            context.user_data["last_quiz_view_title"] = f"صفحة {page} من المجلد"
+        else:
+            context.user_data["last_quiz_view_callback"] = "my_quizzes"
+            context.user_data["last_quiz_view_title"] = "كويزاتي الخاصة"
 
         text, kb = my_quizzes_view(folder_id=folder_id, page=page, user_id=u_id)
         await safe_edit(query, text, kb)
@@ -1416,6 +1430,8 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         page = int(data.split("_")[-1])
         user = update.effective_user
         u_id = user.id if user else 6099429826
+        context.user_data["last_quiz_view_callback"] = data
+        context.user_data["last_quiz_view_title"] = f"صفحة {page} من كويزاتي"
         text, kb = my_quizzes_view(folder_id=None, page=page, user_id=u_id, show_all=True)
         await safe_edit(query, text, kb)
 

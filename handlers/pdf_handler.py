@@ -240,11 +240,22 @@ async def process_json_quiz_data(
             f"📝 تم تحديث <b>{len(data['questions'])}</b> سؤال بنجاح مع الإجابات المصححة.{wrong_note}\n\n"
             f"🔁 <b>جدول التكرار المتباعد:</b> محفوظ ومستمر حسب جدولك السابق دون أي تغيير 🌟."
         )
-        keyboard = InlineKeyboardMarkup([
+        last_view_cb = context.user_data.get("last_quiz_view_callback")
+        last_view_title = context.user_data.get("last_quiz_view_title")
+        
+        kb_rows = [
             [InlineKeyboardButton("▶️ ابدأ الكويز المحدث", callback_data=f"start_practice_{quiz_update_id}")],
+        ]
+        if last_view_cb:
+            lbl = f"📂 العودة إلى {last_view_title} (نفس الموضع)" if last_view_title else "📂 العودة لقائمة الكويزات (نفس الصفحة)"
+            kb_rows.append([InlineKeyboardButton(lbl, callback_data=last_view_cb)])
+        
+        kb_rows.extend([
+            [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"bank_quiz_{quiz_update_id}")],
             [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
+        keyboard = InlineKeyboardMarkup(kb_rows)
 
     # 2. Upgrade URL to JSON quiz
     elif quiz_upgrade_id:
@@ -290,11 +301,21 @@ async def process_json_quiz_data(
             f"تمت إضافة {len(data['questions'])} سؤال تفاعلي للكويز.{wrong_note}\n\n"
             f"<i>سيستمر نظام التكرار المتباعد حسب جدولك السابق!</i>"
         )
-        keyboard = InlineKeyboardMarkup([
+        last_view_cb = context.user_data.get("last_quiz_view_callback")
+        last_view_title = context.user_data.get("last_quiz_view_title")
+        
+        kb_rows = [
             [InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_practice_{quiz_upgrade_id}")],
+        ]
+        if last_view_cb:
+            lbl = f"📂 العودة إلى {last_view_title} (نفس الموضع)" if last_view_title else "📂 العودة لقائمة الكويزات (نفس الصفحة)"
+            kb_rows.append([InlineKeyboardButton(lbl, callback_data=last_view_cb)])
+            
+        kb_rows.extend([
             [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
+        keyboard = InlineKeyboardMarkup(kb_rows)
     else:
         is_pub = 0
         owner_id = u_id
