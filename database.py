@@ -25,6 +25,8 @@ def get_connection():
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
     conn.execute("PRAGMA busy_timeout = 5000;")
+    conn.execute("PRAGMA cache_size = 10000;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     return conn
@@ -256,10 +258,13 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_quiz_id ON questions(quiz_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_quizzes_public ON quizzes(is_public)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_quizzes_owner ON quizzes(owner_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_quizzes_cat_owner_pub ON quizzes(category_id, owner_id, is_public)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_quiz_reviews_user_quiz ON quiz_reviews(user_id, quiz_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_quiz_reviews_user_due ON quiz_reviews(user_id, next_review_date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_quiz_reviews_user_due_id ON quiz_reviews(user_id, next_review_date, id DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_weak_questions_user_quiz ON weak_questions(user_id, quiz_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_weak_questions_user_due ON weak_questions(user_id, next_review_date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_weak_questions_user_due_id ON weak_questions(user_id, next_review_date, id DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_log_user ON quiz_sessions_log(user_id, session_date)")
 
     # ── 10. Chat History IDs Table for Complete Chat Cleaning ──
@@ -1028,25 +1033,27 @@ def add_or_reset_weak_question(quiz_id: int, question_id: int, user_id: int = 60
 
 
 def get_due_weak_questions(user_id: int = None) -> list:
-    """Returns weak questions due today or earlier for a user (or all if None)."""
+    """Returns weak questions due today or earlier for a user in Riyadh timezone."""
     conn = get_connection()
     cursor = conn.cursor()
+    today_iso = get_riyadh_today_iso()
     if user_id is not None:
         cursor.execute(
             """SELECT wq.*, q.name as quiz_name
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
-               WHERE wq.user_id = ? AND wq.next_review_date <= date('now')
+               WHERE wq.user_id = ? AND wq.next_review_date <= ?
                ORDER BY wq.next_review_date""",
-            (user_id,),
+            (user_id, today_iso),
         )
     else:
         cursor.execute(
             """SELECT wq.*, q.name as quiz_name
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
-               WHERE wq.next_review_date <= date('now')
-               ORDER BY wq.next_review_date"""
+               WHERE wq.next_review_date <= ?
+               ORDER BY wq.next_review_date""",
+            (today_iso,)
         )
     rows = cursor.fetchall()
     conn.close()
@@ -1078,25 +1085,27 @@ def get_all_weak_questions(user_id: int = None) -> list:
 
 
 def get_due_all_weak_questions_sorted(user_id: int = None) -> list:
-    """Returns all due weak questions sorted: newest added (highest id) first."""
+    """Returns all due weak questions in Riyadh timezone sorted: newest added (highest id) first."""
     conn = get_connection()
     cursor = conn.cursor()
+    today_iso = get_riyadh_today_iso()
     if user_id is not None:
         cursor.execute(
             """SELECT wq.*, q.name as quiz_name
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
-               WHERE wq.user_id = ? AND wq.next_review_date <= date('now')
+               WHERE wq.user_id = ? AND wq.next_review_date <= ?
                ORDER BY wq.id DESC""",
-            (user_id,),
+            (user_id, today_iso),
         )
     else:
         cursor.execute(
             """SELECT wq.*, q.name as quiz_name
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
-               WHERE wq.next_review_date <= date('now')
-               ORDER BY wq.id DESC"""
+               WHERE wq.next_review_date <= ?
+               ORDER BY wq.id DESC""",
+            (today_iso,)
         )
     rows = cursor.fetchall()
     conn.close()

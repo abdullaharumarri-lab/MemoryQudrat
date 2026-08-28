@@ -33,7 +33,7 @@ async def _safe_delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
 
 
 async def delete_messages_bulk(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_ids: list[int]):
-    """Safely delete a list of message IDs using Telegram's bulk delete API or concurrent fallback."""
+    """Safely delete a list of message IDs using Telegram's bulk delete API without spamming fallbacks."""
     if not message_ids or not chat_id:
         return
     
@@ -47,21 +47,17 @@ async def delete_messages_bulk(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
         try:
             await context.bot.delete_messages(chat_id=chat_id, message_ids=batch)
         except Exception as e:
-            logger.debug("delete_messages batch error (%s), falling back to parallel delete", e)
-            # Parallel concurrent individual deletion
-            tasks = [_safe_delete_message(context, chat_id, mid) for mid in batch]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.debug("delete_messages batch skipped/failed: %s", e)
 
 
 async def clean_entire_chat(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
     keep_message_id: int = None,
-    extra_ids: list[int] = None,
-    nearby_range: int = 30
+    extra_ids: list[int] = None
 ):
     """
-    Cleans ALL previous messages in the chat history, leaving at most keep_message_id intact.
+    Cleans tracked messages in the chat history efficiently without blind range guessing.
     """
     if not chat_id:
         return
@@ -74,21 +70,15 @@ async def clean_entire_chat(
     if last_id and last_id != keep_message_id and last_id not in tracked:
         tracked.append(last_id)
 
-    # 3. Add extra IDs (e.g. current user message)
+    # 3. Add extra IDs (e.g. current user command message)
     if extra_ids:
         for eid in extra_ids:
             if eid and eid != keep_message_id:
                 tracked.append(eid)
 
-    # 4. Add a range around known IDs to catch any untracked text/media messages
-    all_to_del = set(tracked)
-    ref_id = keep_message_id or last_id
-    if ref_id:
-        for mid in range(max(1, ref_id - nearby_range), ref_id + nearby_range + 1):
-            if mid != keep_message_id:
-                all_to_del.add(mid)
+    all_to_del = {mid for mid in tracked if mid and mid != keep_message_id}
 
-    # 5. Reset or update last_message_id in DB
+    # 4. Reset or update last_message_id in DB
     if keep_message_id:
         db.set_last_message_id(chat_id, keep_message_id)
         db.track_chat_message(chat_id, keep_message_id)
@@ -99,7 +89,7 @@ async def clean_entire_chat(
         conn.commit()
         conn.close()
 
-    # 6. Delete all messages
+    # 5. Fast batch delete verified message IDs
     if all_to_del:
         await delete_messages_bulk(context, chat_id, list(all_to_del))
 
