@@ -6,6 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
+from config import is_admin
 from utils import safe_edit, strip_html_tags
 
 logger = logging.getLogger(__name__)
@@ -76,9 +77,12 @@ async def start_quiz_session(
         )
         question_ids = [w["question_id"] for w in weak_list_quiz]
         if not question_ids:
+            all_weak = db.get_weak_questions_by_quiz(quiz_id, user_id=user_id)
+            question_ids = [w["question_id"] for w in all_weak]
+        if not question_ids:
             await safe_edit_html(
                 query,
-                "✅ لا توجد أسئلة ضعيفة مستحقة لهذا الكويز اليوم في حسابك!",
+                "✅ لا توجد أسئلة ضعيفة مسجلة لهذا الكويز في حسابك!",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]),
                 context=context
             )
@@ -537,15 +541,34 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         f"{html.escape(sr_text)}"
     )
 
-    keyboard = [[InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]]
-    if wrong_ids:
-        keyboard.insert(0, [
-            InlineKeyboardButton("❌ راجع الأسئلة الخاطئة", callback_data=f"start_weak_{quiz_id}")
+    keyboard = []
+    if wrong_ids and quiz_id != 0:
+        keyboard.append([
+            InlineKeyboardButton(f"❌ راجع الأسئلة الخاطئة ({len(wrong_ids)})", callback_data=f"start_weak_{quiz_id}")
         ])
-    if session_type != "weakall" and quiz_id != 0:
-        keyboard.insert(0, [
+
+    # If quiz is not in review schedule, allow adding it
+    if quiz_id and session_type not in ("weakall", "weak", "weakpractice"):
+        conn = db.get_connection()
+        has_rev = conn.execute("SELECT 1 FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id)).fetchone()
+        conn.close()
+        if not has_rev:
+            keyboard.append([
+                InlineKeyboardButton("🔁 أضف لجدول مراجعاتي", callback_data=f"add_to_schedule_{quiz_id}")
+            ])
+
+    if is_admin(user_id) and session_type != "weakall" and quiz_id != 0:
+        keyboard.append([
             InlineKeyboardButton("🛠 تعديل أسئلة الكويز", callback_data=f"fixstage_qlist_{quiz_id}_0")
         ])
+
+    if quiz_id != 0:
+        keyboard.append([
+            InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}"),
+            InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")])
 
     db.clear_session(user_id=user_id)
     chat_id = None

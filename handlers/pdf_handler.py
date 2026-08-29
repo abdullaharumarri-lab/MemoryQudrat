@@ -235,35 +235,23 @@ async def process_json_quiz_data(
         name_safe = html.escape(quiz.get('name', 'كويز')) if quiz else "كويز"
         wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة." if wrong_count else ""
         text = (
-            f"✅ <b>تم تحديث وإعادة رفع أسئلة الكويز بنجاح!</b>\n\n"
+            f"✅ <b>تم تحديث أسئلة الكويز بنجاح!</b>\n\n"
             f"📋 <b>{name_safe}</b>\n"
             f"📝 تم تحديث <b>{len(data['questions'])}</b> سؤال بنجاح مع الإجابات المصححة.{wrong_note}\n\n"
             f"🔁 <b>جدول التكرار المتباعد:</b> محفوظ ومستمر حسب جدولك السابق دون أي تغيير 🌟."
         )
-        last_view_cb = context.user_data.get("last_quiz_view_callback")
-        last_view_title = context.user_data.get("last_quiz_view_title")
-        
-        kb_rows = [
-            [InlineKeyboardButton("▶️ ابدأ الكويز المحدث", callback_data=f"start_practice_{quiz_update_id}")],
-        ]
-        if last_view_cb:
-            lbl = f"📂 العودة إلى {last_view_title} (نفس الموضع)" if last_view_title else "📂 العودة لقائمة الكويزات (نفس الصفحة)"
-            kb_rows.append([InlineKeyboardButton(lbl, callback_data=last_view_cb)])
-        
-        kb_rows.extend([
-            [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"bank_quiz_{quiz_update_id}")],
-            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ ابدأ الكويز المحدث", callback_data=f"start_quiz_{quiz_update_id}")],
+            [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_update_id}")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
-        keyboard = InlineKeyboardMarkup(kb_rows)
 
     # 2. Upgrade URL to JSON quiz
     elif quiz_upgrade_id:
         conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_upgrade_id,))
+        conn.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_upgrade_id,))
         for q in data["questions"]:
-            cursor.execute(
+            conn.execute(
                 """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
                    VALUES (?, ?, ?, ?, ?)""",
                 (
@@ -301,28 +289,18 @@ async def process_json_quiz_data(
             f"تمت إضافة {len(data['questions'])} سؤال تفاعلي للكويز.{wrong_note}\n\n"
             f"<i>سيستمر نظام التكرار المتباعد حسب جدولك السابق!</i>"
         )
-        last_view_cb = context.user_data.get("last_quiz_view_callback")
-        last_view_title = context.user_data.get("last_quiz_view_title")
-        
-        kb_rows = [
-            [InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_practice_{quiz_upgrade_id}")],
-        ]
-        if last_view_cb:
-            lbl = f"📂 العودة إلى {last_view_title} (نفس الموضع)" if last_view_title else "📂 العودة لقائمة الكويزات (نفس الصفحة)"
-            kb_rows.append([InlineKeyboardButton(lbl, callback_data=last_view_cb)])
-            
-        kb_rows.extend([
-            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_quiz_{quiz_upgrade_id}")],
+            [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_upgrade_id}")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
-        keyboard = InlineKeyboardMarkup(kb_rows)
     else:
-        is_pub = 0
+        is_pub = 1
         owner_id = u_id
         quiz_name = data.get("quiz_name") or data.get("name", "كويز جديد")
         quiz_id = db.save_quiz_without_review(quiz_name, data["questions"], owner_id=owner_id, is_public=is_pub)
         
-        # Schedule first review for this user in Spaced Repetition
+        # Schedule first review for admin in Spaced Repetition
         db.schedule_first_review(quiz_id, user_id=u_id, start_today=True)
         
         quiz = db.get_quiz(quiz_id)
@@ -348,27 +326,23 @@ async def process_json_quiz_data(
         if wrong_count:
             wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة تلقائياً."
         elif wrong_indices:
-            wrong_note = f"\n⚠️ وُجد حقل 'wrong' لكن الأرقام {list(wrong_indices)} لم تطابق أي سؤال. تأكد أن الأرقام بين 1 و{len(data['questions'])}."
+            wrong_note = f"\n⚠️ وُجد حقل 'wrong' لكن الأرقام {list(wrong_indices)} لم تطابق أي سؤال."
         else:
             wrong_note = ""
 
         text = (
-            f"✅ <b>تمت إضافة الكويز وجدولته بنجاح!</b>\n\n"
+            f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
             f"📋 <b>{name_safe}</b>\n"
             f"📝 {len(data['questions'])} سؤال{wrong_note}\n\n"
-            f"تمت جدولة هذا الكويز في نظام <b>التكرار المتباعد</b> لتصلك مراجعاته الدورية 🧠.\n"
-            f"هل ترغب بنقله إلى أحد مجلداتك؟"
+            f"الكويز متاح الآن في بنك الكويزات لجميع الطلاب 🌟."
         )
 
-        cats = db.get_categories(user_id=u_id, is_public=0)
-        kb = []
-        for c in cats:
-            kb.append([InlineKeyboardButton(f"📁 {c['name']}", callback_data=f"my_set_quiz_cat_{quiz_id}_{c['id']}")])
-        
-        kb.append([InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_practice_{quiz_id}")])
-        kb.append([InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")])
-        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
-
+        kb = [
+            [InlineKeyboardButton("📁 نقل إلى مجلد", callback_data=f"move_quiz_{quiz_id}")],
+            [InlineKeyboardButton("▶️ ابدأ حل الكويز", callback_data=f"start_quiz_{quiz_id}")],
+            [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        ]
         keyboard = InlineKeyboardMarkup(kb)
 
     await send_clean_message(context, chat_id, text, update=update, reply_markup=keyboard)
@@ -379,6 +353,17 @@ async def process_json_quiz_data(
 async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_obj = update.effective_message
     if not msg_obj or not msg_obj.document: return
+
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        await send_clean_message(
+            context=context,
+            chat_id=update.effective_chat.id,
+            update=update,
+            text="❌ رفع الكويزات متاح للمشرف فقط.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+        )
+        return
 
     doc = msg_obj.document
 

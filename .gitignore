@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .env
 memory_qudrat.db
+*.db*
 *.pdf
 *.json
 !template.json

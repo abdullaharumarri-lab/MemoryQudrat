@@ -85,14 +85,14 @@ async def start_command(update: Update, context):
 
     user_name = user.first_name if user and user.first_name else "صديقنا"
     text = (
-        f"👋 أهلاً بك يا <b>{html.escape(user_name)}</b> في بوت <b>ذاكرة القدرات</b>! 🌟\n\n"
-        f"منصتك الذكية للتدريب على اختبار <b>القدرات (كمي ولفظي)</b> باستخدام تقنية <b>التكرار المتباعد</b> لترسيخ الأفكار والقوانين في الذاكرة طويلة المدى.\n\n"
-        f"✨ <b>كيف تبدأ؟</b>\n"
-        f"1️⃣ اضغط <b>«📚 بنك الكويزات (العام)»</b> لاختيار نموذج والبدء بالتدريب.\n"
-        f"2️⃣ اضغط <b>«🔁 إضافة لجدول مراجعاتي»</b> ليتولى البوت تذكيرك بالموعد المناسب لتثبيت حفظك.\n"
-        f"3️⃣ أخطاؤك تُحفظ تلقائياً في <b>«❌ الأسئلة الضعيفة»</b> لتكرارها حتى تتقنها.\n"
-        f"4️⃣ يمكنك تخصيص وقت تذكيرك اليومي من <b>«⚙️ الإعدادات»</b>.\n\n"
-        f"📢 <b>قناة الشروحات والتحديثات:</b> <a href=\"https://t.me/MemoryQudrat\">@MemoryQudrat</a>\n\n"
+        f"👋 أهلاً بك يا <b>{html.escape(user_name)}</b> في بوت <b>ذاكرة القدرات</b>! 🧠\n\n"
+        f"📚 هنا ستجد كويزات القدرات مرتبة ومنظمة لتساعدك على المذاكرة الفعّالة.\n\n"
+        f"✨ <b>كيف يعمل البوت؟</b>\n"
+        f"• 📝 اختر كويزاً من <b>«📚 الكويزات»</b> وابدأ الحل فوراً\n"
+        f"• ❌ أخطاؤك تُحفظ تلقائياً في <b>«❓ الأسئلة الضعيفة»</b> لإتقانها\n"
+        f"• 🔁 اضغط <b>«أضف لمراجعاتي»</b> ليتولى البوت تذكيرك بالمواعيد الذكية\n"
+        f"• 🔔 راجع مهامك اليومية من <b>«🔔 مراجعات اليوم»</b>\n\n"
+        f"📢 <b>القناة الرسمية:</b> <a href=\"https://t.me/MemoryQudrat\">@MemoryQudrat</a>\n\n"
         f"اختر ما تريد من القائمة بالأسفل:"
     )
     from handlers.main_menu import main_menu_keyboard
@@ -152,16 +152,18 @@ async def post_init(application):
         public_commands = [
             BotCommand("start", "🏠 القائمة الرئيسية"),
             BotCommand("menu", "📋 فتح القائمة الرئيسية"),
-            BotCommand("today", "🔁 مراجعات اليوم المستحقة"),
-            BotCommand("weak", "❌ الأسئلة الضعيفة"),
-            BotCommand("schedule", "📅 جدول مراجعاتي"),
-            BotCommand("find", "🔍 البحث وإدارة الكويزات"),
+            BotCommand("today", "🔔 مراجعات اليوم"),
+            BotCommand("schedule", "📅 جدول المراجعة"),
+            BotCommand("weak", "❓ الأسئلة الضعيفة"),
             BotCommand("stats", "📊 إحصائياتي وتقدمي"),
+            BotCommand("find", "🔍 البحث عن كويز"),
             BotCommand("help", "💡 شرح نظام التكرار المتباعد"),
         ]
 
         admin_commands = public_commands + [
             BotCommand("admin", "👑 لوحة تحكم المشرف"),
+            BotCommand("fixstage", "🛠 ضبط مراحل الكويزات"),
+            BotCommand("broadcast", "📢 إرسال إذاعة جماعية"),
         ]
 
         # 1. Default commands for all regular users (WITHOUT /admin)

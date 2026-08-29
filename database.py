@@ -316,6 +316,38 @@ def init_db():
     logger.info("Database initialized with multi-user support.")
 
 
+def reset_non_admin_data(admin_id: int = 6099429826):
+    """
+    Wipes all user data except the admin's.
+    Keeps: categories, quizzes, questions, users, admin's quiz_reviews & weak_questions.
+    Clears: non-admin quiz_reviews, non-admin weak_questions, all sessions, logs, mastery, bot_state.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Keep admin reviews, delete everyone else's
+    cursor.execute("DELETE FROM quiz_reviews WHERE user_id != ?", (admin_id,))
+
+    # Keep admin weak questions, delete everyone else's
+    cursor.execute("DELETE FROM weak_questions WHERE user_id != ?", (admin_id,))
+
+    # Wipe all active sessions
+    cursor.execute("DELETE FROM active_session")
+
+    # Wipe session log
+    cursor.execute("DELETE FROM quiz_sessions_log WHERE user_id != ?", (admin_id,))
+
+    # Wipe mastery for non-admins
+    cursor.execute("DELETE FROM quiz_weak_mastery WHERE user_id != ?", (admin_id,))
+
+    # Wipe bot_state (message tracking)
+    cursor.execute("DELETE FROM bot_state")
+
+    conn.commit()
+    conn.close()
+    logger.info("Non-admin user data reset complete. Admin data preserved.")
+
+
 
 # ─── Users ────────────────────────────────────────────────────────────────────
 
@@ -557,12 +589,14 @@ def get_quizzes_by_category(category_id: int = None, user_id: int = None, is_pub
     return rows
 
 
-def get_category_quizzes_count(category_id: int, user_id: int = None) -> int:
+def get_category_quizzes_count(category_id: int, user_id: int = None, is_public: int = 1) -> int:
     conn = get_connection()
     cursor = conn.cursor()
     from config import is_admin
     valid_filter = "((url IS NOT NULL AND url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = quizzes.id))"
-    if user_id is not None and is_admin(user_id):
+    if is_public == 1:
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND is_public = 1 AND {valid_filter}", (category_id,))
+    elif user_id is not None and is_admin(user_id):
         cursor.execute(f"SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND (owner_id = ? OR owner_id IS NULL) AND {valid_filter}", (category_id, user_id))
     elif user_id is not None:
         cursor.execute(f"SELECT COUNT(*) as cnt FROM quizzes WHERE category_id = ? AND owner_id = ? AND is_public = 0 AND {valid_filter}", (category_id, user_id))
@@ -583,13 +617,13 @@ def move_quiz_to_category(quiz_id: int, new_category_id: int):
 
 # ─── Quizzes ──────────────────────────────────────────────────────────────────
 
-def save_quiz_without_review(name: str, questions: list, category_id: int = None, owner_id: int = None, is_public: int = 1) -> int:
+def save_quiz_without_review(name: str, questions: list, category_id: int = None, owner_id: int = None, is_public: int = 1, url: str = None) -> int:
     """Save quiz and questions only — no review scheduled yet."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO quizzes (name, category_id, owner_id, is_public) VALUES (?, ?, ?, ?)",
-        (name, category_id, owner_id, is_public),
+        "INSERT INTO quizzes (name, url, category_id, owner_id, is_public) VALUES (?, ?, ?, ?, ?)",
+        (name, url, category_id, owner_id, is_public),
     )
     quiz_id = cursor.lastrowid
     for q in questions:
@@ -604,6 +638,10 @@ def save_quiz_without_review(name: str, questions: list, category_id: int = None
                 q.get("explanation", ""),
             ),
         )
+    conn.commit()
+    conn.close()
+    return quiz_id
+
     conn.commit()
     conn.close()
     return quiz_id
@@ -650,6 +688,40 @@ def update_quiz_name(quiz_id: int, new_name: str) -> bool:
     conn.commit()
     conn.close()
     return True
+
+
+def rename_quiz(quiz_id: int, new_name: str):
+    """Alias for update_quiz_name used by the new main_menu."""
+    update_quiz_name(quiz_id, new_name)
+
+
+def rename_category(cat_id: int, new_name: str):
+    """Rename a category by id."""
+    conn = get_connection()
+    conn.execute("UPDATE categories SET name = ? WHERE id = ?", (new_name.strip(), cat_id))
+    conn.commit()
+    conn.close()
+
+
+def set_quiz_category(quiz_id: int, category_id):
+    """Move a quiz to a different category (None = root)."""
+    conn = get_connection()
+    conn.execute("UPDATE quizzes SET category_id = ? WHERE id = ?", (category_id, quiz_id))
+    conn.commit()
+    conn.close()
+
+
+def get_all_public_quizzes() -> list:
+    """Returns all public quizzes with valid content, ordered by name."""
+    from utils import quiz_sort_key_desc
+    conn = get_connection()
+    valid_filter = "((url IS NOT NULL AND url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = quizzes.id))"
+    rows = [dict(r) for r in conn.execute(
+        f"SELECT * FROM quizzes WHERE is_public = 1 AND {valid_filter} ORDER BY id DESC"
+    ).fetchall()]
+    conn.close()
+    rows.sort(key=quiz_sort_key_desc, reverse=True)
+    return rows
 
 
 def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
