@@ -214,8 +214,10 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📅 موعد المراجعة الجديد: <b>{parsed_date}</b> ({day_label})\n\n"
                 f"<i>تم حفظ الموعد في جدول التكرار المتباعد 🧠.</i>"
             )
+            last_fpage = context.user_data.get("last_fixstage_page", 1)
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚙️ إعدادات الكويز", callback_data=f"fixstage_menu_{quiz_id}")],
+                [InlineKeyboardButton(f"📂 العودة إلى صفحة {last_fpage} (تعديل المراحل)", callback_data=f"fixstage_page_{last_fpage}")],
                 [InlineKeyboardButton("📅 جدول المراجعات", callback_data="review_schedule")],
                 [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
             ])
@@ -971,6 +973,7 @@ async def fixstage_command(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     total_items = len(reviews)
     total_pages = max(1, (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
     page = max(1, min(page, total_pages))
+    context.user_data["last_fixstage_page"] = page
 
     start_idx = (page - 1) * ITEMS_PER_PAGE
     end_idx = start_idx + ITEMS_PER_PAGE
@@ -2241,6 +2244,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             text += f"ℹ️ بعد إتمامها ستكون التالية: <b>{after_complete}</b>\n"
         text += f"\nاختر متى تريد مراجعتها:"
 
+        last_fpage = context.user_data.get("last_fixstage_page", 1)
         kb = [
             [InlineKeyboardButton("➖ المرحلة السابقة", callback_data=f"fixstage_set_{quiz_id}_{stage-1}"),
              InlineKeyboardButton("➕ المرحلة التالية", callback_data=f"fixstage_set_{quiz_id}_{stage+1}")],
@@ -2253,7 +2257,7 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("📅 تحديد تاريخ مخصص", callback_data=f"fixdate_custom_{quiz_id}")],
             [InlineKeyboardButton("✅ تم الحل (إكمال المراجعة)", callback_data=f"fixstage_done_{review['id']}_{quiz_id}")],
             [InlineKeyboardButton("🛠 تعديل أسئلة الكويز", callback_data=f"fixstage_qlist_{quiz_id}_0")],
-            [InlineKeyboardButton("🔙 رجوع", callback_data="fixstage_page_1")]
+            [InlineKeyboardButton(f"🔙 رجوع إلى صفحة {last_fpage} (تعديل المراحل)", callback_data=f"fixstage_page_{last_fpage}")]
         ]
         await safe_edit(query, text, InlineKeyboardMarkup(kb))
 
@@ -2445,11 +2449,16 @@ async def _handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYP
         quiz = db.get_quiz(quiz_id)
         q_name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
 
+        last_fpage = context.user_data.get("last_fixstage_page", 1)
         await safe_edit(
             query,
             f"✅ تم التعديل!\n\n"
             f"📚 <b>{q_name}</b>\n"
             f"📅 ستظهر للمراجعة: <b>{new_date}</b> ({day_label})\n\n"
             f"<i>المرحلة لم تتغير، فقط التاريخ تغير.</i>",
-            InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="fixstage_page_1")]])
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ إعدادات الكويز", callback_data=f"fixstage_menu_{quiz_id}")],
+                [InlineKeyboardButton(f"📂 العودة إلى صفحة {last_fpage} (تعديل المراحل)", callback_data=f"fixstage_page_{last_fpage}")],
+                [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
+            ])
         )
