@@ -58,13 +58,14 @@ function extractGoogleFormsQuiz() {
             const questions = [];
             const wrongIndices = [];
 
-            // Helper to strip only option prefixes (e.g. "أ) ", "(1) ") safely
+            // Helper to strip only option prefixes safely without mangling numbers
             function stripOptionPrefix(text) {
                 if (!text) return '';
                 let t = String(text).trim();
                 t = t.replace(/^[(\uff08]?[أ-دa-dA-D\u0623\u0628\u062c\u062f][)\uff09.:\-\/\s]+\s*/, '');
-                t = t.replace(/^[(\uff08][\d\u0660-\u0669]+[)\uff09]\s*/, '');
-                t = t.replace(/^[1-4\u0661-\u0664][)\uff09]\s*/, '');
+                if (/^[(\uff08][1-4\u0661-\u0664][)\uff09]\s+/.test(t) || /^[1-4\u0661-\u0664][)\uff09\.\-]\s+/.test(t)) {
+                    t = t.replace(/^[(\uff08]?[1-4\u0661-\u0664][)\uff09\.\-]+\s*/, '');
+                }
                 return t.trim();
             }
 
@@ -147,10 +148,12 @@ function extractGoogleFormsQuiz() {
                                    document.querySelectorAll('.Qr7Oae, [role="listitem"]')[qNum - 1];
 
                     if (cardEl) {
-                        const cardText = cardEl.innerText || '';
+                        const cardClone = cardEl.cloneNode(true);
+                        cardClone.querySelectorAll('.M2vV3e, .RDPZE, .freebirdFormviewerViewItemsItemGradingPoints, [aria-describedby*="points"]').forEach(e => e.remove());
+                        const cardText = cardClone.innerText || '';
 
                         // Score & Wrong detection
-                        if (/\b0\s*\/\s*[1-9]/.test(cardText) || /\b٠\s*\/\s*[١-٩]/.test(cardText)) {
+                        if (/\b0\s*\/\s*[1-9]/.test(cardEl.innerText || '') || /\b٠\s*\/\s*[١-٩]/.test(cardEl.innerText || '')) {
                             isWrong = true;
                         }
 
@@ -162,7 +165,7 @@ function extractGoogleFormsQuiz() {
                         for (const pat of caPatterns) {
                             const m = cardText.match(pat);
                             if (m) {
-                                correctAnswer = m[1].trim().replace(/\s*\(\s*\d+[^)]*\)\s*$/, '').trim();
+                                correctAnswer = m[1].trim();
                                 isWrong = true;
                                 break;
                             }
@@ -244,8 +247,9 @@ function extractGoogleFormsQuiz() {
             if (!text) return '';
             let t = text.trim();
             t = t.replace(/^[(\uff08]?[أ-دa-dA-D\u0623\u0628\u062c\u062f][)\uff09.:\-\/\s]+\s*/, '');
-            t = t.replace(/^[(\uff08][\d\u0660-\u0669]+[)\uff09]\s*/, '');
-            t = t.replace(/^[1-4\u0661-\u0664][)\uff09]\s*/, '');
+            if (/^[(\uff08][1-4\u0661-\u0664][)\uff09]\s+/.test(t) || /^[1-4\u0661-\u0664][)\uff09\.\-]\s+/.test(t)) {
+                t = t.replace(/^[(\uff08]?[1-4\u0661-\u0664][)\uff09\.\-]+\s*/, '');
+            }
             return t.trim();
         }
 

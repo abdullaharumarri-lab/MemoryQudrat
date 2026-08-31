@@ -169,10 +169,12 @@ def _build_quiz_detail(quiz_id, user_id, back_cb="browse_root"):
                                         callback_data=f"start_weak_{quiz_id}")])
 
     if is_admin(user_id):
-        kb.append([InlineKeyboardButton("🔄 تحديث (JSON)", callback_data=f"reupload_json_{quiz_id}"),
-                   InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"rename_quiz_{quiz_id}")])
-        kb.append([InlineKeyboardButton("⚙️ ضبط المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
-                   InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_quiz_{quiz_id}")])
+        kb.append([InlineKeyboardButton("📊 تحديث (Excel)", callback_data=f"reupload_excel_{quiz_id}"),
+                   InlineKeyboardButton("🔄 تحديث (JSON)", callback_data=f"reupload_json_{quiz_id}")])
+        kb.append([InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"rename_quiz_{quiz_id}"),
+                   InlineKeyboardButton("⚙️ ضبط المراجعة", callback_data=f"fixstage_menu_{quiz_id}")])
+        kb.append([InlineKeyboardButton("🛠 تعديل وتدقيق الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")])
+        kb.append([InlineKeyboardButton("🗑️ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")])
 
     kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=back_cb)])
     return text, InlineKeyboardMarkup(kb)
@@ -325,10 +327,12 @@ def _build_settings(user_id):
 # ═══════════════════════════════════════════════════════════════
 
 def _build_create_menu():
-    text = "➕ <b>إنشاء / رفع كويز</b>\n\nاختر طريقة الإضافة:"
+    text = "➕ <b>إنشاء / رفع كويز</b>\n\nاختر طريقة الإضافة المناسبة:"
     kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 رفع ملف Excel / CSV", callback_data="upload_excel")],
+        [InlineKeyboardButton("📥 تحميل قالب Excel", callback_data="download_excel_template")],
         [InlineKeyboardButton("📋 رفع ملف JSON", callback_data="upload_json")],
-        [InlineKeyboardButton("🔗 إضافة رابط", callback_data="upload_url")],
+        [InlineKeyboardButton("🔗 إضافة كويز كرابط", callback_data="upload_url")],
         [InlineKeyboardButton("📁 إدارة المجلدات", callback_data="admin_cat_0")],
         [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
     ])
@@ -603,6 +607,24 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"fixstage_menu_{quiz_id}")]]))
         return
 
+    if is_adm and context.user_data.get("waiting_for_qtext_edit"):
+        info = context.user_data.pop("waiting_for_qtext_edit")
+        q_id = info["q_id"]
+        quiz_id = info["quiz_id"]
+        db.update_question_text(q_id, msg)
+        await send_clean_message(context, chat_id, "✅ تم تحديث نص السؤال بنجاح!",
+                                 update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عرض وتدقيق السؤال", callback_data=f"fixstage_qedit_{quiz_id}_{q_id}")]]))
+        return
+
+    if is_adm and context.user_data.get("waiting_for_qexp_edit"):
+        info = context.user_data.pop("waiting_for_qexp_edit")
+        q_id = info["q_id"]
+        quiz_id = info["quiz_id"]
+        db.update_question_explanation(q_id, msg)
+        await send_clean_message(context, chat_id, "✅ تم تحديث الشرح بنجاح!",
+                                 update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عرض وتدقيق السؤال", callback_data=f"fixstage_qedit_{quiz_id}_{q_id}")]]))
+        return
+
     from handlers.admin_handler import handle_broadcast_input
     await handle_broadcast_input(update, context)
 
@@ -741,6 +763,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         text, kb = _build_create_menu()
         await safe_edit(query, text, kb)
+        return
+
+    if data == "upload_excel":
+        if not is_adm:
+            await query.answer("❌", show_alert=True)
+            return
+        await safe_edit(query,
+                        "📊 <b>رفع كويز عبر ملف Excel</b>\n\nأرسل الآن ملف <code>.xlsx</code> أو <code>.csv</code> مباشرة في المحادثة:",
+                        InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📥 تحميل قالب Excel", callback_data="download_excel_template")],
+                            [InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]
+                        ]))
+        return
+
+    if data.startswith("reupload_excel_"):
+        if not is_adm:
+            await query.answer("❌", show_alert=True)
+            return
+        quiz_id = int(data.split("_")[-1])
+        quiz = db.get_quiz(quiz_id)
+        name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
+        context.user_data["waiting_for_json_update"] = quiz_id
+        await safe_edit(query, f"📊 <b>تحديث كويز: {name}</b>\n\nأرسل الآن ملف <code>.xlsx</code> أو <code>.csv</code> الجديد ليتم تحديث الأسئلة فوراً مع الحفاظ على جدول التكرار المتباعد 🌟:",
+                        InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📥 تحميل قالب Excel", callback_data="download_excel_template")],
+                            [InlineKeyboardButton("❌ إلغاء", callback_data=f"quiz_detail_{quiz_id}")]
+                        ]))
+        return
+
+    if data == "download_excel_template":
+        from handlers.pdf_handler import template_command
+        await template_command(update, context)
         return
 
     if data == "upload_json":
@@ -1015,6 +1069,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(query, f"🛠 <b>أسئلة: {q_name}</b> (صفحة {pg+1}/{total_p})", InlineKeyboardMarkup(kb_rows))
         return
 
+    if data.startswith("fixstage_set_ans_"):
+        if not is_adm:
+            await query.answer("❌", show_alert=True)
+            return
+        parts = data.split("_")
+        quiz_id = int(parts[3])
+        q_id = int(parts[4])
+        opt_idx = int(parts[5])
+        q = db.get_question(q_id)
+        if q and q.get("options") and 0 <= opt_idx < len(q["options"]):
+            new_ans = q["options"][opt_idx]
+            db.update_question_correct_answer(q_id, new_ans)
+            await query.answer(f"✅ تم تعيين الإجابة: {new_ans}", show_alert=False)
+            data = f"fixstage_qedit_{quiz_id}_{q_id}"
+        else:
+            await query.answer("❌ تعذر تعيين الإجابة.", show_alert=True)
+            return
+
+    if data.startswith("qedit_text_"):
+        if not is_adm:
+            await query.answer("❌", show_alert=True)
+            return
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        q_id = int(parts[3])
+        context.user_data["waiting_for_qtext_edit"] = {"quiz_id": quiz_id, "q_id": q_id}
+        await safe_edit(query, "✏️ أرسل الآن <b>النص الجديد للسؤال</b> في رسالة نصية:",
+                        InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"fixstage_qedit_{quiz_id}_{q_id}")]]))
+        return
+
+    if data.startswith("qedit_exp_"):
+        if not is_adm:
+            await query.answer("❌", show_alert=True)
+            return
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        q_id = int(parts[3])
+        context.user_data["waiting_for_qexp_edit"] = {"quiz_id": quiz_id, "q_id": q_id}
+        await safe_edit(query, "💡 أرسل الآن <b>الشرح والتوضيح الجديد</b> في رسالة نصية:",
+                        InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"fixstage_qedit_{quiz_id}_{q_id}")]]))
+        return
+
     if data.startswith("fixstage_qedit_"):
         if not is_adm:
             await query.answer("❌", show_alert=True)
@@ -1026,13 +1122,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not q:
             await safe_edit(query, "❌ السؤال غير موجود.", InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=f"fixstage_qlist_{quiz_id}_0")]]))
             return
+
         options = q.get("options") or []
+        cur_ans = (q.get("correct_answer") or "").strip()
+
         opts_text = "\n".join(f"• {opt}" for opt in options)
-        text = (f"✏️ <b>تفاصيل السؤال</b>\n\n❓ {html.escape(q['question_text'])}\n\n"
-                f"الخيارات:\n{html.escape(opts_text)}\n\n"
-                f"✅ الإجابة: <b>{html.escape(q['correct_answer'])}</b>\n"
-                f"💡 الشرح: {html.escape(q.get('explanation', '') or '—')}")
-        await safe_edit(query, text, InlineKeyboardMarkup([[InlineKeyboardButton("🔙 قائمة الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")]]))
+        text = (f"✏️ <b>تدقيق وتعديل السؤال</b>\n\n"
+                f"❓ <b>نص السؤال:</b>\n{html.escape(q['question_text'])}\n\n"
+                f"📋 <b>الخيارات المتاحة:</b>\n{html.escape(opts_text)}\n\n"
+                f"✅ <b>الإجابة الصحيحة الحالية:</b> <code>{html.escape(cur_ans)}</code>\n"
+                f"💡 <b>الشرح:</b> {html.escape(q.get('explanation', '') or '—')}\n\n"
+                f"👇 <i>اضغط على أي خيار بالأسفل لتعيينه كإجابة صحيحة فوراً بنقرة واحدة:</i>")
+
+        kb_rows = []
+        ans_btns = []
+        labels = ["(أ)", "(ب)", "(ج)", "(د)", "(هـ)", "(و)"]
+        for idx, opt in enumerate(options):
+            lbl = labels[idx] if idx < len(labels) else f"({idx+1})"
+            is_correct = (opt.strip() == cur_ans)
+            clean_btn = opt[:12] + ("..." if len(opt) > 12 else "")
+            btn_text = f"✅ {lbl} {clean_btn}" if is_correct else f"{lbl} {clean_btn}"
+            ans_btns.append(InlineKeyboardButton(btn_text, callback_data=f"fixstage_set_ans_{quiz_id}_{q_id}_{idx}"))
+
+        for i in range(0, len(ans_btns), 2):
+            kb_rows.append(ans_btns[i:i+2])
+
+        kb_rows.append([
+            InlineKeyboardButton("✏️ تعديل نص السؤال", callback_data=f"qedit_text_{quiz_id}_{q_id}"),
+            InlineKeyboardButton("💡 تعديل الشرح", callback_data=f"qedit_exp_{quiz_id}_{q_id}")
+        ])
+        kb_rows.append([InlineKeyboardButton("🔙 قائمة الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")])
+        await safe_edit(query, text, InlineKeyboardMarkup(kb_rows))
         return
 
     logger.warning("Unhandled callback: %s from user %s", data, user_id)

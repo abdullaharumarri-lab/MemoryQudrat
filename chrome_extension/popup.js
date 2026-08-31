@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initExtractor();
 
   // Attach Event Listeners
+  document.getElementById("download-excel-btn").addEventListener("click", downloadExcel);
   document.getElementById("download-btn").addEventListener("click", downloadJSON);
   document.getElementById("copy-btn").addEventListener("click", copyJSON);
   document.getElementById("retry-btn").addEventListener("click", initExtractor);
@@ -141,6 +142,58 @@ function downloadJSON() {
 
   if (!cleanName.endsWith(".json")) {
     cleanName += ".json";
+  }
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = cleanName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadExcel() {
+  if (!extractedData || !extractedData.questions) return;
+
+  const headers = ["السؤال", "الخيار (أ)", "الخيار (ب)", "الخيار (ج)", "الخيار (د)", "الإجابة الصحيحة", "الشرح", "خطأ (1/0)"];
+  const rows = [headers];
+
+  const wrongSet = new Set(extractedData.wrong || []);
+
+  extractedData.questions.forEach((q, idx) => {
+    const qNum = idx + 1;
+    const isWrong = wrongSet.has(qNum) ? "1" : "0";
+    const opts = q.options || [];
+    const optA = opts[0] || "";
+    const optB = opts[1] || "";
+    const optC = opts[2] || "";
+    const optD = opts[3] || "";
+    const ans = q.answer || "";
+    const exp = q.explanation || "";
+
+    rows.push([q.question, optA, optB, optC, optD, ans, exp, isWrong]);
+  });
+
+  const csvContent = rows.map(r => 
+    r.map(cell => {
+      let str = String(cell || "").replace(/"/g, '""');
+      if (str.includes(",") || str.includes("\n") || str.includes('"')) {
+        return `"${str}"`;
+      }
+      return str;
+    }).join(",")
+  ).join("\r\n");
+
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+
+  let cleanName = (extractedData.quiz_name || "quiz")
+    .replace(/[\\\/\:\*\?\"\<\>\|]/g, "_")
+    .replace(/\s+/g, "_");
+
+  if (!cleanName.endsWith(".csv")) {
+    cleanName += ".csv";
   }
 
   const a = document.createElement("a");

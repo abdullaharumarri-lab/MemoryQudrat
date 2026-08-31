@@ -15,45 +15,72 @@ from config import MAX_JSON_FILE_SIZE_BYTES, MAX_QUESTIONS_PER_QUIZ, is_admin
 logger = logging.getLogger(__name__)
 
 
-# ─── Template Command ─────────────────────────────────────────────────────────
+import openpyxl
+import csv
+
+# ─── Template Command (Excel + JSON) ──────────────────────────────────────────
+
+def create_excel_template_file() -> str:
+    """Generates an elegant formatted .xlsx template with examples and instructions."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "كويز_قدرات"
+
+    # Set Right-to-Left view
+    ws.sheet_view.rightToLeft = True
+
+    headers = ["السؤال", "الخيار (أ)", "الخيار (ب)", "الخيار (ج)", "الخيار (د)", "الإجابة الصحيحة", "الشرح (اختياري)", "خطأ (1/0)"]
+    ws.append(headers)
+
+    examples = [
+        ["ما مرادف كلمة «شحيح»؟", "بخيل", "كريم", "شجاع", "غني", "بخيل", "الشح هو شدة البخل والحرص", "0"],
+        ["ما ضد كلمة «جسور»؟", "جبان", "قوي", "سريع", "حكيم", "أ", "الجسور هو المقدام وضده الجبان", "1"],
+        ["توفي الشاعر عام 1350 هـ وعمره 60 عاماً، في أي عام وُلد؟", "1290 هـ", "1300 هـ", "1310 هـ", "1320 هـ", "1290 هـ", "1350 - 60 = 1290 هـ", "0"],
+    ]
+    for ex in examples:
+        ws.append(ex)
+
+    # Style header column widths
+    ws.column_dimensions['A'].width = 40
+    ws.column_dimensions['B'].width = 20
+    ws.column_dimensions['C'].width = 20
+    ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 20
+    ws.column_dimensions['F'].width = 22
+    ws.column_dimensions['G'].width = 35
+    ws.column_dimensions['H'].width = 15
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    wb.save(tmp_path)
+    return tmp_path
+
 
 async def template_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    template = {
-        "quiz_name": "نموذج كويز",
-        "wrong": [2],
-        "questions": [
-            {
-                "question": "سؤال صحته صح 100%",
-                "options": ["صح", "خطأ", "ربما", "لا شيء"],
-                "answer": "صح",
-                "explanation": "هذا توضيح اختياري."
-            },
-            {
-                "question": "سؤال أخطأت فيه (رقمه 2 في 'wrong')",
-                "options": ["خطأ", "صح", "ربما", "لا شيء"],
-                "answer": "صح",
-                "explanation": ""
-            }
-        ]
-    }
+    """Sends both Excel (.xlsx) and JSON templates with instructions."""
+    xlsx_path = create_excel_template_file()
     txt = (
-        "📄 <b>نموذج JSON</b>\n\n"
-        "🔹 <b>quiz_name</b>: اسم الكويز\n"
-        "🔹 <b>wrong</b> (اختياري): أرقام الأسئلة التي أخطأت فيها (1، 2، 3...). البوت يضيفها تلقائياً لقائمة الضعيفة.\n"
-        "🔹 <b>questions</b>: قائمة الأسئلة (كل سؤال فيه question و options و answer)\n\n"
-        "ℹ️ عند رفع الكويز، بوتك يضيف الأسئلة الموجودة في wrong مباشرةً إلى الأسئلة الضعيفة بدون حاجة لحل الكويز من جديد."
+        "📊 <b>قالب رفع الكويزات (Excel)</b> 🌟\n\n"
+        "أسهل وأدق طريقة لرفع الكويزات:\n"
+        "1️⃣ افتح الملف المرفق في <b>Excel</b> أو <b>Google Sheets</b>.\n"
+        "2️⃣ عبّئ الأسئلة والخيارات والإجابة الصحيحة.\n"
+        "3️⃣ أعد إرسال الملف للبوت وسيتم حفظه وجدولته فوراً بدقة 100% 🎯!\n\n"
+        "💡 <i>ملاحظة: يمكنك كتابة الإجابة كنص أو كحرف (أ، ب، ج، د).</i>"
     )
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tmp:
-        json.dump(template, tmp, ensure_ascii=False, indent=2)
-        tmp_path = tmp.name
 
     try:
-        if update.message:
-            await update.message.reply_document(document=open(tmp_path, "rb"), filename="template.json", caption=txt, parse_mode="HTML")
-        elif update.effective_message:
-            await update.effective_message.reply_document(document=open(tmp_path, "rb"), filename="template.json", caption=txt, parse_mode="HTML")
+        msg = update.message or update.effective_message
+        if msg:
+            await msg.reply_document(
+                document=open(xlsx_path, "rb"),
+                filename="قالب_كويز_قدرات.xlsx",
+                caption=txt,
+                parse_mode="HTML"
+            )
     finally:
-        os.unlink(tmp_path)
+        if os.path.exists(xlsx_path):
+            os.unlink(xlsx_path)
 
 
 # ─── Input Validation Helpers ─────────────────────────────────────────────────
@@ -429,6 +456,225 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         err = f"❌ <b>حدث خطأ غير متوقع:</b> {str(e)}"
         await send_clean_message(context, update.effective_chat.id, err, update=update)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+# ─── Excel & CSV Quiz Parser ──────────────────────────────────────────────────
+
+def parse_excel_or_csv_quiz(file_path: str, filename: str = '') -> dict:
+    """
+    Parses an Excel (.xlsx/.xls) or CSV file into standard quiz dictionary:
+    {
+        "quiz_name": "...",
+        "wrong": [...],
+        "questions": [...]
+    }
+    """
+    ext = os.path.splitext(filename or file_path)[1].lower()
+    raw_rows = []
+    quiz_name = ''
+
+    if ext in ['.xlsx', '.xlsm', '.xltx', '.xltm', '.xls']:
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+        sheet = wb.active
+        if sheet.title and sheet.title not in ['Sheet', 'Sheet1', 'ورقة1', 'Sheet 1']:
+            quiz_name = sheet.title.strip()
+        for row in sheet.iter_rows(values_only=True):
+            if any(cell is not None and str(cell).strip() != '' for cell in row):
+                raw_rows.append([str(c).strip() if c is not None else '' for c in row])
+    else:
+        # CSV file (try multiple encodings)
+        encodings = ['utf-8-sig', 'utf-8', 'cp1256', 'latin-1']
+        for enc in encodings:
+            try:
+                with open(file_path, 'r', encoding=enc) as f:
+                    reader = csv.reader(f)
+                    for row in reader:
+                        if any(cell.strip() for cell in row):
+                            raw_rows.append([cell.strip() for cell in row])
+                if raw_rows:
+                    break
+            except Exception:
+                raw_rows = []
+
+    if not raw_rows:
+        raise ValueError("الملف فارغ أو لا يحتوي على صفوف بيانات صالحة.")
+
+    if not quiz_name:
+        base = os.path.basename(filename or file_path)
+        quiz_name = os.path.splitext(base)[0].replace('_', ' ').strip()
+    if not quiz_name or quiz_name.lower() in ['template', 'quiz', 'كويز', 'قالب']:
+        quiz_name = 'كويز جديد'
+
+    # Detect header row
+    header_idx = -1
+    col_map = {'q': -1, 'opts': [], 'ans': -1, 'exp': -1, 'wrong': -1}
+
+    for idx, row in enumerate(raw_rows[:5]):
+        row_str = ' '.join(c.lower() for c in row)
+        if any(w in row_str for w in ['سؤال', 'question', 'نص', 'خيار', 'إجابة', 'اجابة', 'answer', 'opt']):
+            header_idx = idx
+            break
+
+    if header_idx != -1:
+        header_row = [c.lower() for c in raw_rows[header_idx]]
+        data_rows = raw_rows[header_idx + 1:]
+
+        for c_idx, h_text in enumerate(header_row):
+            h_clean = h_text.replace(' ', '')
+            if any(k in h_clean for k in ['سؤال', 'question', 'q_text', 'text']):
+                if col_map['q'] == -1: col_map['q'] = c_idx
+            elif any(k in h_clean for k in ['إجابة', 'اجابة', 'الصح', 'answer', 'correct', 'ans']):
+                if col_map['ans'] == -1: col_map['ans'] = c_idx
+            elif any(k in h_clean for k in ['شرح', 'توضيح', 'ملاحظات', 'explanation', 'exp', 'feedback']):
+                if col_map['exp'] == -1: col_map['exp'] = c_idx
+            elif any(k in h_clean for k in ['خطأ', 'خاطئ', 'wrong', 'is_wrong']):
+                if col_map['wrong'] == -1: col_map['wrong'] = c_idx
+            elif any(k in h_clean for k in ['خيار', 'اختيار', 'option', 'choice', 'opt', 'أ', 'ب', 'ج', 'د', '(أ)', '(ب)', '(ج)', '(د)']):
+                col_map['opts'].append(c_idx)
+    else:
+        data_rows = raw_rows
+        col_map['q'] = 0
+        col_map['opts'] = [1, 2, 3, 4] if len(raw_rows[0]) >= 5 else list(range(1, len(raw_rows[0]) - 1))
+        col_map['ans'] = col_map['opts'][-1] + 1 if len(raw_rows[0]) > len(col_map['opts']) + 1 else -1
+        col_map['exp'] = col_map['ans'] + 1 if col_map['ans'] != -1 and len(raw_rows[0]) > col_map['ans'] + 1 else -1
+
+    if col_map['q'] == -1:
+        col_map['q'] = 0
+    if not col_map['opts']:
+        col_map['opts'] = [i for i in range(len(data_rows[0])) if i != col_map['q'] and i != col_map['ans'] and i != col_map['exp']]
+
+    questions = []
+    wrong_indices = []
+
+    for r_idx, row in enumerate(data_rows):
+        if not any(row):
+            continue
+        q_text = row[col_map['q']] if col_map['q'] < len(row) else ''
+        if not q_text.strip():
+            continue
+
+        opts = []
+        for o_idx in col_map['opts']:
+            if o_idx < len(row) and row[o_idx].strip():
+                val = row[o_idx].strip()
+                if val not in opts:
+                    opts.append(val)
+
+        if len(opts) < 2:
+            continue
+
+        ans_raw = row[col_map['ans']] if col_map['ans'] != -1 and col_map['ans'] < len(row) else ''
+        ans = ans_raw.strip()
+
+        # Map letter/number answers
+        if ans in ['أ', 'A', 'a', '1', '١', '(أ)'] and len(opts) >= 1:
+            ans = opts[0]
+        elif ans in ['ب', 'B', 'b', '2', '٢', '(ب)'] and len(opts) >= 2:
+            ans = opts[1]
+        elif ans in ['ج', 'C', 'c', '3', '٣', '(ج)'] and len(opts) >= 3:
+            ans = opts[2]
+        elif ans in ['د', 'D', 'd', '4', '٤', '(د)'] and len(opts) >= 4:
+            ans = opts[3]
+        elif ans not in opts:
+            match = next((o for o in opts if ans.lower() in o.lower() or o.lower() in ans.lower()), None)
+            if match:
+                ans = match
+            else:
+                ans = opts[0]
+
+        exp = row[col_map['exp']] if col_map['exp'] != -1 and col_map['exp'] < len(row) else ''
+
+        q_num = len(questions) + 1
+        if col_map['wrong'] != -1 and col_map['wrong'] < len(row):
+            w_val = row[col_map['wrong']].strip().lower()
+            if w_val in ['1', 'true', 'نعم', 'صح', 'خطأ', 'خاطئ', 'x']:
+                wrong_indices.append(q_num)
+
+        questions.append({
+            'question': q_text,
+            'options': opts,
+            'answer': ans,
+            'explanation': exp
+        })
+
+    if not questions:
+        raise ValueError("لم يتم العثور على أي أسئلة صالحة في ملف الإكسل.")
+
+    return {
+        'quiz_name': quiz_name,
+        'wrong': wrong_indices,
+        'questions': questions
+    }
+
+
+# ─── Excel / CSV Document Handler ─────────────────────────────────────────────
+
+async def excel_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg_obj = update.effective_message
+    if not msg_obj or not msg_obj.document:
+        return
+
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        await send_clean_message(
+            context=context,
+            chat_id=update.effective_chat.id,
+            update=update,
+            text="❌ رفع الكويزات متاح للمشرف فقط.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+        )
+        return
+
+    doc = msg_obj.document
+    chat_id = update.effective_chat.id
+    if update.message:
+        db.track_chat_message(chat_id, update.message.message_id)
+
+    msg_id = await send_clean_message(
+        context=context,
+        chat_id=chat_id,
+        update=update,
+        text="📊 <b>جاري قراءة وتدقيق ملف الإكسل...</b> ⏳"
+    )
+
+    tmp_path = None
+    try:
+        ext = os.path.splitext(doc.file_name or "quiz.xlsx")[1].lower()
+        if ext not in [".xlsx", ".xls", ".csv"]:
+            ext = ".xlsx"
+
+        file = await doc.get_file()
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp_path = tmp.name
+        await file.download_to_drive(tmp_path)
+
+        data = parse_excel_or_csv_quiz(tmp_path, filename=doc.file_name or "")
+
+        # Centralised validation
+        _validate_json_upload(doc, data)
+
+        quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
+        quiz_update_id = context.user_data.pop("waiting_for_json_update", None)
+
+        await process_json_quiz_data(
+            data=data,
+            user=user,
+            context=context,
+            chat_id=chat_id,
+            update=update,
+            quiz_upgrade_id=quiz_upgrade_id,
+            quiz_update_id=quiz_update_id
+        )
+
+    except ValueError as e:
+        err = f"❌ <b>خطأ في محتوى ملف الإكسل:</b>\n{str(e)}"
+        await send_clean_message(context, chat_id, err, update=update)
+    except Exception as e:
+        err = f"❌ <b>حدث خطأ غير متوقع أثناء معالجة الإكسل:</b>\n{str(e)}"
+        await send_clean_message(context, chat_id, err, update=update)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)

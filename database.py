@@ -923,6 +923,33 @@ def get_question(question_id: int) -> dict | None:
     return None
 
 
+def update_question_correct_answer(question_id: int, new_answer: str) -> bool:
+    """Updates the correct answer of a specific question."""
+    conn = get_connection()
+    conn.execute("UPDATE questions SET correct_answer = ? WHERE id = ?", (new_answer.strip(), question_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def update_question_text(question_id: int, new_text: str) -> bool:
+    """Updates the question text of a specific question."""
+    conn = get_connection()
+    conn.execute("UPDATE questions SET question_text = ? WHERE id = ?", (new_text.strip(), question_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def update_question_explanation(question_id: int, new_exp: str) -> bool:
+    """Updates the explanation of a specific question."""
+    conn = get_connection()
+    conn.execute("UPDATE questions SET explanation = ? WHERE id = ?", (new_exp.strip(), question_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
 # ─── Quiz Reviews ─────────────────────────────────────────────────────────────
 
 def schedule_first_review(quiz_id: int, user_id: int = 6099429826, start_today: bool = True):
