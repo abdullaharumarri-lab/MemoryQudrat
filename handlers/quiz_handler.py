@@ -212,28 +212,56 @@ async def send_next_question(update, context, session):
         chat_id = user_id
     context.user_data["chat_id"] = chat_id
 
+    passage_text = None
+    clean_q_prompt = q_text
+
+    if "📄" in q_text and "❓" in q_text:
+        parts = q_text.split("❓", 1)
+        passage_text = parts[0].replace("📄", "").strip()
+        clean_q_prompt = parts[1].strip()
+    elif "\n\n" in q_text and any(w in q_text for w in ["النص", "القطعة", "الجملة", "الفقرة"]):
+        lines = q_text.split("\n\n", 1)
+        if len(lines[0]) > 25:
+            passage_text = lines[0].strip()
+            clean_q_prompt = lines[1].strip()
+
     # Check Telegram Poll limits (Question max 300, Option max 100)
-    long_question = len(q_text) > 250
+    long_question = len(clean_q_prompt) > 250
     long_options = any(len(opt) > 90 for opt in options)
 
     poll_options = []
     letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"]
     msg_ids = session.get("session_message_ids", [])
-    
+
+    # If there is a reading passage, send it as a prominent separate message first
+    if passage_text:
+        passage_msg_text = (
+            f"📄 <b>[نص / قطعة القراءة]:</b>\n\n"
+            f"<blockquote>{html.escape(passage_text)}</blockquote>"
+        )
+        try:
+            p_msg = await context.bot.send_message(chat_id=chat_id, text=passage_msg_text, parse_mode="HTML")
+            msg_ids.append(p_msg.message_id)
+        except Exception as e:
+            logger.warning("Failed sending passage with HTML blockquote: %s", e)
+            clean_p = f"📄 [نص / قطعة القراءة]:\n\n{passage_text}"
+            p_msg = await context.bot.send_message(chat_id=chat_id, text=clean_p)
+            msg_ids.append(p_msg.message_id)
+
     if long_question or long_options:
         context_text = f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
-        context_text += f"<b>{html.escape(q_text)}</b>\n"
-        
+        context_text += f"<b>{html.escape(clean_q_prompt)}</b>\n"
+
         if long_options:
             for idx, opt in enumerate(options):
                 letter = letters[idx] if idx < len(letters) else str(idx+1)
                 context_text += f"\n<b>{letter})</b> {html.escape(opt)}"
                 poll_options.append(f"الخيار ({letter})")
-            poll_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة من الرسالة أعلاه):"
+            poll_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة من الخيارات أعلاه):"
         else:
             poll_question = f"السؤال {session['current_index'] + 1} (نص السؤال في الرسالة أعلاه):"
             poll_options = list(options)
-            
+
         if len(context_text) > 3800:
             context_text = context_text[:3750] + "\n\n...(تم اختصار النص لطوله)"
 
@@ -245,7 +273,7 @@ async def send_next_question(update, context, session):
             ctx_msg = await context.bot.send_message(chat_id=chat_id, text=clean_ctx)
         msg_ids.append(ctx_msg.message_id)
     else:
-        poll_question = q_text
+        poll_question = clean_q_prompt
         poll_options = list(options)
 
     # Limit options length and ensure strictly unique and non-empty options
