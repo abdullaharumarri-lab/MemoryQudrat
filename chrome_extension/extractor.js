@@ -104,12 +104,15 @@ function extractGoogleFormsQuiz() {
                     continue;
                 }
 
-                // Type 8: Section Break / Header
+                // Type 8: Section Break / Header — resets the active passage by default
                 if (itemType === 8) {
-                    // Check if section header has an explicit description text
+                    // If the section header itself has a description/passage text, capture it
                     const secDesc = (item[2] || "").trim();
-                    if (secDesc && secDesc.length > 5) {
+                    if (secDesc && secDesc.length > 25) {
                         currentActivePassage = secDesc;
+                    } else {
+                        // Any new section clears the active passage
+                        currentActivePassage = "";
                     }
                     continue;
                 }
@@ -265,7 +268,7 @@ function extractGoogleFormsQuiz() {
             if (!rg) {
                 const txt = clean(card);
                 const isMeta = /(?:اسم\s+الطالب|اسم\s+المشترك|البريد|email|رقم\s+الجوال|كلمة\s+المرور|password|اقسم|أقسم|أتعهد|اتعهد|تعهد)/i.test(txt);
-                if (!isMeta && txt.length > 5 && !/^\s*(?:\d+\s*\/\s*\d+|\d+\s*من\s+إجمالي\s+\d+\s*نقطة)\s*$/.test(txt)) {
+                if (!isMeta && txt.length > 20 && !/^\s*(?:\d+\s*\/\s*\d+|\d+\s*من\s+إجمالي\s+\d+\s*نقطة)\s*$/.test(txt)) {
                     currentPassageFallback = txt;
                 }
                 return;
