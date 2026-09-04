@@ -226,6 +226,73 @@ def _validate_json_upload(doc, data: dict) -> None:
         q["answer"] = ans
 
 
+def audit_quiz_quality(questions: list) -> dict:
+    """Performs comprehensive quality assurance and diagnostic audit on quiz questions."""
+    total_q = len(questions)
+    passages_count = 0
+    explanations_count = 0
+    option_count_dist = {}
+    duplicate_option_qs = []
+    missing_answer_qs = []
+    long_option_qs = []
+
+    for i, q in enumerate(questions, start=1):
+        q_text = str(q.get("question", "")).strip()
+        if "📄" in q_text or ("\n\n" in q_text and len(q_text.split("\n\n")[0]) > 25):
+            passages_count += 1
+
+        if q.get("explanation") and str(q.get("explanation")).strip():
+            explanations_count += 1
+
+        opts = q.get("options") or []
+        num_opts = len(opts)
+        option_count_dist[num_opts] = option_count_dist.get(num_opts, 0) + 1
+
+        clean_opts = [str(o).strip() for o in opts if str(o).strip()]
+        if len(set(clean_opts)) < len(clean_opts):
+            duplicate_option_qs.append(i)
+
+        if any(len(str(o).strip()) > 95 for o in opts):
+            long_option_qs.append(i)
+
+        ans = str(q.get("answer", "")).strip()
+        if not ans:
+            missing_answer_qs.append(i)
+
+    score = 100
+    notes = []
+    if duplicate_option_qs:
+        score -= min(20, len(duplicate_option_qs) * 5)
+        notes.append(f"⚠️ خيارات مكررة في الأسئلة: {duplicate_option_qs[:5]}")
+    if missing_answer_qs:
+        score -= min(30, len(missing_answer_qs) * 10)
+        notes.append(f"❌ إجابات مفقودة في الأسئلة: {missing_answer_qs[:5]}")
+    if any(count < 2 for count in option_count_dist.keys()):
+        score -= 20
+        notes.append("⚠️ بعض الأسئلة تحتوي على أقل من خيارين")
+    if total_q == 0:
+        score = 0
+
+    if score >= 95:
+        verdict = "ممتاز ومثالي للنشر 🌟"
+    elif score >= 80:
+        verdict = "جيد جداً وجاهز للحل ✅"
+    else:
+        verdict = "يحتاج مراجعة وتدقيق ⚠️"
+
+    return {
+        "total": total_q,
+        "passages": passages_count,
+        "explanations": explanations_count,
+        "option_counts": option_count_dist,
+        "duplicate_options": duplicate_option_qs,
+        "missing_answers": missing_answer_qs,
+        "score": max(0, score),
+        "verdict": verdict,
+        "notes": notes,
+    }
+
+
 async def process_json_quiz_data(
     data: dict,
     user,
@@ -261,15 +328,32 @@ async def process_json_quiz_data(
         quiz = db.get_quiz(quiz_update_id)
         name_safe = html.escape(quiz.get('name', 'كويز')) if quiz else "كويز"
         wrong_note = f"\n❌ تمت إضافة <b>{wrong_count}</b> سؤال للأسئلة الضعيفة." if wrong_count else ""
+        
+        audit = audit_quiz_quality(data["questions"])
+        audit_summary = f"🎯 <b>جودة التدقيق:</b> {audit['score']}% — {audit['verdict']}\n"
+        if audit["passages"] > 0:
+            audit_summary += f"📄 نصوص وقطع قراءة: <b>{audit['passages']}</b> قطعة مدمجة\n"
+        if audit["explanations"] > 0:
+            audit_summary += f"💡 شروحات وتوضيحات: <b>{audit['explanations']}</b> شرح متوفر\n"
+        if audit["notes"]:
+            audit_summary += "\n" + "\n".join(audit["notes"]) + "\n"
+
         text = (
-            f"✅ <b>تم تحديث أسئلة الكويز بنجاح!</b>\n\n"
+            f"✅ <b>تم تحديث وتدقيق أسئلة الكويز بنجاح!</b>\n\n"
             f"📋 <b>{name_safe}</b>\n"
-            f"📝 تم تحديث <b>{len(data['questions'])}</b> سؤال بنجاح مع الإجابات المصححة.{wrong_note}\n\n"
+            f"📝 تم تحديث <b>{len(data['questions'])}</b> سؤال بنجاح.{wrong_note}\n\n"
+            f"{audit_summary}\n"
             f"🔁 <b>جدول التكرار المتباعد:</b> محفوظ ومستمر حسب جدولك السابق دون أي تغيير 🌟."
         )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ ابدأ الكويز المحدث", callback_data=f"start_quiz_{quiz_update_id}")],
-            [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_update_id}")],
+            [
+                InlineKeyboardButton("👁️ معاينة الأسئلة", callback_data=f"preview_quiz_{quiz_update_id}_0"),
+                InlineKeyboardButton("🛠 تعديل الأسئلة", callback_data=f"fixstage_qlist_{quiz_update_id}_0")
+            ],
+            [
+                InlineKeyboardButton("▶️ ابدأ الكويز المحدث", callback_data=f"start_quiz_{quiz_update_id}"),
+                InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_update_id}")
+            ],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
 
@@ -317,7 +401,10 @@ async def process_json_quiz_data(
             f"<i>سيستمر نظام التكرار المتباعد حسب جدولك السابق!</i>"
         )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_quiz_{quiz_upgrade_id}")],
+            [
+                InlineKeyboardButton("👁️ معاينة الأسئلة", callback_data=f"preview_quiz_{quiz_upgrade_id}_0"),
+                InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_quiz_{quiz_upgrade_id}")
+            ],
             [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_upgrade_id}")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
@@ -357,18 +444,39 @@ async def process_json_quiz_data(
         else:
             wrong_note = ""
 
+        audit = audit_quiz_quality(data["questions"])
+        audit_lines = [
+            f"🎯 <b>جودة التدقيق:</b> {audit['score']}% — {audit['verdict']}",
+            f"📝 إجمالي الأسئلة: <b>{audit['total']}</b> سؤال",
+        ]
+        if audit["passages"] > 0:
+            audit_lines.append(f"📄 نصوص وقطع قراءة: <b>{audit['passages']}</b> قطعة مدمجة")
+        if audit["explanations"] > 0:
+            audit_lines.append(f"💡 شروحات وتوضيحات: <b>{audit['explanations']}</b> شرح متوفر")
+        if audit["notes"]:
+            audit_lines.append("\n" + "\n".join(audit["notes"]))
+
         text = (
-            f"✅ <b>تمت إضافة الكويز بنجاح!</b>\n\n"
-            f"📋 <b>{name_safe}</b>\n"
-            f"📝 {len(data['questions'])} سؤال{wrong_note}\n\n"
+            f"✅ <b>تم تدقيق وإضافة الكويز بنجاح!</b>\n\n"
+            f"📋 <b>{name_safe}</b>\n\n"
+            + "\n".join(audit_lines) +
+            f"{wrong_note}\n\n"
             f"الكويز متاح الآن في بنك الكويزات لجميع الطلاب 🌟."
         )
 
         kb = [
-            [InlineKeyboardButton("📁 نقل إلى مجلد", callback_data=f"move_quiz_{quiz_id}")],
-            [InlineKeyboardButton("▶️ ابدأ حل الكويز", callback_data=f"start_quiz_{quiz_id}")],
-            [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}")],
-            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+            [
+                InlineKeyboardButton("👁️ معاينة الأسئلة", callback_data=f"preview_quiz_{quiz_id}_0"),
+                InlineKeyboardButton("📁 نقل إلى مجلد", callback_data=f"move_quiz_{quiz_id}")
+            ],
+            [
+                InlineKeyboardButton("▶️ ابدأ حل الكويز", callback_data=f"start_quiz_{quiz_id}"),
+                InlineKeyboardButton("🛠 تعديل الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")
+            ],
+            [
+                InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}"),
+                InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")
+            ],
         ]
         keyboard = InlineKeyboardMarkup(kb)
 

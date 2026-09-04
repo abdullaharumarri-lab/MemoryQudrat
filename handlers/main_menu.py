@@ -33,6 +33,9 @@ def main_menu_keyboard(user_id: int = None) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("❓ الأسئلة الضعيفة", callback_data="weak_questions"),
+            InlineKeyboardButton("📊 إحصائياتي", callback_data="my_stats"),
+        ],
+        [
             InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings_menu"),
         ],
     ]
@@ -152,7 +155,10 @@ def _build_quiz_detail(quiz_id, user_id, back_cb="browse_root"):
 
     kb = []
     if q_count > 0:
-        kb.append([InlineKeyboardButton("▶️ ابدأ الكويز", callback_data=f"start_quiz_{quiz_id}")])
+        kb.append([
+            InlineKeyboardButton("▶️ ابدأ الكويز", callback_data=f"start_quiz_{quiz_id}"),
+            InlineKeyboardButton("👁️ معاينة الأسئلة", callback_data=f"preview_quiz_{quiz_id}_0"),
+        ])
 
     if user_review:
         if days_until(user_review.get("next_review_date")) <= 0:
@@ -298,6 +304,175 @@ def _build_weak_questions(user_id, page=1):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  إحصائيات الطالب (لوحة الأداء الشخصية)
+# ═══════════════════════════════════════════════════════════════
+
+def _build_my_stats(user_id: int):
+    stats = db.get_my_stats(user_id)
+    total_q = stats["total"]
+    correct_q = stats["correct"]
+    acc = stats["accuracy"]
+    sessions = stats["sessions"]
+    mastered = stats["mastered_count"]
+    active_rev = stats["active_reviews"]
+    due_rev = stats["due_reviews"]
+    total_weak = stats["total_weak"]
+    due_weak = stats["due_weak"]
+    weekly = stats.get("weekly", [])
+    stages = stats.get("stage_breakdown", {})
+
+    if total_q == 0:
+        badge = "🌱 بداية موفقة"
+        advice = "لم تبدأ حل الكويزات بعد! اختر كويزاً من بنك الكويزات وابدأ أولى خطواتك 🚀."
+    elif acc >= 90:
+        badge = "🏆 مستوى أسطوري"
+        advice = "أداؤك استثنائي وثابت! حافظ على المراجعات المجدولة لضمان ترسيخ الذاكرة 🌟."
+    elif acc >= 80:
+        badge = "🌟 أداء ممتاز"
+        advice = "دقتك عالية جداً! ركز على الأسئلة الضعيفة لتصل إلى 100% بإذن الله 💪."
+    elif acc >= 65:
+        badge = "👍 أداء جيد"
+        advice = "أنت في مسار تصاعدي سليم، واظب على حل الكويزات وسيرتفع مستواك بسرعة 🎯."
+    else:
+        badge = "💪 يحتاج تركيز ومثابرة"
+        advice = "التدريب المستمر هو سر النجاح، راجع أخطاءك في بنك الأسئلة الضعيفة أولاً بأول ✨."
+
+    text_parts = [
+        "📊 <b>لوحة إحصائياتك وأدائك الشخصي</b>\n",
+        f"🎖️ <b>المستوى الحالي:</b> {badge}",
+        f"🎯 <b>نسبة الصحة الإجمالية:</b> <b>{acc}%</b>",
+        f"📝 <b>الأسئلة المحلولة:</b> <b>{total_q}</b> سؤال (عبر <b>{sessions}</b> جلسة)",
+        f"✅ <b>الإجابات الصحيحة:</b> <b>{correct_q}</b> | ❌ <b>الخاطئة:</b> <b>{stats['wrong']}</b>",
+        f"🏆 <b>الكويزات المتقنة:</b> <b>{mastered}</b> كويز (علامة كاملة 5 مرات متتالية)\n",
+        "🧠 <b>التكرار المتباعد وجدولة الذاكرة:</b>",
+        f"• 🔁 كويزات قيد المراجعة: <b>{active_rev}</b> (🔴 مستحق اليوم: <b>{due_rev}</b>)",
+        f"• ❓ أسئلة ضعيفة تحت التدريب: <b>{total_weak}</b> (🔴 مستحق اليوم: <b>{due_weak}</b>)",
+    ]
+
+    if active_rev > 0:
+        stage_strs = []
+        labels = ["م1", "م2", "م3", "م4", "م5"]
+        for stg_idx in range(5):
+            c = stages.get(stg_idx, 0)
+            if c > 0:
+                stage_strs.append(f"{labels[stg_idx]}: {c}")
+        if stage_strs:
+            text_parts.append("• مراحل الحفظ: " + " | ".join(stage_strs))
+
+    chart_lines = ["\n📈 <b>نشاطك في آخر 7 أيام:</b>"]
+    any_weekly_activity = False
+    for day in weekly:
+        d_tot = day["total"]
+        d_acc = day["accuracy"]
+        d_name = day["day_name"]
+        if d_tot > 0:
+            any_weekly_activity = True
+            filled = min(10, max(1, int(d_acc / 10)))
+            empty = 10 - filled
+            bar = "█" * filled + "░" * empty
+            chart_lines.append(f"• {d_name:<7}: <code>{bar}</code> {d_acc}% ({d_tot} سؤال)")
+        else:
+            chart_lines.append(f"• {d_name:<7}: <i>استراحة</i> ☕")
+
+    if any_weekly_activity:
+        text_parts.extend(chart_lines)
+
+    text_parts.append(f"\n💡 <i>{advice}</i>")
+
+    kb = [
+        [
+            InlineKeyboardButton("🔔 مراجعات اليوم", callback_data="due_reviews"),
+            InlineKeyboardButton("❓ الأسئلة الضعيفة", callback_data="weak_questions"),
+        ],
+        [
+            InlineKeyboardButton("🔄 تحديث الإحصائيات", callback_data="my_stats"),
+            InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu"),
+        ]
+    ]
+
+    return "\n".join(text_parts), InlineKeyboardMarkup(kb)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  معاينة أسئلة الكويز السريعة للمشرف والطلاب
+# ═══════════════════════════════════════════════════════════════
+
+def _build_quiz_preview(quiz_id: int, q_index: int = 0):
+    quiz = db.get_quiz(quiz_id)
+    if not quiz:
+        return "❌ الكويز غير موجود.", InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+
+    questions = db.get_questions(quiz_id)
+    total_q = len(questions)
+    if total_q == 0:
+        return f"📭 لا توجد أسئلة في كويز: <b>{html.escape(quiz['name'])}</b>", InlineKeyboardMarkup([[InlineKeyboardButton("🔙 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}")]])
+
+    q_index = max(0, min(q_index, total_q - 1))
+    q = questions[q_index]
+    q_text = str(q.get("question_text", "")).strip()
+
+    passage_text = None
+    clean_q_prompt = q_text
+
+    if "📄" in q_text and "❓" in q_text:
+        parts = q_text.split("❓", 1)
+        passage_text = parts[0].replace("📄", "").strip()
+        clean_q_prompt = parts[1].strip()
+    elif "\n\n" in q_text and len(q_text.split("\n\n")[0]) > 25:
+        lines = q_text.split("\n\n", 1)
+        passage_text = lines[0].strip()
+        clean_q_prompt = lines[1].strip()
+
+    raw_options = q.get("options") or []
+    correct_ans = str(q.get("correct_answer", "")).strip()
+    exp = str(q.get("explanation", "")).strip() if q.get("explanation") else ""
+
+    arabic_letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح"]
+    options_lines = []
+    for idx, opt in enumerate(raw_options):
+        letter = arabic_letters[idx] if idx < len(arabic_letters) else str(idx + 1)
+        opt_str = str(opt).strip()
+        is_correct = (opt_str == correct_ans)
+        if is_correct:
+            options_lines.append(f"  <b>({letter})</b> {html.escape(opt_str)} ✅ <b>(الإجابة الصحيحة)</b>")
+        else:
+            options_lines.append(f"  ({letter}) {html.escape(opt_str)}")
+
+    msg_lines = [
+        f"📋 <b>معاينة: {html.escape(quiz['name'])}</b>",
+        f"📝 <b>السؤال {q_index + 1} من {total_q}</b>\n",
+    ]
+
+    if passage_text:
+        msg_lines.append(f"📄 <b>القطعة / النص:</b>\n<blockquote>{html.escape(passage_text)}</blockquote>\n")
+
+    msg_lines.append(f"❓ <b>{html.escape(clean_q_prompt)}</b>\n")
+    msg_lines.append("<b>الخيارات:</b>\n" + "\n".join(options_lines))
+
+    if exp:
+        msg_lines.append(f"\n💡 <b>الشرح والتوضيح:</b>\n<i>{html.escape(exp)}</i>")
+
+    nav_row = []
+    if q_index > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"preview_quiz_{quiz_id}_{q_index - 1}"))
+    nav_row.append(InlineKeyboardButton(f"{q_index + 1}/{total_q}", callback_data="noop"))
+    if q_index < total_q - 1:
+        nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"preview_quiz_{quiz_id}_{q_index + 1}"))
+
+    kb = [nav_row]
+    kb.append([
+        InlineKeyboardButton("🛠 تعديل هذا السؤال", callback_data=f"fixstage_qedit_{quiz_id}_{q['id']}"),
+        InlineKeyboardButton("📋 قائمة الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_{q_index // 10}")
+    ])
+    kb.append([
+        InlineKeyboardButton("▶️ ابدأ الكويز", callback_data=f"start_quiz_{quiz_id}"),
+        InlineKeyboardButton("🔙 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}")
+    ])
+
+    return "\n".join(msg_lines), InlineKeyboardMarkup(kb)
+
+
+# ═══════════════════════════════════════════════════════════════
 #  الإعدادات
 # ═══════════════════════════════════════════════════════════════
 
@@ -309,14 +484,18 @@ def _build_settings(user_id):
     dh = h if 1 <= h <= 12 else (h - 12 if h > 12 else 12)
     text = (f"⚙️ <b>الإعدادات</b>\n\n"
             f"⏰ وقت التذكير اليومي: <b>{dh}:{m:02d} {period}</b>\n\n"
-            "اختر وقتاً جديداً:")
+            "اختر وقتاً مناسباً لجدولك اليومي:")
     kb = [
-        [InlineKeyboardButton("6:00 ص", callback_data="set_reminder_6_0"),
-         InlineKeyboardButton("7:00 ص", callback_data="set_reminder_7_0"),
-         InlineKeyboardButton("8:00 ص", callback_data="set_reminder_8_0")],
-        [InlineKeyboardButton("9:00 م", callback_data="set_reminder_21_0"),
-         InlineKeyboardButton("10:00 م", callback_data="set_reminder_22_0"),
-         InlineKeyboardButton("11:00 م", callback_data="set_reminder_23_0")],
+        [InlineKeyboardButton("🌅 4:30 ص", callback_data="set_reminder_4_30"),
+         InlineKeyboardButton("☀️ 6:00 ص", callback_data="set_reminder_6_0"),
+         InlineKeyboardButton("☀️ 7:00 ص", callback_data="set_reminder_7_0")],
+        [InlineKeyboardButton("☀️ 8:00 ص", callback_data="set_reminder_8_0"),
+         InlineKeyboardButton("🌤 2:00 م", callback_data="set_reminder_14_0"),
+         InlineKeyboardButton("🌇 5:00 م", callback_data="set_reminder_17_0")],
+        [InlineKeyboardButton("🌙 8:00 م", callback_data="set_reminder_20_0"),
+         InlineKeyboardButton("🌙 9:00 م", callback_data="set_reminder_21_0"),
+         InlineKeyboardButton("🌙 10:00 م", callback_data="set_reminder_22_0")],
+        [InlineKeyboardButton("ℹ️ كيف يعمل نظام التكرار المتباعد؟", callback_data="how_it_works")],
         [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
     ]
     return text, InlineKeyboardMarkup(kb)
@@ -736,8 +915,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(query, text, kb)
         return
 
+    if data == "my_stats":
+        text, kb = _build_my_stats(user_id)
+        await safe_edit(query, text, kb)
+        return
+
+    if data.startswith("preview_quiz_"):
+        parts = data.split("_")
+        quiz_id = int(parts[2])
+        q_idx = int(parts[3]) if len(parts) > 3 else 0
+        text, kb = _build_quiz_preview(quiz_id, q_idx)
+        await safe_edit(query, text, kb)
+        return
+
     if data == "settings_menu":
         text, kb = _build_settings(user_id)
+        await safe_edit(query, text, kb)
+        return
+
+    if data == "how_it_works":
+        text = (
+            "🧠 <b>نظام التكرار المتباعد (Spaced Repetition)</b>\n\n"
+            "💡 <b>لماذا نستخدم هذا النظام؟</b>\n"
+            "وفق منحنى النسيان العلمي، ينسى الإنسان أكثر من 70% من المعلومات الجديدة بعد مرور يوم واحد فقط إذا لم تتم مراجعتها!\n\n"
+            "🎯 <b>كيف يساعدك البوت على ترسيخ المعلومات؟</b>\n"
+            "عندما تضيف كويزاً لجدول مراجعاتك، يجدوله البوت في فترات متباعدة ذكية ومدروسة:\n"
+            "• <b>المرحلة 1:</b> بعد 1 إلى 3 أيام (تثبيت الحفظ الأولي)\n"
+            "• <b>المرحلة 2:</b> بعد 7 أيام (نقل المعلومة للذاكرة المتوسطة)\n"
+            "• <b>المرحلة 3:</b> بعد 14 يوماً (ترسيخ الفهم والسرعة)\n"
+            "• <b>المرحلة 4:</b> بعد 30 يوماً (تثبيت دائم في الذاكرة طويلة المدى 🌟)\n\n"
+            "❌ <b>بنك الأسئلة الضعيفة:</b>\n"
+            "أي سؤال تخطئ فيه في أي كويز، يوثقه البوت تلقائياً في قائمة الأسئلة الضعيفة لتتدرب عليه وتتقنه 100%!"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📚 ابدأ تصفح الكويزات", callback_data="browse_root")],
+            [InlineKeyboardButton("🔙 الإعدادات", callback_data="settings_menu")],
+            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        ])
         await safe_edit(query, text, kb)
         return
 
@@ -753,7 +967,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         period = "ص" if h < 12 else "م"
         dh = h if 1 <= h <= 12 else (h - 12 if h > 12 else 12)
-        await safe_edit(query, f"✅ تم تعيين وقت التذكير: <b>{dh}:00 {period}</b>",
+        await safe_edit(query, f"✅ تم تعيين وقت التذكير: <b>{dh}:{m:02d} {period}</b>",
                         InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
         return
 

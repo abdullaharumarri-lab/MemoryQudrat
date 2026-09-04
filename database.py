@@ -1431,68 +1431,108 @@ def get_my_stats(user_id: int = None) -> dict:
 
     # All-time totals
     cursor.execute(
-        f"""SELECT COUNT(*) as sessions, SUM(total) as total, SUM(correct) as correct, SUM(wrong) as wrong
+        f"""SELECT COUNT(*) as sessions, COALESCE(SUM(total), 0) as total, 
+                  COALESCE(SUM(correct), 0) as correct, COALESCE(SUM(wrong), 0) as wrong
            FROM quiz_sessions_log
            WHERE session_type NOT IN ('practice') {user_clause}""",
         params,
     )
     alltime = dict(cursor.fetchone())
+    total_q = alltime["total"] or 0
+    correct_q = alltime["correct"] or 0
+    accuracy = int((correct_q / total_q) * 100) if total_q > 0 else 0
 
-    # Current month name
-    cursor.execute("SELECT strftime('%m', 'now') as month, strftime('%Y', 'now') as year")
-    current = dict(cursor.fetchone())
-
-    # Per-month breakdown (last 6 months)
+    # Last 7 days breakdown
     cursor.execute(
-        f"""SELECT strftime('%Y-%m', session_date) as month_key,
-                  SUM(total) as total, SUM(correct) as correct, SUM(wrong) as wrong,
-                  COUNT(*) as sessions
+        f"""SELECT session_date, 
+                  COALESCE(SUM(total), 0) as day_total, 
+                  COALESCE(SUM(correct), 0) as day_correct
            FROM quiz_sessions_log
-           WHERE session_type NOT IN ('practice') {user_clause}
-           AND session_date >= date('now', '-5 months', 'start of month')
-           GROUP BY month_key
-           ORDER BY month_key DESC""",
+           WHERE session_date >= date('now', '-6 days') {user_clause}
+           GROUP BY session_date
+           ORDER BY session_date ASC""",
         params,
     )
-    monthly = [dict(r) for r in cursor.fetchall()]
+    daily_rows = {r["session_date"]: dict(r) for r in cursor.fetchall()}
+    
+    weekly = []
+    # Build continuous 7 days list ending today
+    today = date.today()
+    arabic_days = ["الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+    for i in range(6, -1, -1):
+        d = today - timedelta(days=i)
+        d_str = d.isoformat()
+        day_info = daily_rows.get(d_str, {"day_total": 0, "day_correct": 0})
+        d_tot = day_info["day_total"]
+        d_cor = day_info["day_correct"]
+        d_pct = int((d_cor / d_tot) * 100) if d_tot > 0 else 0
+        day_name = arabic_days[d.weekday()]
+        weekly.append({
+            "date": d_str,
+            "day_name": day_name,
+            "total": d_tot,
+            "correct": d_cor,
+            "accuracy": d_pct
+        })
 
-    # Total weak questions currently in DB for this user
+    # Weak questions count
     if user_id is not None:
         cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE user_id = ?", (user_id,))
+        total_weak = cursor.fetchone()["cnt"]
+        cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE user_id = ? AND next_review_date <= date('now')", (user_id,))
+        due_weak = cursor.fetchone()["cnt"]
     else:
         cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions")
-    total_weak = dict(cursor.fetchone())["cnt"]
+        total_weak = cursor.fetchone()["cnt"]
+        cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE next_review_date <= date('now')")
+        due_weak = cursor.fetchone()["cnt"]
 
-    # Total quizzes count
-    cursor.execute("SELECT COUNT(*) as cnt FROM quizzes")
-    total_quizzes = dict(cursor.fetchone())["cnt"]
+    # Spaced Repetition reviews count & stage breakdown
+    stage_breakdown = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    if user_id is not None:
+        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ?", (user_id,))
+        active_reviews = cursor.fetchone()["cnt"]
+        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ? AND next_review_date <= date('now')", (user_id,))
+        due_reviews = cursor.fetchone()["cnt"]
+        cursor.execute("SELECT stage, COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ? GROUP BY stage", (user_id,))
+        for r in cursor.fetchall():
+            stage_breakdown[r["stage"]] = r["cnt"]
+    else:
+        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews")
+        active_reviews = cursor.fetchone()["cnt"]
+        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE next_review_date <= date('now')")
+        due_reviews = cursor.fetchone()["cnt"]
+        cursor.execute("SELECT stage, COUNT(*) as cnt FROM quiz_reviews GROUP BY stage")
+        for r in cursor.fetchall():
+            stage_breakdown[r["stage"]] = r["cnt"]
 
-    # Best month
-    cursor.execute(
-        f"""SELECT strftime('%Y-%m', session_date) as month_key,
-                  SUM(correct)*100/MAX(SUM(total),1) as pct
-           FROM quiz_sessions_log
-           WHERE session_type NOT IN ('practice') {user_clause}
-           GROUP BY month_key
-           ORDER BY pct DESC
-           LIMIT 1""",
-        params,
-    )
-    best_row = cursor.fetchone()
-    best_month = dict(best_row) if best_row else None
+    # Mastered quizzes count
+    if user_id is not None:
+        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_weak_mastery WHERE user_id = ? AND is_mastered = 1", (user_id,))
+    else:
+        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_weak_mastery WHERE is_mastered = 1")
+    mastered_count = cursor.fetchone()["cnt"]
+
+    # Total public quizzes count
+    cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE is_public = 1")
+    total_quizzes = cursor.fetchone()["cnt"]
 
     conn.close()
 
     return {
         "sessions": alltime["sessions"] or 0,
-        "total": alltime["total"] or 0,
-        "correct": alltime["correct"] or 0,
+        "total": total_q,
+        "correct": correct_q,
         "wrong": alltime["wrong"] or 0,
-        "monthly": monthly,
+        "accuracy": accuracy,
+        "weekly": weekly,
         "total_weak": total_weak,
+        "due_weak": due_weak,
+        "active_reviews": active_reviews,
+        "due_reviews": due_reviews,
+        "mastered_count": mastered_count,
+        "stage_breakdown": stage_breakdown,
         "total_quizzes": total_quizzes,
-        "best_month": best_month,
-        "current_month": f"{current['year']}-{current['month']}",
     }
 
 
