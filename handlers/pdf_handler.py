@@ -15,13 +15,18 @@ from config import MAX_JSON_FILE_SIZE_BYTES, MAX_QUESTIONS_PER_QUIZ, is_admin
 logger = logging.getLogger(__name__)
 
 
-import openpyxl
+try:
+    import openpyxl
+except ImportError:
+    openpyxl = None
 import csv
 
 # ─── Template Command (Excel + JSON) ──────────────────────────────────────────
 
 def create_excel_template_file() -> str:
     """Generates an elegant formatted .xlsx template with examples and instructions."""
+    if openpyxl is None:
+        raise ValueError("مكتبة openpyxl غير مثبتة على السيرفر. يرجى تشغيل: pip install openpyxl")
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "كويز_قدرات"
@@ -585,6 +590,8 @@ def parse_excel_or_csv_quiz(file_path: str, filename: str = '') -> dict:
     quiz_name = ''
 
     if ext in ['.xlsx', '.xlsm', '.xltx', '.xltm', '.xls']:
+        if openpyxl is None:
+            raise ValueError("مكتبة openpyxl غير مثبتة على السيرفر. يرجى تشغيل: pip install openpyxl أو رفع الملف بصيغة CSV.")
         wb = openpyxl.load_workbook(file_path, data_only=True)
         sheet = wb.active
         if sheet.title and sheet.title not in ['Sheet', 'Sheet1', 'ورقة1', 'Sheet 1']:

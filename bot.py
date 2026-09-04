@@ -30,23 +30,28 @@ def schedule_reminder(job_queue, chat_id: int, hour: int = None, minute: int = N
     for job in job_queue.get_jobs_by_name(f"reminder_{chat_id}"):
         job.schedule_removal()
 
-    if hour is None or minute is None:
-        user = db.get_user(chat_id)
-        if user:
-            hour = user.get("reminder_hour", 4)
-            minute = user.get("reminder_minute", 30)
-        else:
-            hour = 4
-            minute = 30
+    try:
+        if hour is None or minute is None:
+            user = db.get_user(chat_id)
+            if user:
+                hour = user.get("reminder_hour") or 4
+                minute = user.get("reminder_minute") or 30
+            else:
+                hour = 4
+                minute = 30
+        if hour is None: hour = 4
+        if minute is None: minute = 30
 
-    riyadh_tz = pytz.timezone("Asia/Riyadh")
-    job_queue.run_daily(
-        daily_reminder,
-        time=time(hour, minute, tzinfo=riyadh_tz),
-        data=chat_id,
-        name=f"reminder_{chat_id}",
-    )
-    logger.info("Scheduled daily reminder for chat_id=%s at %02d:%02d Riyadh time", chat_id, hour, minute)
+        riyadh_tz = pytz.timezone("Asia/Riyadh")
+        job_queue.run_daily(
+            daily_reminder,
+            time=time(int(hour), int(minute), tzinfo=riyadh_tz),
+            data=chat_id,
+            name=f"reminder_{chat_id}",
+        )
+        logger.info("Scheduled daily reminder for chat_id=%s at %02d:%02d Riyadh time", chat_id, hour, minute)
+    except Exception as e:
+        logger.warning("Could not schedule reminder for chat_id=%s: %s", chat_id, e)
 
 
 async def daily_reminder(context):
@@ -78,10 +83,18 @@ async def start_command(update: Update, context):
     chat_id = update.effective_chat.id
     user = update.effective_user
     user_id = user.id if user else None
-    if user:
-        db.save_or_update_user(user.id, user.username, user.full_name)
-    db.save_chat_id(chat_id)
-    schedule_reminder(context.job_queue, chat_id)
+    
+    try:
+        if user:
+            db.save_or_update_user(user.id, user.username, user.full_name)
+        db.save_chat_id(chat_id)
+    except Exception as e:
+        logger.warning("Could not save user/chat_id in start_command: %s", e)
+
+    try:
+        schedule_reminder(context.job_queue, chat_id)
+    except Exception as e:
+        logger.warning("Could not schedule reminder in start_command: %s", e)
 
     user_name = user.first_name if user and user.first_name else "صديقنا"
     text = (
@@ -98,11 +111,18 @@ async def start_command(update: Update, context):
     from handlers.main_menu import main_menu_keyboard
     from utils import clean_entire_chat
     user_msg_id = update.message.message_id if update.message else None
-    await clean_entire_chat(context, chat_id, extra_ids=[user_msg_id] if user_msg_id else None)
-    await send_clean_message(
-        context, chat_id, text,
-        reply_markup=main_menu_keyboard(user_id=user_id)
-    )
+    try:
+        await clean_entire_chat(context, chat_id, extra_ids=[user_msg_id] if user_msg_id else None)
+    except Exception as e:
+        logger.warning("Could not clean chat in start_command: %s", e)
+
+    try:
+        await send_clean_message(
+            context, chat_id, text,
+            reply_markup=main_menu_keyboard(user_id=user_id)
+        )
+    except Exception as e:
+        logger.exception("Could not send start_command message: %s", e)
 
 
 async def error_handler(update, context):
