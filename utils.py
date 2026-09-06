@@ -33,7 +33,7 @@ async def _safe_delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
 
 
 async def delete_messages_bulk(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_ids: list[int]):
-    """Safely delete a list of message IDs using Telegram's bulk delete API without spamming fallbacks."""
+    """Safely delete a list of message IDs using Telegram's bulk delete API with robust fallback."""
     if not message_ids or not chat_id:
         return
     
@@ -41,28 +41,36 @@ async def delete_messages_bulk(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
     if not unique_ids:
         return
 
-    # Delete in batches of 50 (Telegram limit is 100 per delete_messages)
-    for i in range(0, len(unique_ids), 50):
-        batch = unique_ids[i:i + 50]
+    # Delete in batches of 100 (Telegram limit is 100 per delete_messages)
+    for i in range(0, len(unique_ids), 100):
+        batch = unique_ids[i:i + 100]
         try:
             await context.bot.delete_messages(chat_id=chat_id, message_ids=batch)
         except Exception as e:
-            logger.debug("delete_messages batch failed (%s), falling back to individual deletes", e)
-            for mid in batch:
+            logger.debug("delete_messages batch failed (%s), trying sub-batches", e)
+            for j in range(0, len(batch), 20):
+                sub_batch = batch[j:j + 20]
                 try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+                    await context.bot.delete_messages(chat_id=chat_id, message_ids=sub_batch)
                 except Exception:
-                    pass
+                    for mid in sub_batch:
+                        try:
+                            await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+                        except Exception:
+                            pass
 
 
 async def clean_entire_chat(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
     keep_message_id: int = None,
-    extra_ids: list[int] = None
+    extra_ids: list[int] = None,
+    sweep_range: int = 150
 ):
     """
-    Cleans tracked messages in the chat history efficiently without blind range guessing.
+    Cleans ALL previous messages in the chat history completely.
+    Deletes tracked messages, extra IDs, and sweeps the last `sweep_range` message IDs,
+    leaving at most `keep_message_id` intact.
     """
     if not chat_id:
         return
@@ -75,15 +83,28 @@ async def clean_entire_chat(
     if last_id and last_id != keep_message_id and last_id not in tracked:
         tracked.append(last_id)
 
-    # 3. Add extra IDs (e.g. current user command message)
+    # 3. Add extra IDs (e.g. current message or quiz poll IDs)
     if extra_ids:
         for eid in extra_ids:
             if eid and eid != keep_message_id:
                 tracked.append(eid)
 
-    all_to_del = {mid for mid in tracked if mid and mid != keep_message_id}
+    all_to_del = {int(mid) for mid in tracked if mid and int(mid) > 0 and mid != keep_message_id}
 
-    # 4. Reset or update last_message_id in DB
+    # 4. Sweep range backwards around known message IDs to catch ANY untracked polls, passages, or text
+    if sweep_range and sweep_range > 0:
+        known_ids = [m for m in all_to_del]
+        if keep_message_id:
+            known_ids.append(int(keep_message_id))
+        if last_id:
+            known_ids.append(int(last_id))
+        if known_ids:
+            max_ref = max(known_ids)
+            for mid in range(max(1, max_ref - sweep_range), max_ref + 2):
+                if mid != keep_message_id:
+                    all_to_del.add(mid)
+
+    # 5. Reset or update last_message_id in DB
     if keep_message_id:
         db.set_last_message_id(chat_id, keep_message_id)
         db.track_chat_message(chat_id, keep_message_id)
@@ -94,7 +115,7 @@ async def clean_entire_chat(
         conn.commit()
         conn.close()
 
-    # 5. Fast batch delete verified message IDs
+    # 6. Fast batch delete verified message IDs
     if all_to_del:
         await delete_messages_bulk(context, chat_id, list(all_to_del))
 

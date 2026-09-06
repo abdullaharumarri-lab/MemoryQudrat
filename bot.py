@@ -134,7 +134,7 @@ async def start_command(update: Update, context):
 
     context.user_data.pop(f"active_passage_{chat_id}", None)
     try:
-        await clean_entire_chat(context, chat_id, extra_ids=extra)
+        await clean_entire_chat(context, chat_id, keep_message_id=None, extra_ids=extra, sweep_range=150)
     except Exception as e:
         logger.warning("Could not clean chat in start_command: %s", e)
 
