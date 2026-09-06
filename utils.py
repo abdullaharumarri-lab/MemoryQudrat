@@ -148,21 +148,35 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
     """
     Safely edit message text.
     If HTML parsing fails, it strips the tags so raw <b> or <i> never appear to the user.
+    If editing fails completely (e.g. message deleted or outdated),
+    it automatically sends a fresh clean message so the user is never left hanging.
     """
     if not query:
         return
     text = truncate_text(text, 3800)
 
-    # Safely extract chat_id
+    # Safely extract chat_id and bot
     chat_id = None
+    bot = None
     msg = getattr(query, "message", None)
     if msg:
         if hasattr(msg, "chat") and msg.chat:
             chat_id = msg.chat.id
         elif hasattr(msg, "chat_id"):
             chat_id = msg.chat_id
+        if hasattr(msg, "get_bot"):
+            try: bot = msg.get_bot()
+            except Exception: pass
 
-    # Track message ID
+    if not bot and hasattr(query, "get_bot"):
+        try: bot = query.get_bot()
+        except Exception: pass
+    if not bot and context and hasattr(context, "bot"):
+        bot = context.bot
+    if not chat_id and getattr(query, "from_user", None):
+        chat_id = query.from_user.id
+
+    # Track message ID if valid
     if chat_id and msg and hasattr(msg, "message_id") and msg.message_id:
         try:
             db.set_last_message_id(chat_id, msg.message_id)
@@ -177,43 +191,38 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
     except Exception as e:
         if "Message is not modified" in str(e):
             return
-        logger.warning("safe_edit HTML edit failed: %s", e)
+        logger.debug("safe_edit HTML edit failed: %s", e)
 
-    # 2. Clean plain-text fallback (Strip tags so user NEVER sees raw <b> or <i>)
+    # 2. Clean plain-text fallback
     clean_text = strip_html_tags(text)
-    last_error = None
     try:
         await query.edit_message_text(clean_text, reply_markup=reply_markup)
         return
     except Exception as e:
-        last_error = e
         if "Message is not modified" in str(e):
             return
-        logger.warning("safe_edit plain edit failed: %s", e)
+        logger.debug("safe_edit plain edit failed: %s", e)
 
-    # 3. Fallback: send message if editing failed completely
-    err_str = str(last_error).lower() if last_error else ""
-    if "timeout" in err_str or "timed out" in err_str or "readtimeout" in err_str:
-        logger.warning("safe_edit dropping message instead of fallback due to timeout")
-        return
-
+    # 3. Fallback: If editing failed completely, send fresh message directly to chat_id
     try:
-        if msg and hasattr(msg, "reply_text"):
-            sent = await msg.reply_text(clean_text, reply_markup=reply_markup)
-            if sent and hasattr(sent, "chat") and sent.chat:
-                db.set_last_message_id(sent.chat.id, sent.message_id)
-                db.track_chat_message(sent.chat.id, sent.message_id)
-        elif context and chat_id:
-            sent = await context.bot.send_message(
+        sent = None
+        if bot and chat_id:
+            sent = await bot.send_message(
                 chat_id=chat_id,
                 text=clean_text,
                 reply_markup=reply_markup
             )
-            if sent and hasattr(sent, "chat") and sent.chat:
-                db.set_last_message_id(sent.chat.id, sent.message_id)
-                db.track_chat_message(sent.chat.id, sent.message_id)
+        elif msg and hasattr(msg, "reply_text"):
+            try:
+                sent = await msg.reply_text(clean_text, reply_markup=reply_markup)
+            except Exception:
+                pass
+
+        if sent and hasattr(sent, "chat") and sent.chat:
+            db.set_last_message_id(sent.chat.id, sent.message_id)
+            db.track_chat_message(sent.chat.id, sent.message_id)
     except Exception as e2:
-        logger.error("safe_edit fallback reply_text failed: %s", e2)
+        logger.error("safe_edit ultimate fallback failed: %s", e2)
 
 
 def normalize_arabic_digits(s: str) -> str:

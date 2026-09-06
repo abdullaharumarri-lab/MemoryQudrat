@@ -134,11 +134,18 @@ function extractGoogleFormsQuiz() {
                     let cleanQText = title.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').replace(/\s*\*\s*$/, '').trim();
                     if (!cleanQText) cleanQText = `السؤال ${questions.length + 1}`;
 
-                    // Unconditionally attach the active passage
+                    // Attach active passage only to reading comprehension questions
                     if (currentActivePassage) {
-                        const snippet = currentActivePassage.slice(0, 30);
-                        if (!cleanQText.includes(snippet)) {
-                            cleanQText = '📄 ' + currentActivePassage + '\n\n❓ ' + cleanQText;
+                        const isVerbalAnalogy = /^[\u0600-\u06FF\s]+[:\:\-]\s*[\u0600-\u06FF\s]+$/.test(cleanQText.trim()) && cleanQText.trim().split(/[:\:\-]/).length === 2 && cleanQText.length < 50;
+                        const isMathOrQuant = /(?:إذا\s+كان|س\s*\+|\bس\b|\bص\b|\bع\b|[0-9٠-٩]+\s*[\+\-\*\/=÷×%]|[=÷×%]|محيط|مساحة|المثلث|الدائرة|المستطيل|نسبة|متوسط|كمية)/.test(cleanQText) && !/(?:النص|القطعة|الفقرة|الكاتب|الشاعر|معنى|مرادف|ضد)/.test(cleanQText);
+
+                        if (isVerbalAnalogy || isMathOrQuant) {
+                            currentActivePassage = "";
+                        } else {
+                            const snippet = currentActivePassage.slice(0, 25).trim();
+                            if (!cleanQText.includes(snippet)) {
+                                cleanQText = '📄 ' + currentActivePassage + '\n\n❓ ' + cleanQText;
+                            }
                         }
                     }
 
@@ -282,9 +289,16 @@ function extractGoogleFormsQuiz() {
             if (!qText) qText = `السؤال ${qNum}`;
 
             if (currentPassageFallback) {
-                const snippet = currentPassageFallback.slice(0, 30);
-                if (!qText.includes(snippet)) {
-                    qText = '📄 ' + currentPassageFallback + '\n\n❓ ' + qText;
+                const isVerbalAnalogy = /^[\u0600-\u06FF\s]+[:\:\-]\s*[\u0600-\u06FF\s]+$/.test(qText.trim()) && qText.trim().split(/[:\:\-]/).length === 2 && qText.length < 50;
+                const isMathOrQuant = /(?:إذا\s+كان|س\s*\+|\bس\b|\bص\b|\bع\b|[0-9٠-٩]+\s*[\+\-\*\/=÷×%]|[=÷×%]|محيط|مساحة|المثلث|الدائرة|المستطيل|نسبة|متوسط|كمية)/.test(qText) && !/(?:النص|القطعة|الفقرة|الكاتب|الشاعر|معنى|مرادف|ضد)/.test(qText);
+
+                if (isVerbalAnalogy || isMathOrQuant) {
+                    currentPassageFallback = "";
+                } else {
+                    const snippet = currentPassageFallback.slice(0, 25).trim();
+                    if (!qText.includes(snippet)) {
+                        qText = '📄 ' + currentPassageFallback + '\n\n❓ ' + qText;
+                    }
                 }
             }
 

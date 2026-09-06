@@ -225,6 +225,16 @@ async def send_next_question(update, context, session):
             passage_text = lines[0].strip()
             clean_q_prompt = lines[1].strip()
 
+    # Clean any duplicated passage text inside clean_q_prompt
+    if passage_text:
+        if passage_text in clean_q_prompt:
+            clean_q_prompt = clean_q_prompt.replace(passage_text, "").strip()
+        elif len(passage_text) > 25 and passage_text[:25] in clean_q_prompt:
+            idx = clean_q_prompt.find(passage_text[:25])
+            if idx != -1:
+                clean_q_prompt = clean_q_prompt[idx + len(passage_text):].strip()
+        clean_q_prompt = clean_q_prompt.lstrip("❓: \n\t").strip()
+
     # Check Telegram Poll limits (Question max 300, Option max 100)
     long_question = len(clean_q_prompt) > 250
     long_options = any(len(opt) > 90 for opt in options)
@@ -233,20 +243,38 @@ async def send_next_question(update, context, session):
     letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"]
     msg_ids = session.get("session_message_ids", [])
 
-    # If there is a reading passage, send it as a prominent separate message first
+    # ── Reading Passage Deduplication: Send ONCE per passage block ──
+    last_passage = context.user_data.get(f"active_passage_{chat_id}")
     if passage_text:
-        passage_msg_text = (
-            f"📄 <b>[نص / قطعة القراءة]:</b>\n\n"
-            f"<blockquote>{html.escape(passage_text)}</blockquote>"
-        )
-        try:
-            p_msg = await context.bot.send_message(chat_id=chat_id, text=passage_msg_text, parse_mode="HTML")
-            msg_ids.append(p_msg.message_id)
-        except Exception as e:
-            logger.warning("Failed sending passage with HTML blockquote: %s", e)
-            clean_p = f"📄 [نص / قطعة القراءة]:\n\n{passage_text}"
-            p_msg = await context.bot.send_message(chat_id=chat_id, text=clean_p)
-            msg_ids.append(p_msg.message_id)
+        safe_passage = passage_text
+        if len(safe_passage) > 3800:
+            safe_passage = safe_passage[:3750] + "\n\n...(تم اختصار النص لطوله)"
+
+        if last_passage != passage_text:
+            passage_msg_text = (
+                f"📄 <b>[نص / قطعة القراءة]:</b>\n\n"
+                f"<blockquote>{html.escape(safe_passage)}</blockquote>"
+            )
+            try:
+                p_msg = await context.bot.send_message(chat_id=chat_id, text=passage_msg_text, parse_mode="HTML")
+                msg_ids.append(p_msg.message_id)
+                context.user_data[f"active_passage_{chat_id}"] = passage_text
+            except Exception as e:
+                logger.warning("Failed sending passage with HTML blockquote: %s", e)
+                try:
+                    clean_p = f"📄 [نص / قطعة القراءة]:\n\n{safe_passage}"
+                    p_msg = await context.bot.send_message(chat_id=chat_id, text=clean_p)
+                    msg_ids.append(p_msg.message_id)
+                    context.user_data[f"active_passage_{chat_id}"] = passage_text
+                except Exception as e2:
+                    logger.error("Could not send reading passage: %s", e2)
+        else:
+            # Same passage as the previous question in this session:
+            # Do NOT duplicate the message!
+            if not clean_q_prompt.startswith("📖 (تابع"):
+                clean_q_prompt = "📖 (تابع لقطعة القراءة أعلاه)\n" + clean_q_prompt
+    else:
+        context.user_data.pop(f"active_passage_{chat_id}", None)
 
     if long_question or long_options:
         context_text = f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
@@ -267,11 +295,15 @@ async def send_next_question(update, context, session):
 
         try:
             ctx_msg = await context.bot.send_message(chat_id=chat_id, text=context_text, parse_mode="HTML")
+            msg_ids.append(ctx_msg.message_id)
         except Exception as e:
             logger.warning("Failed sending context message with HTML, falling back to plain text: %s", e)
             clean_ctx = strip_html_tags(context_text)
-            ctx_msg = await context.bot.send_message(chat_id=chat_id, text=clean_ctx)
-        msg_ids.append(ctx_msg.message_id)
+            try:
+                ctx_msg = await context.bot.send_message(chat_id=chat_id, text=clean_ctx)
+                msg_ids.append(ctx_msg.message_id)
+            except Exception as e2:
+                logger.error("Could not send context message: %s", e2)
     else:
         poll_question = clean_q_prompt
         poll_options = list(options)
@@ -334,14 +366,36 @@ async def send_next_question(update, context, session):
                 fallback_options = ["الخيار (أ)", "الخيار (ب)"]
             fb_correct = max(0, min(correct_idx, len(fallback_options) - 1))
             fallback_question = f"السؤال {session['current_index'] + 1} (اختر الإجابة):"
-            poll_msg = await context.bot.send_poll(
-                chat_id=chat_id,
-                question=fallback_question,
-                options=fallback_options,
-                type="quiz",
-                correct_option_id=fb_correct,
-                is_anonymous=False
-            )
+            try:
+                poll_msg = await context.bot.send_poll(
+                    chat_id=chat_id,
+                    question=fallback_question,
+                    options=fallback_options,
+                    type="quiz",
+                    correct_option_id=fb_correct,
+                    is_anonymous=False
+                )
+            except Exception as poll_err3:
+                logger.error("All send_poll attempts failed: %s", poll_err3)
+
+    # If all poll sending attempts failed, advance safely so session NEVER hangs
+    if not poll_msg:
+        logger.error("Could not send poll for question %s, advancing safely...", q_id)
+        new_index = session["current_index"] + 1
+        db.update_session(
+            new_index,
+            session["correct_count"],
+            session["wrong_ids"],
+            None,
+            msg_ids,
+            user_id=user_id,
+        )
+        session["current_index"] = new_index
+        if session["current_index"] >= len(session["question_ids"]):
+            await finish_session(update, context, session)
+        else:
+            await send_next_question(update, context, session)
+        return
 
     msg_ids.append(poll_msg.message_id)
 
@@ -604,6 +658,9 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         chat_id = update.effective_chat.id
     elif context.user_data.get("chat_id"):
         chat_id = context.user_data["chat_id"]
+
+    if chat_id:
+        context.user_data.pop(f"active_passage_{chat_id}", None)
         
     if chat_id:
         await context.bot.send_message(

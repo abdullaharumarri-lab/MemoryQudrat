@@ -814,7 +814,14 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    if not query:
+        return
+
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.debug("query.answer() ignored exception: %s", e)
+
     data = query.data
     user = update.effective_user
     user_id = user.id if user else ADMIN_USER_ID
