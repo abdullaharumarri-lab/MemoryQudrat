@@ -1,14 +1,15 @@
 ﻿#!/usr/bin/env python3
 """
 seed_tables.py — إضافة مجلد وكويزات جدول الضرب (1 - 30)
+بدون أي مكتبات خارجية (Standard Library Only: sqlite3, json, random)
 """
+import sqlite3
+import json
 import random
-import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import database as db
-from config import ADMIN_USER_ID
+ADMIN_USER_ID = 6099429826
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_qudrat.db")
 
 def generate_distractors(n, k, correct):
     distractors = set()
@@ -43,37 +44,45 @@ def generate_distractors(n, k, correct):
     return options
 
 def main():
-    cat_id = db.create_category(
-        name="✖️ جدول الضرب (1 - 30)",
-        icon="✖️",
-        is_public=1,
-        owner_id=ADMIN_USER_ID
-    )
-    print(f"📁 تم إنشاء مجلد جدول الضرب (معرف: {cat_id})")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
+    # 1. Create category
+    cursor.execute(
+        "INSERT INTO categories (name, icon, sort_order, is_public, owner_id) VALUES (?, ?, ?, ?, ?)",
+        ("✖️ جدول الضرب (1 - 30)", "✖️", 1, 1, ADMIN_USER_ID)
+    )
+    cat_id = cursor.lastrowid
+    print(f"📁 تم إنشاء مجلد جدول الضرب بنجاح (معرف المجلد: {cat_id})")
+
+    # 2. Create 30 quizzes
     for n in range(1, 31):
         quiz_name = f"جدول ضرب {n}"
-        questions = []
+        cursor.execute(
+            "INSERT INTO quizzes (name, category_id, owner_id, is_public) VALUES (?, ?, ?, ?)",
+            (quiz_name, cat_id, ADMIN_USER_ID, 1)
+        )
+        quiz_id = cursor.lastrowid
+
         for k in range(1, 13):
             correct = n * k
             opts = generate_distractors(n, k, correct)
-            questions.append({
-                "question": f"ما ناتج: {n} × {k} = ؟",
-                "options": opts,
-                "answer": str(correct),
-                "explanation": f"💡 {n} × {k} = {correct}"
-            })
-
-        quiz_id = db.save_quiz_without_review(
-            name=quiz_name,
-            questions=questions,
-            category_id=cat_id,
-            owner_id=ADMIN_USER_ID,
-            is_public=1
-        )
+            cursor.execute(
+                """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    quiz_id,
+                    f"ما ناتج: {n} × {k} = ؟",
+                    json.dumps(opts, ensure_ascii=False),
+                    str(correct),
+                    f"💡 {n} × {k} = {correct}"
+                )
+            )
         print(f" ✅ تم إنشاء: {quiz_name} (12 سؤالاً)")
 
-    print("\n🎉 اكتمل إنشاء كافة الجداول الـ 30 بنجاح تام!")
+    conn.commit()
+    conn.close()
+    print("\n🎉 اكتمل إنشاء كافة الجداول الـ 30 (360 سؤالاً) بنجاح تام!")
 
 if __name__ == "__main__":
     main()
