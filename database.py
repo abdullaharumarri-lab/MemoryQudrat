@@ -633,7 +633,13 @@ def get_quizzes_by_category(category_id: int = None, user_id: int = None, is_pub
                 cursor.execute(f"SELECT * FROM quizzes WHERE is_public = 0 AND owner_id = ? AND category_id IS NULL AND {valid_filter} ORDER BY id DESC", (user_id,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    rows.sort(key=quiz_sort_key_desc, reverse=True)
+
+    cur_cat = get_category(category_id) if category_id else None
+    cat_name = cur_cat.get("name", "") if cur_cat else ""
+    if any(w in cat_name for w in ["جدول", "الضرب", "أساسيات", "درس", "مستوى"]):
+        rows.sort(key=quiz_sort_key_desc, reverse=False)
+    else:
+        rows.sort(key=quiz_sort_key_desc, reverse=True)
     return rows
 
 
