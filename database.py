@@ -278,19 +278,8 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_chat_id ON chat_history_ids(chat_id)")
 
-    # ── Default categories setup (only if table is completely empty) ──
-    cursor.execute("SELECT COUNT(*) FROM categories")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO categories (name, icon, sort_order) VALUES ('أقسام إيهاب', '📚', 1)")
-
-    # Ensure all quizzes have a valid category
-    cursor.execute("SELECT id FROM categories ORDER BY sort_order ASC, id ASC LIMIT 1")
-    first_cat = cursor.fetchone()
-    if first_cat:
-        cursor.execute(
-            "UPDATE quizzes SET category_id = ? WHERE category_id IS NULL OR category_id NOT IN (SELECT id FROM categories)",
-            (first_cat["id"],)
-        )
+    # If any quiz references a deleted category, safely reset it to NULL (Root level)
+    cursor.execute("UPDATE quizzes SET category_id = NULL WHERE category_id IS NOT NULL AND category_id NOT IN (SELECT id FROM categories)")
 
     # Clean up empty/phantom quizzes (0 questions and no URL) and orphaned reviews
     try:
@@ -313,10 +302,69 @@ def init_db():
 
     conn.commit()
     conn.close()
-    logger.info("Database initialized with multi-user support.")
+    logger.info("Database initialized cleanly with multi-user support.")
 
 
-def reset_non_admin_data(admin_id: int = 6099429826):
+def format_database_from_roots(keep_admin_user: bool = True):
+    """
+    Completely formats and resets the bot database from its roots.
+    Wipes all quizzes, questions, categories, reviews, weak questions, sessions,
+    logs, mastery, chat history, and bot state cleanly.
+    Resets SQLite auto-increment sequences and vacuums database file.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Disable foreign keys temporarily during wipe
+    cursor.execute("PRAGMA foreign_keys = OFF;")
+
+    tables_to_wipe = [
+        "quizzes",
+        "questions",
+        "categories",
+        "quiz_reviews",
+        "weak_questions",
+        "active_session",
+        "quiz_sessions_log",
+        "quiz_weak_mastery",
+        "chat_history_ids",
+        "bot_state",
+    ]
+
+    for tbl in tables_to_wipe:
+        try:
+            cursor.execute(f"DELETE FROM [{tbl}]")
+        except Exception as e:
+            logger.warning("Could not wipe table %s: %s", tbl, e)
+
+    # Reset SQLite auto-increment sequences
+    try:
+        cursor.execute("DELETE FROM sqlite_sequence")
+    except Exception:
+        pass
+
+    # Clean users table except admin if requested
+    if keep_admin_user:
+        cursor.execute("DELETE FROM users WHERE user_id != ?", (ADMIN_USER_ID,))
+    else:
+        cursor.execute("DELETE FROM users")
+
+    cursor.execute("PRAGMA foreign_keys = ON;")
+    conn.commit()
+    conn.close()
+
+    # Vacuum database to shrink file and optimize
+    try:
+        raw_conn = sqlite3.connect(DB_PATH)
+        raw_conn.execute("VACUUM;")
+        raw_conn.close()
+    except Exception as e:
+        logger.warning("VACUUM failed after format: %s", e)
+
+    logger.info("Bot database formatted completely from roots. Pristine state established.")
+
+
+def reset_non_admin_data(admin_id: int = ADMIN_USER_ID):
     """
     Wipes all user data except the admin's.
     Keeps: categories, quizzes, questions, users, admin's quiz_reviews & weak_questions.

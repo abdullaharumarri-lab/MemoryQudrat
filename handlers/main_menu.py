@@ -890,6 +890,10 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                  update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عرض وتدقيق السؤال", callback_data=f"fixstage_qedit_{quiz_id}_{q_id}")]]))
         return
 
+    from handlers.creation_handler import handle_creation_text_input
+    if await handle_creation_text_input(update, context):
+        return
+
     from handlers.admin_handler import handle_broadcast_input
     await handle_broadcast_input(update, context)
 
@@ -920,13 +924,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _cleanup_and_return_home(update, context)
         return
 
-    if data == "browse_root":
+    if data in ("browse_root", "public_bank_root", "my_quizzes"):
         context.user_data["last_browse_cb"] = "browse_root"
         text, kb = _build_browse_view(cat_id=None, page=1, user_id=user_id)
         await safe_edit(query, text, kb)
         return
 
-    if data.startswith("browse_cat_"):
+    if data.startswith("browse_cat_") or data.startswith("my_cat_"):
         parts = data.split("_")
         raw_id = int(parts[2])
         page = int(parts[3]) if len(parts) > 3 else 1
@@ -943,10 +947,71 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(query, text, kb)
         return
 
-    if data.startswith("start_quiz_"):
+    if data.startswith("start_quiz_") or data.startswith("start_practice_"):
         quiz_id = int(data.split("_")[-1])
         from handlers.quiz_handler import start_quiz_session
         await start_quiz_session(update, context, quiz_id, session_type="quiz")
+        return
+
+    if data.startswith("move_quiz_"):
+        if not is_adm:
+            await query.answer("❌ للمشرف فقط.", show_alert=True)
+            return
+        quiz_id = int(data.split("_")[-1])
+        quiz = db.get_quiz(quiz_id)
+        if not quiz:
+            await query.answer("❌ الكويز غير موجود.", show_alert=True)
+            return
+        categories = db.get_categories(is_public=1)
+        kb = []
+        for c in categories:
+            icon = c.get("icon", "📁")
+            kb.append([InlineKeyboardButton(f"{icon} {c['name']}", callback_data=f"set_quiz_cat_{quiz_id}_{c['id']}")])
+        kb.append([InlineKeyboardButton("📁 في الرئيسية (بدون مجلد)", callback_data=f"set_quiz_cat_{quiz_id}_0")])
+        kb.append([InlineKeyboardButton("🔙 إلغاء", callback_data=f"quiz_detail_{quiz_id}")])
+        name = html.escape(quiz.get("name", "كويز"))
+        await safe_edit(query, f"📁 <b>نقل الكويز إلى مجلد</b>\n\nاختر المجلد الذي تريد نقل كويز <b>{name}</b> إليه:", InlineKeyboardMarkup(kb))
+        return
+
+    if data.startswith("set_quiz_cat_"):
+        if not is_adm:
+            await query.answer("❌ للمشرف فقط.", show_alert=True)
+            return
+        parts = data.split("_")
+        quiz_id = int(parts[3])
+        cat_id = int(parts[4])
+        real_cat_id = cat_id if cat_id != 0 else None
+        db.move_quiz_to_category(quiz_id, real_cat_id)
+        quiz = db.get_quiz(quiz_id)
+        name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
+        cat = db.get_category(real_cat_id) if real_cat_id else None
+        cat_name = cat.get("name", "الرئيسية") if cat else "الرئيسية (بدون مجلد)"
+        await safe_edit(query, f"✅ تم نقل كويز <b>{name}</b> إلى: <b>{html.escape(cat_name)}</b> بنجاح!",
+                        InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}")],
+                            [InlineKeyboardButton("📚 تصفح الكويزات", callback_data=f"browse_cat_{cat_id}_1" if cat_id != 0 else "browse_root")],
+                            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+                        ]))
+        return
+
+    if data == "upload_media_note":
+        if not is_adm:
+            await query.answer("❌ للمشرف فقط.", show_alert=True)
+            return
+        context.user_data["waiting_for_media_note"] = True
+        await safe_edit(query,
+                        "📁 <b>إدراج مادة للمراجعة في التكرار المتباعد</b> 🧠\n\n"
+                        "أرسل الآن:\n"
+                        "• 📸 <b>صورة</b> (مثل ملخص أو قوانين)\n"
+                        "• 📄 <b>ملف</b> (PDF أو مستند)\n"
+                        "• ✍️ أو <b>نص ملاحظة مباشرة</b>\n\n"
+                        "سيتم إدراجها وجدولتها تلقائياً لتصلك مراجعاتها الدورية 💪.",
+                        InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]]))
+        return
+
+    if data in ("create_manual_quiz", "manual_cancel", "manual_save_quiz", "manual_dashboard") or data.startswith("manual_set_correct_"):
+        from handlers.creation_handler import handle_manual_quiz_callback
+        await handle_manual_quiz_callback(update, context)
         return
 
     if data.startswith("start_review_"):

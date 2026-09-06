@@ -41,7 +41,7 @@ def build_admin_dashboard() -> tuple[str, InlineKeyboardMarkup]:
         ],
         [
             InlineKeyboardButton("🔧 تعديل مراحل الكويزات (/fixstage)", callback_data="fixstage_page_1"),
-            InlineKeyboardButton("📚 تصفح بنك الكويزات", callback_data="public_bank_root"),
+            InlineKeyboardButton("📚 تصفح بنك الكويزات", callback_data="browse_root"),
         ],
         [
             InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu"),

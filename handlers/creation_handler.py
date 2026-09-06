@@ -133,8 +133,8 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
             f"تمت جدولة هذا الكويز في نظام <b>التكرار المتباعد</b> لتصلك مراجعاته الدورية تلقائياً 🧠."
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_practice_{quiz_id}")],
-            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+            [InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_quiz_{quiz_id}")],
+            [InlineKeyboardButton("📚 تصفح الكويزات", callback_data="browse_root")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
     elif data.startswith("manual_set_correct_"):
@@ -292,8 +292,8 @@ async def handle_creation_text_input(update: Update, context: ContextTypes.DEFAU
             f"يمكنك الآن نقل كويزاتك الخاصة إليه وتنظيم دراستك 🌟."
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📂 فتح المجلد", callback_data=f"my_cat_{cat_id}_1")],
-            [InlineKeyboardButton("📁 كويزاتي الخاصة", callback_data="my_quizzes")],
+            [InlineKeyboardButton("📂 فتح المجلد", callback_data=f"browse_cat_{cat_id}_1")],
+            [InlineKeyboardButton("📚 تصفح الكويزات", callback_data="browse_root")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
         await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
