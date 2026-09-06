@@ -47,7 +47,12 @@ async def delete_messages_bulk(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
         try:
             await context.bot.delete_messages(chat_id=chat_id, message_ids=batch)
         except Exception as e:
-            logger.debug("delete_messages batch skipped/failed: %s", e)
+            logger.debug("delete_messages batch failed (%s), falling back to individual deletes", e)
+            for mid in batch:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+                except Exception:
+                    pass
 
 
 async def clean_entire_chat(

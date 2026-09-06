@@ -58,21 +58,63 @@ def main_menu_text(user_id: int = None) -> str:
     return "\n".join(lines)
 
 
-async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _cleanup_and_return_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id if user else None
     chat_id = update.effective_chat.id if update.effective_chat else None
     if not chat_id:
         return
+
     text = main_menu_text(user_id)
     kb = main_menu_keyboard(user_id)
+
+    # 1. Collect all quiz and stray message IDs to delete
+    extra_ids = []
+    quiz_cleanup_ids = context.user_data.pop("cleanup_message_ids", [])
+    if quiz_cleanup_ids:
+        extra_ids.extend(quiz_cleanup_ids)
+
+    if user_id:
+        try:
+            active_sess = db.get_session(user_id=user_id)
+            if active_sess:
+                sess_ids = active_sess.get("session_message_ids", [])
+                if sess_ids:
+                    extra_ids.extend(sess_ids)
+                db.clear_session(user_id=user_id)
+        except Exception as e:
+            logger.warning("Could not clear active session on home cleanup: %s", e)
+
+    valid_q_ids = [m for m in extra_ids if isinstance(m, int) and m > 0]
+    if valid_q_ids:
+        min_id = min(valid_q_ids)
+        max_id = max(valid_q_ids)
+        if max_id - min_id < 120:
+            extra_ids.extend(range(min_id, max_id + 1))
+
+    context.user_data.pop(f"active_passage_{chat_id}", None)
+
+    from utils import clean_entire_chat, send_clean_message, safe_edit
+
     if update.message:
-        from utils import clean_entire_chat
-        extra = [update.message.message_id]
-        await clean_entire_chat(context, chat_id, extra_ids=extra)
+        extra_ids.append(update.message.message_id)
+        try:
+            await clean_entire_chat(context, chat_id, extra_ids=extra_ids)
+        except Exception as e:
+            logger.warning("clean_entire_chat in message home failed: %s", e)
         await send_clean_message(context, chat_id, text, reply_markup=kb)
     elif update.callback_query:
-        await safe_edit(update.callback_query, text, kb)
+        query = update.callback_query
+        curr_msg_id = query.message.message_id if query and query.message else None
+        try:
+            await clean_entire_chat(context, chat_id, keep_message_id=curr_msg_id, extra_ids=extra_ids)
+        except Exception as e:
+            logger.warning("clean_entire_chat in callback home failed: %s", e)
+        await safe_edit(query, text, kb)
+
+
+async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _cleanup_and_return_home(update, context)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -831,7 +873,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "main_menu":
-        await safe_edit(query, main_menu_text(user_id), main_menu_keyboard(user_id))
+        await _cleanup_and_return_home(update, context)
         return
 
     if data == "browse_root":

@@ -258,6 +258,7 @@ async def send_next_question(update, context, session):
             try:
                 p_msg = await context.bot.send_message(chat_id=chat_id, text=passage_msg_text, parse_mode="HTML")
                 msg_ids.append(p_msg.message_id)
+                db.track_chat_message(chat_id, p_msg.message_id)
                 context.user_data[f"active_passage_{chat_id}"] = passage_text
             except Exception as e:
                 logger.warning("Failed sending passage with HTML blockquote: %s", e)
@@ -265,6 +266,7 @@ async def send_next_question(update, context, session):
                     clean_p = f"📄 [نص / قطعة القراءة]:\n\n{safe_passage}"
                     p_msg = await context.bot.send_message(chat_id=chat_id, text=clean_p)
                     msg_ids.append(p_msg.message_id)
+                    db.track_chat_message(chat_id, p_msg.message_id)
                     context.user_data[f"active_passage_{chat_id}"] = passage_text
                 except Exception as e2:
                     logger.error("Could not send reading passage: %s", e2)
@@ -296,12 +298,14 @@ async def send_next_question(update, context, session):
         try:
             ctx_msg = await context.bot.send_message(chat_id=chat_id, text=context_text, parse_mode="HTML")
             msg_ids.append(ctx_msg.message_id)
+            db.track_chat_message(chat_id, ctx_msg.message_id)
         except Exception as e:
             logger.warning("Failed sending context message with HTML, falling back to plain text: %s", e)
             clean_ctx = strip_html_tags(context_text)
             try:
                 ctx_msg = await context.bot.send_message(chat_id=chat_id, text=clean_ctx)
                 msg_ids.append(ctx_msg.message_id)
+                db.track_chat_message(chat_id, ctx_msg.message_id)
             except Exception as e2:
                 logger.error("Could not send context message: %s", e2)
     else:
@@ -398,6 +402,7 @@ async def send_next_question(update, context, session):
         return
 
     msg_ids.append(poll_msg.message_id)
+    db.track_chat_message(chat_id, poll_msg.message_id)
 
     db.update_session(
         session["current_index"], 
@@ -458,7 +463,9 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id = context.user_data.get("chat_id") or user_id
             if chat_id:
                 try:
-                    await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=reply_markup)
+                    err_msg = await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=reply_markup)
+                    if err_msg:
+                        db.track_chat_message(chat_id, err_msg.message_id)
                 except Exception:
                     pass
 
@@ -662,34 +669,55 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
     if chat_id:
         context.user_data.pop(f"active_passage_{chat_id}", None)
         
+    res_msg = None
     if chat_id:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=result_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
-        session_message_ids = session.get("session_message_ids", [])
+        try:
+            res_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=result_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.warning("finish_session HTML send failed: %s, falling back to plain text", e)
+            clean_res = strip_html_tags(result_text)
+            try:
+                res_msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=clean_res,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except Exception as e2:
+                logger.error("finish_session send failed: %s", e2)
+
+        session_message_ids = list(session.get("session_message_ids", []))
+        if res_msg:
+            session_message_ids.append(res_msg.message_id)
+            db.track_chat_message(chat_id, res_msg.message_id)
+            db.set_last_message_id(chat_id, res_msg.message_id)
+
         if session_message_ids:
-            context.user_data["cleanup_message_ids"] = session_message_ids
+            clean_ids = list(dict.fromkeys(session_message_ids))
+            context.user_data["cleanup_message_ids"] = clean_ids
+            for mid in clean_ids:
+                db.track_chat_message(chat_id, mid)
     elif query:
         await safe_edit_html(query, result_text, InlineKeyboardMarkup(keyboard), context=context)
 
 
 async def cleanup_quiz_messages(chat_id, context):
     msg_ids = context.user_data.pop("cleanup_message_ids", [])
-    if not msg_ids:
+    user_id = context.user_data.get("user_id")
+    if user_id:
+        try:
+            active_sess = db.get_session(user_id=user_id)
+            if active_sess:
+                s_ids = active_sess.get("session_message_ids", [])
+                if s_ids:
+                    msg_ids.extend(s_ids)
+        except Exception:
+            pass
+    if not msg_ids or not chat_id:
         return
-        
-    try:
-        # delete_messages can take up to 100 ids at a time
-        for i in range(0, len(msg_ids), 100):
-            chunk = msg_ids[i:i+100]
-            await context.bot.delete_messages(chat_id=chat_id, message_ids=chunk)
-    except Exception as e:
-        logger.warning("Could not delete_messages: %s, falling back to single deletions", e)
-        for msg_id in msg_ids:
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except Exception:
-                pass
+    from utils import delete_messages_bulk
+    await delete_messages_bulk(context, chat_id, msg_ids)
