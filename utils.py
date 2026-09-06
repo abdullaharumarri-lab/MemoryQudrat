@@ -65,12 +65,12 @@ async def clean_entire_chat(
     chat_id: int,
     keep_message_id: int = None,
     extra_ids: list[int] = None,
-    sweep_range: int = 150
+    sweep_range: int = 0
 ):
     """
-    Cleans ALL previous messages in the chat history completely.
-    Deletes tracked messages, extra IDs, and sweeps the last `sweep_range` message IDs,
-    leaving at most `keep_message_id` intact.
+    Cleans tracked messages in the chat history.
+    Deletes tracked messages and extra IDs.
+    If sweep_range > 0, also sweeps that many message IDs backwards from the highest known ID.
     """
     if not chat_id:
         return
@@ -91,9 +91,9 @@ async def clean_entire_chat(
 
     all_to_del = {int(mid) for mid in tracked if mid and int(mid) > 0 and mid != keep_message_id}
 
-    # 4. Sweep range backwards around known message IDs to catch ANY untracked polls, passages, or text
+    # 4. Optional sweep range (only used when explicitly requested)
     if sweep_range and sweep_range > 0:
-        known_ids = [m for m in all_to_del]
+        known_ids = list(all_to_del)
         if keep_message_id:
             known_ids.append(int(keep_message_id))
         if last_id:

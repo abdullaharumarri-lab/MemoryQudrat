@@ -59,6 +59,11 @@ def main_menu_text(user_id: int = None) -> str:
 
 
 async def _cleanup_and_return_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Returns to the main menu.
+    - If coming from a QUIZ (has cleanup_message_ids or active session): wipes quiz messages then sends fresh menu.
+    - If just browsing normally: safe-edits the current message in place (fast, no flicker).
+    """
     user = update.effective_user
     user_id = user.id if user else None
     chat_id = update.effective_chat.id if update.effective_chat else None
@@ -68,47 +73,88 @@ async def _cleanup_and_return_home(update: Update, context: ContextTypes.DEFAULT
     text = main_menu_text(user_id)
     kb = main_menu_keyboard(user_id)
 
-    # 1. Collect all message IDs to wipe
-    extra_ids = []
-    
-    # Message that triggered the action (callback button message or user text message)
-    if update.callback_query and update.callback_query.message:
-        extra_ids.append(update.callback_query.message.message_id)
-    elif update.message:
-        extra_ids.append(update.message.message_id)
-    elif update.effective_message:
-        extra_ids.append(update.effective_message.message_id)
-
-    # Quiz cleanup IDs from context
-    quiz_cleanup_ids = context.user_data.pop("cleanup_message_ids", [])
-    if quiz_cleanup_ids:
-        extra_ids.extend(quiz_cleanup_ids)
-
-    # Active session IDs from DB
+    # ── Collect quiz-related message IDs if any ──
+    quiz_msg_ids = list(context.user_data.pop("cleanup_message_ids", []))
+    active_sess = None
     if user_id:
         try:
             active_sess = db.get_session(user_id=user_id)
             if active_sess:
                 sess_ids = active_sess.get("session_message_ids", [])
                 if sess_ids:
-                    extra_ids.extend(sess_ids)
+                    quiz_msg_ids.extend(sess_ids)
                 db.clear_session(user_id=user_id)
         except Exception as e:
             logger.warning("Could not clear active session on home cleanup: %s", e)
 
-    # Clear cached passage
     context.user_data.pop(f"active_passage_{chat_id}", None)
 
-    from utils import clean_entire_chat, send_clean_message
+    has_quiz_cleanup = bool(quiz_msg_ids)
 
-    # 2. Clean ALL messages completely (sweep backwards 150 IDs to catch any polls or untracked messages)
-    try:
-        await clean_entire_chat(context, chat_id, keep_message_id=None, extra_ids=extra_ids, sweep_range=150)
-    except Exception as e:
-        logger.warning("clean_entire_chat in return home failed: %s", e)
+    from utils import delete_messages_bulk
 
-    # 3. Send fresh, spotless Main Menu
-    await send_clean_message(context, chat_id, text, reply_markup=kb)
+    if has_quiz_cleanup:
+        # ── QUIZ MODE: delete ALL quiz messages then send fresh main menu ──
+        # Also include the result message (the one with the "🔙 الرئيسية" button)
+        query = update.callback_query
+        if query and query.message:
+            quiz_msg_ids.append(query.message.message_id)
+
+        # Also include anything tracked in DB
+        tracked = db.get_and_clear_chat_messages(chat_id, keep_message_id=None)
+        quiz_msg_ids.extend(tracked)
+
+        all_to_delete = list(dict.fromkeys(int(m) for m in quiz_msg_ids if m and int(m) > 0))
+        if all_to_delete:
+            await delete_messages_bulk(context, chat_id, all_to_delete)
+
+        # Reset DB state
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM bot_state WHERE key = ?", (f"last_msg_{chat_id}",))
+        conn.commit()
+        conn.close()
+
+        # Send fresh, clean main menu
+        try:
+            new_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+            db.set_last_message_id(chat_id, new_msg.message_id)
+            db.track_chat_message(chat_id, new_msg.message_id)
+        except Exception as e:
+            logger.error("Failed sending fresh main menu after quiz: %s", e)
+
+    else:
+        # ── NORMAL BROWSE MODE: just edit the current message in place ──
+        query = update.callback_query
+        if query:
+            await safe_edit(query, text, kb)
+        elif update.message:
+            # Command triggered (e.g. /menu) — delete user command + send fresh
+            extra = [update.message.message_id]
+            tracked = db.get_and_clear_chat_messages(chat_id, keep_message_id=None)
+            extra.extend(tracked)
+            last_id = db.get_last_message_id(chat_id)
+            if last_id:
+                extra.append(last_id)
+            await delete_messages_bulk(context, chat_id, extra)
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM bot_state WHERE key = ?", (f"last_msg_{chat_id}",))
+            conn.commit()
+            conn.close()
+            try:
+                new_msg = await context.bot.send_message(
+                    chat_id=chat_id, text=text, reply_markup=kb, parse_mode="HTML"
+                )
+                db.set_last_message_id(chat_id, new_msg.message_id)
+                db.track_chat_message(chat_id, new_msg.message_id)
+            except Exception as e:
+                logger.error("Failed sending fresh main menu from command: %s", e)
 
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

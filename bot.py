@@ -110,11 +110,17 @@ async def start_command(update: Update, context):
     )
     from handlers.main_menu import main_menu_keyboard
     from utils import clean_entire_chat
+
+    # Collect all message IDs to clean before showing fresh start screen
+    extra = []
     user_msg_id = update.message.message_id if update.message else None
-    extra = [user_msg_id] if user_msg_id else []
+    if user_msg_id:
+        extra.append(user_msg_id)
+
     quiz_cleanup_ids = context.user_data.pop("cleanup_message_ids", [])
     if quiz_cleanup_ids:
         extra.extend(quiz_cleanup_ids)
+
     if user_id:
         try:
             active_sess = db.get_session(user_id=user_id)
@@ -125,16 +131,11 @@ async def start_command(update: Update, context):
                 db.clear_session(user_id=user_id)
         except Exception:
             pass
-    valid_q_ids = [m for m in extra if isinstance(m, int) and m > 0]
-    if valid_q_ids:
-        min_id = min(valid_q_ids)
-        max_id = max(valid_q_ids)
-        if max_id - min_id < 120:
-            extra.extend(range(min_id, max_id + 1))
 
     context.user_data.pop(f"active_passage_{chat_id}", None)
+
     try:
-        await clean_entire_chat(context, chat_id, keep_message_id=None, extra_ids=extra, sweep_range=150)
+        await clean_entire_chat(context, chat_id, keep_message_id=None, extra_ids=extra)
     except Exception as e:
         logger.warning("Could not clean chat in start_command: %s", e)
 
