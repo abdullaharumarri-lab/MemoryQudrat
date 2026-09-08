@@ -945,9 +945,28 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]]))
             return
         quiz_id = db.save_quiz_without_review("كويز رابط", [], owner_id=user_id, is_public=1, url=msg)
-        db.schedule_first_review(quiz_id, user_id=user_id, start_today=True)
-        await send_clean_message(context, chat_id, f"✅ تم حفظ الرابط!\n🔗 <code>{html.escape(msg)}</code>",
-                                 update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
+        db.schedule_first_review(quiz_id, user_id=user_id, start_today=False)
+
+        categories = db.get_categories(is_public=1)
+        kb = []
+        if categories:
+            cat_row = []
+            for c in categories:
+                icon = c.get("icon", "📁")
+                cat_row.append(InlineKeyboardButton(f"{icon} {c['name']}", callback_data=f"set_quiz_cat_{quiz_id}_{c['id']}"))
+                if len(cat_row) == 2:
+                    kb.append(cat_row)
+                    cat_row = []
+            if cat_row:
+                kb.append(cat_row)
+        kb.append([InlineKeyboardButton("📂 البقاء في الرئيسية (بدون مجلد)", callback_data=f"quiz_detail_{quiz_id}")])
+        kb.append([InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}"),
+                   InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+
+        await send_clean_message(context, chat_id,
+                                 f"✅ <b>تم حفظ رابط الكويز بنجاح!</b>\n🔗 <code>{html.escape(msg)}</code>\n\n"
+                                 f"📁 <b>اختر المجلد الذي ترغب بإضافة الكويز إليه:</b>",
+                                 update=update, reply_markup=InlineKeyboardMarkup(kb))
         return
 
     if is_adm and context.user_data.get("waiting_for_quiz_rename"):

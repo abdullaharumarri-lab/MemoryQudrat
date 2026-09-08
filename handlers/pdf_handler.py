@@ -460,28 +460,45 @@ async def process_json_quiz_data(
         if audit["notes"]:
             audit_lines.append("\n" + "\n".join(audit["notes"]))
 
+        categories = db.get_categories(is_public=1)
+        folder_prompt = "\n\n📁 <b>اختر المجلد لإضافة الكويز إليه:</b>" if categories else ""
         text = (
             f"✅ <b>تم تدقيق وإضافة الكويز بنجاح!</b>\n\n"
             f"📋 <b>{name_safe}</b>\n\n"
             + "\n".join(audit_lines) +
-            f"{wrong_note}\n\n"
-            f"الكويز متاح الآن في بنك الكويزات لجميع الطلاب 🌟."
+            f"{wrong_note}"
+            f"{folder_prompt}"
         )
 
-        kb = [
-            [
-                InlineKeyboardButton("👁️ معاينة الأسئلة", callback_data=f"preview_quiz_{quiz_id}_0"),
-                InlineKeyboardButton("📁 نقل إلى مجلد", callback_data=f"move_quiz_{quiz_id}")
-            ],
-            [
-                InlineKeyboardButton("▶️ ابدأ حل الكويز", callback_data=f"start_quiz_{quiz_id}"),
-                InlineKeyboardButton("🛠 تعديل الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")
-            ],
-            [
-                InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}"),
-                InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")
-            ],
-        ]
+        kb = []
+        if categories:
+            cat_row = []
+            for c in categories:
+                icon = c.get("icon", "📁")
+                cat_row.append(InlineKeyboardButton(f"{icon} {c['name']}", callback_data=f"set_quiz_cat_{quiz_id}_{c['id']}"))
+                if len(cat_row) == 2:
+                    kb.append(cat_row)
+                    cat_row = []
+            if cat_row:
+                kb.append(cat_row)
+            kb.append([
+                InlineKeyboardButton("📁 نقل لمجلد آخر...", callback_data=f"move_quiz_{quiz_id}"),
+                InlineKeyboardButton("👁️ معاينة الأسئلة", callback_data=f"preview_quiz_{quiz_id}_0")
+            ])
+        else:
+            kb.append([
+                InlineKeyboardButton("📁 نقل إلى مجلد", callback_data=f"move_quiz_{quiz_id}"),
+                InlineKeyboardButton("👁️ معاينة الأسئلة", callback_data=f"preview_quiz_{quiz_id}_0")
+            ])
+
+        kb.append([
+            InlineKeyboardButton("▶️ ابدأ حل الكويز", callback_data=f"start_quiz_{quiz_id}"),
+            InlineKeyboardButton("🛠 تعديل الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")
+        ])
+        kb.append([
+            InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}"),
+            InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")
+        ])
         keyboard = InlineKeyboardMarkup(kb)
 
     await send_clean_message(context, chat_id, text, update=update, reply_markup=keyboard)

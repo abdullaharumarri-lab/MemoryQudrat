@@ -123,20 +123,36 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
         name = manual_quiz.get("name", "كويز بدون اسم")
         questions = manual_quiz.get("questions", [])
 
-        is_pub = 0
         quiz_id = db.save_quiz(name, questions, user_id=u_id, is_public=is_pub)
 
+        categories = db.get_categories(is_public=1)
+        folder_prompt = "\n\n📁 <b>اختر المجلد الذي ترغب بإضافة الكويز إليه:</b>" if categories else ""
         text = (
             f"🎉 <b>تم إنشاء الكويز وحفظه بنجاح!</b>\n\n"
             f"📋 <b>{html.escape(name)}</b>\n"
-            f"📝 عدد الأسئلة: <b>{len(questions)}</b> سؤال\n\n"
-            f"تمت جدولة هذا الكويز في نظام <b>التكرار المتباعد</b> لتصلك مراجعاته الدورية تلقائياً 🧠."
+            f"📝 عدد الأسئلة: <b>{len(questions)}</b> سؤال"
+            f"{folder_prompt}"
         )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_quiz_{quiz_id}")],
-            [InlineKeyboardButton("📚 تصفح الكويزات", callback_data="browse_root")],
-            [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
+        kb_rows = []
+        if categories:
+            cat_row = []
+            for c in categories:
+                icon = c.get("icon", "📁")
+                cat_row.append(InlineKeyboardButton(f"{icon} {c['name']}", callback_data=f"set_quiz_cat_{quiz_id}_{c['id']}"))
+                if len(cat_row) == 2:
+                    kb_rows.append(cat_row)
+                    cat_row = []
+            if cat_row:
+                kb_rows.append(cat_row)
+        kb_rows.append([
+            InlineKeyboardButton("▶️ ابدأ حل الكويز الآن", callback_data=f"start_quiz_{quiz_id}"),
+            InlineKeyboardButton("📁 نقل إلى مجلد", callback_data=f"move_quiz_{quiz_id}")
         ])
+        kb_rows.append([
+            InlineKeyboardButton("📚 تصفح الكويزات", callback_data="browse_root"),
+            InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")
+        ])
+        kb = InlineKeyboardMarkup(kb_rows)
     elif data.startswith("manual_set_correct_"):
         correct_idx = int(data.split("_")[-1])
         current_q = context.user_data.pop("current_q", {})
