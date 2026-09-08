@@ -211,19 +211,28 @@ async def send_next_question(update, context, session):
     if not chat_id:
         chat_id = user_id
     context.user_data["chat_id"] = chat_id
+    msg_ids = session.get("session_message_ids", [])
 
     passage_text = None
     clean_q_prompt = q_text
 
-    if "📄" in q_text and "❓" in q_text:
-        parts = q_text.split("❓", 1)
+    # 1. Robust Passage and Question Separation
+    if "📄" in q_text and ("\n\n❓" in q_text or "\n❓" in q_text or "❓" in q_text):
+        if "\n\n❓" in q_text:
+            parts = q_text.split("\n\n❓", 1)
+        elif "\n❓" in q_text:
+            parts = q_text.split("\n❓", 1)
+        else:
+            parts = q_text.rsplit("❓", 1)
         passage_text = parts[0].replace("📄", "").strip()
         clean_q_prompt = parts[1].strip()
-    elif "\n\n" in q_text and any(w in q_text for w in ["النص", "القطعة", "الجملة", "الفقرة"]):
-        lines = q_text.split("\n\n", 1)
-        if len(lines[0]) > 25:
-            passage_text = lines[0].strip()
-            clean_q_prompt = lines[1].strip()
+    elif "\n\n" in q_text:
+        parts = q_text.split("\n\n", 1)
+        first_block = parts[0].strip()
+        second_block = parts[1].strip()
+        if len(first_block) > 40 and (len(second_block) > 0 or any(w in first_block for w in ["النص", "القطعة", "الجملة", "الفقرة", "المقال", "القصة"])):
+            passage_text = first_block.replace("📄", "").strip()
+            clean_q_prompt = second_block.lstrip("❓: \n\t").strip()
 
     # Clean any duplicated passage text inside clean_q_prompt
     if passage_text:
@@ -234,14 +243,6 @@ async def send_next_question(update, context, session):
             if idx != -1:
                 clean_q_prompt = clean_q_prompt[idx + len(passage_text):].strip()
         clean_q_prompt = clean_q_prompt.lstrip("❓: \n\t").strip()
-
-    # Check Telegram Poll limits (Question max 300, Option max 100)
-    long_question = len(clean_q_prompt) > 250
-    long_options = any(len(opt) > 90 for opt in options)
-
-    poll_options = []
-    letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"]
-    msg_ids = session.get("session_message_ids", [])
 
     # ── Reading Passage Deduplication: Send ONCE per passage block ──
     last_passage = context.user_data.get(f"active_passage_{chat_id}")
@@ -270,13 +271,22 @@ async def send_next_question(update, context, session):
                     context.user_data[f"active_passage_{chat_id}"] = passage_text
                 except Exception as e2:
                     logger.error("Could not send reading passage: %s", e2)
+            
+            # Rate-limit safety: small delay after sending passage before poll
+            await asyncio.sleep(0.4)
         else:
-            # Same passage as the previous question in this session:
-            # Do NOT duplicate the message!
+            # Same passage as previous question: do not duplicate text, add clean badge
             if not clean_q_prompt.startswith("📖 (تابع"):
                 clean_q_prompt = "📖 (تابع لقطعة القراءة أعلاه)\n" + clean_q_prompt
     else:
         context.user_data.pop(f"active_passage_{chat_id}", None)
+
+    # Check Telegram Poll limits (Question max 300, Option max 100)
+    long_question = len(clean_q_prompt) > 250
+    long_options = any(len(opt) > 90 for opt in options)
+
+    poll_options = []
+    letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"]
 
     if long_question or long_options:
         context_text = f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>\n\n"
@@ -308,6 +318,9 @@ async def send_next_question(update, context, session):
                 db.track_chat_message(chat_id, ctx_msg.message_id)
             except Exception as e2:
                 logger.error("Could not send context message: %s", e2)
+        
+        # Rate-limit safety: small delay after context message before poll
+        await asyncio.sleep(0.3)
     else:
         poll_question = clean_q_prompt
         poll_options = list(options)
@@ -339,8 +352,8 @@ async def send_next_question(update, context, session):
     poll_question_clean = str(poll_question).strip()
     if not poll_question_clean:
         poll_question_clean = "اختر الإجابة الصحيحة:"
-    if len(poll_question_clean) > 295:
-        poll_question_clean = poll_question_clean[:290] + "..."
+    if len(poll_question_clean) > 280:
+        poll_question_clean = poll_question_clean[:275] + "..."
 
     poll_kwargs = {
         "chat_id": chat_id,

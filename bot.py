@@ -235,20 +235,31 @@ def main():
     
     socket_options = [
         (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-        (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30),
+        (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60),
         (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10),
-        (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3),
+        (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5),
     ]
     limits = httpx.Limits(
         max_connections=100,
         max_keepalive_connections=20,
-        keepalive_expiry=5.0,  # Drop idle connections quickly
+        keepalive_expiry=30.0,
     )
     
     request = HTTPXRequest(
-        connection_pool_size=100,
-        connect_timeout=5.0,    # Fail fast on connect
+        connection_pool_size=50,
+        connect_timeout=10.0,
         read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=10.0,
+        socket_options=socket_options,
+        httpx_kwargs={"limits": limits}
+    )
+
+    # Dedicated get_updates request with longer read_timeout to prevent polling disconnects
+    get_updates_request = HTTPXRequest(
+        connection_pool_size=20,
+        connect_timeout=10.0,
+        read_timeout=60.0,
         write_timeout=20.0,
         pool_timeout=10.0,
         socket_options=socket_options,
@@ -261,7 +272,7 @@ def main():
         .post_init(post_init)
         .concurrent_updates(True)
         .request(request)
-        .get_updates_request(request)
+        .get_updates_request(get_updates_request)
         .build()
     )
 
@@ -330,7 +341,7 @@ def main():
     if APP_URL:
         app.run_webhook(listen="0.0.0.0", port=PORT, webhook_url=APP_URL)
     else:
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        app.run_polling(allowed_updates=Update.ALL_TYPES, timeout=20, bootstrap_retries=-1)
 
 
 if __name__ == "__main__":

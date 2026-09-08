@@ -97,22 +97,38 @@ function extractGoogleFormsQuiz() {
 
                 // Type 1 & 6: Reading Passage Card / Text Block (Mandatory Capture)
                 if (itemType === 1 || itemType === 6) {
-                    const isInfoOrPledge = /(?:اسم\s+الطالب|اسم\s+المشترك|الاسم\s+الثلاثي|البريد|email|رقم\s+الجوال|كلمة\s+المرور|password|اقسم|أقسم|أتعهد|اتعهد|أقر|تعهد)/i.test(title);
-                    if (!isInfoOrPledge && title.trim().length > 5) {
-                        currentActivePassage = title.trim();
+                    const itemTitle = (item[1] || "").trim();
+                    const itemDesc = (item[2] || "").trim();
+                    let passageCandidate = "";
+                    if (itemTitle && itemDesc) {
+                        passageCandidate = itemTitle.length < 30 ? itemDesc : (itemTitle + "\n\n" + itemDesc);
+                    } else {
+                        passageCandidate = itemDesc || itemTitle;
+                    }
+                    passageCandidate = passageCandidate.trim();
+
+                    const isInfoOrPledge = /(?:اسم\s+الطالب|اسم\s+المشترك|الاسم\s+الثلاثي|البريد|email|رقم\s+الجوال|كلمة\s+المرور|password|اقسم|أقسم|أتعهد|اتعهد|أقر|تعهد)/i.test(passageCandidate);
+                    if (!isInfoOrPledge && passageCandidate.length > 5) {
+                        currentActivePassage = passageCandidate;
                     }
                     continue;
                 }
 
-                // Type 8: Section Break / Header — resets the active passage by default
+                // Type 8: Section Break / Header
                 if (itemType === 8) {
-                    // If the section header itself has a description/passage text, capture it
+                    const secTitle = (item[1] || "").trim();
                     const secDesc = (item[2] || "").trim();
-                    if (secDesc && secDesc.length > 25) {
-                        currentActivePassage = secDesc;
+                    let secText = "";
+                    if (secTitle && secDesc) {
+                        secText = secTitle.length < 30 ? secDesc : (secTitle + "\n\n" + secDesc);
                     } else {
-                        // Any new section clears the active passage
-                        currentActivePassage = "";
+                        secText = secDesc || secTitle;
+                    }
+                    secText = secText.trim();
+
+                    const isMeta = /(?:اسم\s+الطالب|بيانات|تسجيل|معلومات|تعليمات|درجات|القسم\s+الأول|القسم\s+الثاني)/i.test(secText);
+                    if (!isMeta && secText.length > 25) {
+                        currentActivePassage = secText;
                     }
                     continue;
                 }
@@ -134,14 +150,10 @@ function extractGoogleFormsQuiz() {
                     let cleanQText = title.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').replace(/\s*\*\s*$/, '').trim();
                     if (!cleanQText) cleanQText = `السؤال ${questions.length + 1}`;
 
-                    // Attach active passage only to reading comprehension questions
+                    // Attach active passage seamlessly without destructive wipe
                     if (currentActivePassage) {
-                        const isVerbalAnalogy = /^[\u0600-\u06FF\s]+[:\:\-]\s*[\u0600-\u06FF\s]+$/.test(cleanQText.trim()) && cleanQText.trim().split(/[:\:\-]/).length === 2 && cleanQText.length < 50;
-                        const isMathOrQuant = /(?:إذا\s+كان|س\s*\+|\bس\b|\bص\b|\bع\b|[0-9٠-٩]+\s*[\+\-\*\/=÷×%]|[=÷×%]|محيط|مساحة|المثلث|الدائرة|المستطيل|نسبة|متوسط|كمية)/.test(cleanQText) && !/(?:النص|القطعة|الفقرة|الكاتب|الشاعر|معنى|مرادف|ضد)/.test(cleanQText);
-
-                        if (isVerbalAnalogy || isMathOrQuant) {
-                            currentActivePassage = "";
-                        } else {
+                        const isAnalogy = isVerbalAnalogy(cleanQText);
+                        if (!isAnalogy) {
                             const snippet = currentActivePassage.slice(0, 25).trim();
                             if (!cleanQText.includes(snippet)) {
                                 cleanQText = '📄 ' + currentActivePassage + '\n\n❓ ' + cleanQText;
@@ -289,12 +301,8 @@ function extractGoogleFormsQuiz() {
             if (!qText) qText = `السؤال ${qNum}`;
 
             if (currentPassageFallback) {
-                const isVerbalAnalogy = /^[\u0600-\u06FF\s]+[:\:\-]\s*[\u0600-\u06FF\s]+$/.test(qText.trim()) && qText.trim().split(/[:\:\-]/).length === 2 && qText.length < 50;
-                const isMathOrQuant = /(?:إذا\s+كان|س\s*\+|\bس\b|\bص\b|\bع\b|[0-9٠-٩]+\s*[\+\-\*\/=÷×%]|[=÷×%]|محيط|مساحة|المثلث|الدائرة|المستطيل|نسبة|متوسط|كمية)/.test(qText) && !/(?:النص|القطعة|الفقرة|الكاتب|الشاعر|معنى|مرادف|ضد)/.test(qText);
-
-                if (isVerbalAnalogy || isMathOrQuant) {
-                    currentPassageFallback = "";
-                } else {
+                const isAnalogy = isVerbalAnalogy(qText);
+                if (!isAnalogy) {
                     const snippet = currentPassageFallback.slice(0, 25).trim();
                     if (!qText.includes(snippet)) {
                         qText = '📄 ' + currentPassageFallback + '\n\n❓ ' + qText;
