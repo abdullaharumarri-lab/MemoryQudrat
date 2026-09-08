@@ -419,9 +419,6 @@ async def process_json_quiz_data(
         quiz_name = data.get("quiz_name") or data.get("name", "كويز جديد")
         quiz_id = db.save_quiz_without_review(quiz_name, data["questions"], owner_id=owner_id, is_public=is_pub)
         
-        # Schedule first review for admin in Spaced Repetition
-        db.schedule_first_review(quiz_id, user_id=u_id, start_today=True)
-        
         quiz = db.get_quiz(quiz_id)
         name_safe = html.escape(quiz.get('name', quiz_name)) if quiz else html.escape(quiz_name)
 
@@ -430,6 +427,8 @@ async def process_json_quiz_data(
         wrong_count = 0
         
         if wrong_indices:
+            # Quiz was already solved externally with mistakes, schedule Review 1 for tomorrow
+            db.schedule_first_review(quiz_id, user_id=u_id, start_today=False)
             saved_questions = db.get_questions(quiz_id)
             total_q = len(saved_questions)
             for idx in wrong_indices:

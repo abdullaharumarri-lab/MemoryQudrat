@@ -779,7 +779,7 @@ def get_all_public_quizzes() -> list:
 
 
 def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
-    """Save a URL-only quiz (like Google Forms) and schedule its first review for today."""
+    """Save a URL-only quiz (like Google Forms)."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -789,15 +789,12 @@ def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6
     quiz_id = cursor.lastrowid
     conn.commit()
     conn.close()
-    
-    schedule_first_review(quiz_id, user_id=user_id, start_today=True)
     return quiz_id
 
 
 def save_quiz(name: str, questions: list, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
-    """Save quiz and schedule its first review for today in Riyadh timezone."""
+    """Save quiz without auto-scheduling until first study solve."""
     quiz_id = save_quiz_without_review(name, questions, category_id, owner_id=user_id, is_public=is_public)
-    schedule_first_review(quiz_id, user_id=user_id, start_today=True)
     return quiz_id
 
 
@@ -916,8 +913,6 @@ def copy_quiz_to_user(quiz_id: int, user_id: int) -> int:
     conn.commit()
     conn.close()
 
-    # Schedule first review for this user immediately today
-    schedule_first_review(new_quiz_id, user_id=user_id, start_today=True)
     return new_quiz_id
 
 
@@ -1031,6 +1026,16 @@ def schedule_first_review(quiz_id: int, user_id: int = 6099429826, start_today: 
     conn.close()
 
 
+def get_quiz_review(quiz_id: int, user_id: int) -> dict:
+    """Get the active review for a specific user and quiz, if any."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def get_due_quiz_reviews(user_id: int = None) -> list:
     """Returns quiz_reviews due today or earlier for a user in Riyadh timezone, ordered by recency (newest first)."""
     from utils import quiz_sort_key_desc
@@ -1040,7 +1045,7 @@ def get_due_quiz_reviews(user_id: int = None) -> list:
     valid_filter = "((q.url IS NOT NULL AND q.url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = q.id))"
     if user_id is not None:
         cursor.execute(
-            f"""SELECT qr.*, q.name as quiz_name
+            f"""SELECT qr.*, q.name as quiz_name, q.category_id
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.user_id = ? AND qr.next_review_date <= ? AND {valid_filter}
@@ -1049,7 +1054,7 @@ def get_due_quiz_reviews(user_id: int = None) -> list:
         )
     else:
         cursor.execute(
-            f"""SELECT qr.*, q.name as quiz_name
+            f"""SELECT qr.*, q.name as quiz_name, q.category_id
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.next_review_date <= ? AND {valid_filter}
@@ -1063,14 +1068,14 @@ def get_due_quiz_reviews(user_id: int = None) -> list:
 
 
 def get_all_quiz_reviews(user_id: int = None) -> list:
-    """Returns all scheduled quiz_reviews with quiz names, ordered by recency (newest first)."""
+    """Returns all scheduled quiz_reviews with quiz names and category_id, ordered by recency (newest first)."""
     from utils import quiz_sort_key_desc
     conn = get_connection()
     cursor = conn.cursor()
     valid_filter = "((q.url IS NOT NULL AND q.url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = q.id))"
     if user_id is not None:
         cursor.execute(
-            f"""SELECT qr.*, q.name as quiz_name
+            f"""SELECT qr.*, q.name as quiz_name, q.category_id
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.user_id = ? AND {valid_filter}
@@ -1079,7 +1084,7 @@ def get_all_quiz_reviews(user_id: int = None) -> list:
         )
     else:
         cursor.execute(
-            f"""SELECT qr.*, q.name as quiz_name
+            f"""SELECT qr.*, q.name as quiz_name, q.category_id
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE {valid_filter}
@@ -1192,7 +1197,7 @@ def get_due_weak_questions(user_id: int = None) -> list:
     today_iso = get_riyadh_today_iso()
     if user_id is not None:
         cursor.execute(
-            """SELECT wq.*, q.name as quiz_name
+            """SELECT wq.*, q.name as quiz_name, q.category_id
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
                WHERE wq.user_id = ? AND wq.next_review_date <= ?
@@ -1201,7 +1206,7 @@ def get_due_weak_questions(user_id: int = None) -> list:
         )
     else:
         cursor.execute(
-            """SELECT wq.*, q.name as quiz_name
+            """SELECT wq.*, q.name as quiz_name, q.category_id
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
                WHERE wq.next_review_date <= ?
@@ -1218,7 +1223,7 @@ def get_all_weak_questions(user_id: int = None) -> list:
     cursor = conn.cursor()
     if user_id is not None:
         cursor.execute(
-            """SELECT wq.*, q.name as quiz_name
+            """SELECT wq.*, q.name as quiz_name, q.category_id
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
                WHERE wq.user_id = ?
@@ -1227,7 +1232,7 @@ def get_all_weak_questions(user_id: int = None) -> list:
         )
     else:
         cursor.execute(
-            """SELECT wq.*, q.name as quiz_name
+            """SELECT wq.*, q.name as quiz_name, q.category_id
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
                ORDER BY q.name"""
@@ -1244,7 +1249,7 @@ def get_due_all_weak_questions_sorted(user_id: int = None) -> list:
     today_iso = get_riyadh_today_iso()
     if user_id is not None:
         cursor.execute(
-            """SELECT wq.*, q.name as quiz_name
+            """SELECT wq.*, q.name as quiz_name, q.category_id
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
                WHERE wq.user_id = ? AND wq.next_review_date <= ?
@@ -1253,7 +1258,7 @@ def get_due_all_weak_questions_sorted(user_id: int = None) -> list:
         )
     else:
         cursor.execute(
-            """SELECT wq.*, q.name as quiz_name
+            """SELECT wq.*, q.name as quiz_name, q.category_id
                FROM weak_questions wq
                JOIN quizzes q ON wq.quiz_id = q.id
                WHERE wq.next_review_date <= ?

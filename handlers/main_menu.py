@@ -260,12 +260,15 @@ def _build_quiz_detail(quiz_id, user_id, back_cb="browse_root"):
         kb.append([InlineKeyboardButton(f"❓ راجع الأسئلة الضعيفة ({len(quiz_weak)})",
                                         callback_data=f"start_weak_{quiz_id}")])
 
+    can_manage = is_admin(user_id) or quiz.get("owner_id") == user_id
+    if can_manage:
+        kb.append([InlineKeyboardButton("📁 نقل إلى مجلد", callback_data=f"move_quiz_{quiz_id}"),
+                   InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"rename_quiz_{quiz_id}")])
     if is_admin(user_id):
         kb.append([InlineKeyboardButton("📊 تحديث (Excel)", callback_data=f"reupload_excel_{quiz_id}"),
                    InlineKeyboardButton("🔄 تحديث (JSON)", callback_data=f"reupload_json_{quiz_id}")])
-        kb.append([InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"rename_quiz_{quiz_id}"),
-                   InlineKeyboardButton("⚙️ ضبط المراجعة", callback_data=f"fixstage_menu_{quiz_id}")])
-        kb.append([InlineKeyboardButton("🛠 تعديل وتدقيق الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")])
+        kb.append([InlineKeyboardButton("⚙️ ضبط المراجعة", callback_data=f"fixstage_menu_{quiz_id}"),
+                   InlineKeyboardButton("🛠 تعديل وتدقيق الأسئلة", callback_data=f"fixstage_qlist_{quiz_id}_0")])
         kb.append([InlineKeyboardButton("🗑️ حذف الكويز", callback_data=f"delete_quiz_{quiz_id}")])
 
     kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=back_cb)])
@@ -276,20 +279,82 @@ def _build_quiz_detail(quiz_id, user_id, back_cb="browse_root"):
 #  مراجعات اليوم
 # ═══════════════════════════════════════════════════════════════
 
-def _build_due_reviews(user_id):
+def _build_due_reviews(user_id, category_filter=None, page=1):
     reviews = db.get_due_quiz_reviews(user_id=user_id)
     if not reviews:
         return ("✅ <b>لا توجد مراجعات مستحقة اليوم</b>\n\nأحسنت! جدولك نظيف 🌟",
                 InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
-    text = f"🔔 <b>مراجعات اليوم</b> — {len(reviews)} مراجعة مستحقة\n\n"
-    kb = []
+
+    cats = {c["id"]: c["name"] for c in db.get_categories(is_public=1)}
+
+    cat_map = {}
     for r in reviews:
-        name = r.get("quiz_name", "كويز")[:30] + ("..." if len(r.get("quiz_name", "")) > 30 else "")
-        d = days_until(r["next_review_date"])
+        cid = r.get("category_id")
+        if cid not in cat_map:
+            cname = cats.get(cid, "عام / بدون مجلد" if not cid else f"مجلد {cid}")
+            cat_map[cid] = {"name": cname, "reviews": []}
+        cat_map[cid]["reviews"].append(r)
+
+    # If there are multiple folders and user didn't pick one yet, show folder selection
+    if len(cat_map) > 1 and category_filter is None:
+        text = (f"🔔 <b>مراجعات اليوم</b> — <b>{len(reviews)}</b> مراجعة مستحقة\n\n"
+                f"الكويزات المستحقة موزعة على <b>{len(cat_map)}</b> مجلدات.\n"
+                f"اختر المجلد الذي ترغب بمراجعته:")
+        kb = []
+        for cid, info in cat_map.items():
+            c_key = cid if cid is not None else 0
+            kb.append([InlineKeyboardButton(f"📁 {info['name']} ({len(info['reviews'])})",
+                                            callback_data=f"due_cat_{c_key}")])
+        kb.append([InlineKeyboardButton(f"🌐 عرض الكل ({len(reviews)})", callback_data="due_cat_all")])
+        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+        return text, InlineKeyboardMarkup(kb)
+
+    # If category_filter is selected or only 1 folder exists
+    if category_filter is not None and category_filter != "all":
+        target_cid = None if category_filter == 0 else category_filter
+        folder_info = cat_map.get(target_cid)
+        filtered_reviews = folder_info["reviews"] if folder_info else []
+        folder_title = f"📁 {folder_info['name']}" if folder_info else "المجلد"
+    else:
+        filtered_reviews = reviews
+        folder_title = "🌐 جميع المراجعات المستحقة"
+
+    if not filtered_reviews:
+        text = "✅ <b>لا توجد مراجعات مستحقة في هذا المجلد اليوم!</b>"
+        kb = []
+        if len(cat_map) > 1:
+            kb.append([InlineKeyboardButton("📂 تصفية حسب المجلدات", callback_data="due_reviews")])
+        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+        return text, InlineKeyboardMarkup(kb)
+
+    total = len(filtered_reviews)
+    total_pages = max(1, (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * ITEMS_PER_PAGE
+
+    text = f"🔔 <b>مراجعات اليوم — {folder_title}</b>\n📊 <b>{total}</b> مراجعة مستحقة\n\n"
+    kb = []
+    for r in filtered_reviews[start:start + ITEMS_PER_PAGE]:
+        name = r.get("quiz_name", "كويز")
+        if len(name) > 28:
+            name = name[:25] + "..."
         lbl = stage_label(r.get("stage", 0))
-        timing = "🔴 الآن" if d <= 0 else f"🟡 بعد {d} يوم"
-        kb.append([InlineKeyboardButton(f"▶️ {name} ({lbl}) — {timing}",
+        kb.append([InlineKeyboardButton(f"▶️ {name} ({lbl})",
                                         callback_data=f"start_review_{r['quiz_id']}_{r['id']}")])
+
+    nav = []
+    c_param = "all" if category_filter == "all" else (category_filter if category_filter is not None else "0")
+    if page > 1:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"due_page_{c_param}_{page-1}"))
+    if total_pages > 1:
+        nav.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"due_page_{c_param}_{page+1}"))
+    if nav:
+        kb.append(nav)
+
+    if len(cat_map) > 1:
+        kb.append([InlineKeyboardButton("📂 تصفية حسب المجلدات", callback_data="due_reviews")])
     kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(kb)
 
@@ -298,21 +363,54 @@ def _build_due_reviews(user_id):
 #  جدول المراجعة
 # ═══════════════════════════════════════════════════════════════
 
-def _build_review_schedule(user_id, page=1):
+def _build_review_schedule(user_id, category_filter=None, page=1):
     all_reviews = db.get_all_quiz_reviews(user_id=user_id)
     if not all_reviews:
         return ("📅 <b>جدول المراجعة</b>\n\nلم تضف أي كويز لجدول مراجعاتك بعد.",
                 InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
 
-    all_reviews.sort(key=lambda r: r.get("next_review_date", "9999"))
-    total = len(all_reviews)
+    cats = {c["id"]: c["name"] for c in db.get_categories(is_public=1)}
+
+    cat_map = {}
+    for r in all_reviews:
+        cid = r.get("category_id")
+        if cid not in cat_map:
+            cname = cats.get(cid, "عام / بدون مجلد" if not cid else f"مجلد {cid}")
+            cat_map[cid] = {"name": cname, "reviews": []}
+        cat_map[cid]["reviews"].append(r)
+
+    # If multiple folders and no category filter selected, show folder list
+    if len(cat_map) > 1 and category_filter is None:
+        text = (f"📅 <b>جدول المراجعة</b> — <b>{len(all_reviews)}</b> كويز مجدول\n\n"
+                f"الكويزات موزعة على <b>{len(cat_map)}</b> مجلدات.\n"
+                f"اختر المجلد لعرض جدوله الزمني:")
+        kb = []
+        for cid, info in cat_map.items():
+            c_key = cid if cid is not None else 0
+            kb.append([InlineKeyboardButton(f"📁 {info['name']} ({len(info['reviews'])})",
+                                            callback_data=f"sched_cat_{c_key}")])
+        kb.append([InlineKeyboardButton(f"🌐 عرض الكل ({len(all_reviews)})", callback_data="sched_cat_all")])
+        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+        return text, InlineKeyboardMarkup(kb)
+
+    if category_filter is not None and category_filter != "all":
+        target_cid = None if category_filter == 0 else category_filter
+        folder_info = cat_map.get(target_cid)
+        filtered_reviews = folder_info["reviews"] if folder_info else []
+        folder_title = f"📁 {folder_info['name']}" if folder_info else "المجلد"
+    else:
+        filtered_reviews = list(all_reviews)
+        folder_title = "🌐 جميع الكويزات المجدولة"
+
+    filtered_reviews.sort(key=lambda r: r.get("next_review_date", "9999"))
+    total = len(filtered_reviews)
     total_pages = max(1, (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
     page = max(1, min(page, total_pages))
     start = (page - 1) * ITEMS_PER_PAGE
 
-    text = f"📅 <b>جدول المراجعة</b> — {total} كويز مجدول\n\n"
+    text = f"📅 <b>جدول المراجعة — {folder_title}</b>\n📊 <b>{total}</b> كويز مجدول\n\n"
     kb = []
-    for r in all_reviews[start:start + ITEMS_PER_PAGE]:
+    for r in filtered_reviews[start:start + ITEMS_PER_PAGE]:
         name = r.get("quiz_name", "كويز")
         if len(name) > 28:
             name = name[:25] + "..."
@@ -323,14 +421,18 @@ def _build_review_schedule(user_id, page=1):
                                         callback_data=f"quiz_detail_{r['quiz_id']}")])
 
     nav = []
+    c_param = "all" if category_filter == "all" else (category_filter if category_filter is not None else "0")
     if page > 1:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"schedule_page_{page-1}"))
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"sched_page_{c_param}_{page-1}"))
     if total_pages > 1:
         nav.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
     if page < total_pages:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"schedule_page_{page+1}"))
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"sched_page_{c_param}_{page+1}"))
     if nav:
         kb.append(nav)
+
+    if len(cat_map) > 1:
+        kb.append([InlineKeyboardButton("📂 تصفية حسب المجلدات", callback_data="review_schedule")])
     kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(kb)
 
@@ -339,24 +441,65 @@ def _build_review_schedule(user_id, page=1):
 #  الأسئلة الضعيفة
 # ═══════════════════════════════════════════════════════════════
 
-def _build_weak_questions(user_id, page=1):
+def _build_weak_questions(user_id, category_filter=None, page=1):
     all_weak = db.get_all_weak_questions(user_id=user_id)
     due_weak = db.get_due_weak_questions(user_id=user_id)
     if not all_weak:
         return ("❓ <b>الأسئلة الضعيفة</b>\n\nلا توجد أسئلة ضعيفة! أداؤك ممتاز 🌟",
                 InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
 
-    text = (f"❓ <b>الأسئلة الضعيفة</b>\n\n"
-            f"📊 الإجمالي: <b>{len(all_weak)}</b> | مستحق اليوم: <b>{len(due_weak)}</b>\n\n"
-            "اختر كويزاً لمراجعة أسئلته الضعيفة:")
+    cats = {c["id"]: c["name"] for c in db.get_categories(is_public=1)}
+
+    cat_map = {}
+    for w in all_weak:
+        cid = w.get("category_id")
+        if cid not in cat_map:
+            cname = cats.get(cid, "عام / بدون مجلد" if not cid else f"مجلد {cid}")
+            cat_map[cid] = {"name": cname, "items": [], "due_count": 0}
+        cat_map[cid]["items"].append(w)
+    
+    for w in due_weak:
+        cid = w.get("category_id")
+        if cid in cat_map:
+            cat_map[cid]["due_count"] += 1
+
+    # If multiple folders and no category filter selected, show folder list
+    if len(cat_map) > 1 and category_filter is None:
+        text = (f"❓ <b>الأسئلة الضعيفة حسب المجلدات</b>\n\n"
+                f"📊 الإجمالي: <b>{len(all_weak)}</b> | مستحق اليوم: <b>{len(due_weak)}</b>\n\n"
+                f"لديك أخطاء موزعة على <b>{len(cat_map)}</b> مجلدات.\n"
+                f"اختر المجلد لمراجعة أسئلته الضعيفة:")
+        kb = []
+        if due_weak:
+            kb.append([InlineKeyboardButton(f"🔴 راجع جميع المستحق ({len(due_weak)} سؤال)",
+                                            callback_data="start_weakall")])
+        for cid, info in cat_map.items():
+            c_key = cid if cid is not None else 0
+            due_lbl = f" 🔴{info['due_count']}" if info['due_count'] > 0 else ""
+            kb.append([InlineKeyboardButton(f"📁 {info['name']} ({len(info['items'])}){due_lbl}",
+                                            callback_data=f"weak_cat_{c_key}")])
+        kb.append([InlineKeyboardButton(f"🌐 عرض كل الكويزات ({len(all_weak)})", callback_data="weak_cat_all")])
+        kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+        return text, InlineKeyboardMarkup(kb)
+
+    if category_filter is not None and category_filter != "all":
+        target_cid = None if category_filter == 0 else category_filter
+        filtered_weak = [w for w in all_weak if w.get("category_id") == target_cid]
+        filtered_due = [w for w in due_weak if w.get("category_id") == target_cid]
+        cname = cats.get(target_cid, "عام / بدون مجلد" if not target_cid else f"مجلد {target_cid}")
+        folder_title = f"📁 {cname}"
+    else:
+        filtered_weak = all_weak
+        filtered_due = due_weak
+        folder_title = "🌐 جميع الأسئلة الضعيفة"
 
     quiz_map = {}
-    for w in all_weak:
+    for w in filtered_weak:
         qid = w["quiz_id"]
         if qid not in quiz_map:
             quiz_map[qid] = {"name": w.get("quiz_name", "كويز"), "count": 0, "due": 0}
         quiz_map[qid]["count"] += 1
-    for w in due_weak:
+    for w in filtered_due:
         if w["quiz_id"] in quiz_map:
             quiz_map[w["quiz_id"]]["due"] += 1
 
@@ -366,9 +509,13 @@ def _build_weak_questions(user_id, page=1):
     page = max(1, min(page, total_pages))
     start = (page - 1) * ITEMS_PER_PAGE
 
+    text = (f"❓ <b>الأسئلة الضعيفة — {folder_title}</b>\n\n"
+            f"📊 الإجمالي: <b>{len(filtered_weak)}</b> | مستحق اليوم: <b>{len(filtered_due)}</b>\n\n"
+            "اختر كويزاً لمراجعة أسئلته الضعيفة:")
+
     kb = []
-    if due_weak:
-        kb.append([InlineKeyboardButton(f"🔴 راجع جميع المستحق ({len(due_weak)} سؤال)",
+    if filtered_due:
+        kb.append([InlineKeyboardButton(f"🔴 راجع المستحق ({len(filtered_due)} سؤال)",
                                         callback_data="start_weakall")])
     for qid, info in quiz_list[start:start + ITEMS_PER_PAGE]:
         name = info["name"][:25] + ("..." if len(info["name"]) > 25 else "")
@@ -377,14 +524,18 @@ def _build_weak_questions(user_id, page=1):
                                         callback_data=f"start_weak_{qid}")])
 
     nav = []
+    c_param = "all" if category_filter == "all" else (category_filter if category_filter is not None else "0")
     if page > 1:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"weak_page_{page-1}"))
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"weak_page_{c_param}_{page-1}"))
     if total_pages > 1:
         nav.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
     if page < total_pages:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"weak_page_{page+1}"))
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"weak_page_{c_param}_{page+1}"))
     if nav:
         kb.append(nav)
+
+    if len(cat_map) > 1:
+        kb.append([InlineKeyboardButton("📂 تصفية حسب المجلدات", callback_data="weak_questions")])
     kb.append([InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(kb)
 
@@ -949,18 +1100,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("start_quiz_") or data.startswith("start_practice_"):
         quiz_id = int(data.split("_")[-1])
+        s_type = "practice" if data.startswith("start_practice_") else "quiz"
         from handlers.quiz_handler import start_quiz_session
-        await start_quiz_session(update, context, quiz_id, session_type="quiz")
+        await start_quiz_session(update, context, quiz_id, session_type=s_type)
         return
 
     if data.startswith("move_quiz_"):
-        if not is_adm:
-            await query.answer("❌ للمشرف فقط.", show_alert=True)
-            return
         quiz_id = int(data.split("_")[-1])
         quiz = db.get_quiz(quiz_id)
         if not quiz:
             await query.answer("❌ الكويز غير موجود.", show_alert=True)
+            return
+        if not (is_adm or quiz.get("owner_id") == user_id):
+            await query.answer("❌ ليس لديك صلاحية نقل هذا الكويز.", show_alert=True)
             return
         categories = db.get_categories(is_public=1)
         kb = []
@@ -974,16 +1126,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("set_quiz_cat_"):
-        if not is_adm:
-            await query.answer("❌ للمشرف فقط.", show_alert=True)
-            return
         parts = data.split("_")
         quiz_id = int(parts[3])
         cat_id = int(parts[4])
+        quiz = db.get_quiz(quiz_id)
+        if not quiz:
+            await query.answer("❌ الكويز غير موجود.", show_alert=True)
+            return
+        if not (is_adm or quiz.get("owner_id") == user_id):
+            await query.answer("❌ ليس لديك صلاحية نقل هذا الكويز.", show_alert=True)
+            return
         real_cat_id = cat_id if cat_id != 0 else None
         db.move_quiz_to_category(quiz_id, real_cat_id)
-        quiz = db.get_quiz(quiz_id)
-        name = html.escape(quiz.get("name", "كويز")) if quiz else "كويز"
+        name = html.escape(quiz.get("name", "كويز"))
         cat = db.get_category(real_cat_id) if real_cat_id else None
         cat_name = cat.get("name", "الرئيسية") if cat else "الرئيسية (بدون مجلد)"
         await safe_edit(query, f"✅ تم نقل كويز <b>{name}</b> إلى: <b>{html.escape(cat_name)}</b> بنجاح!",
@@ -1056,20 +1211,71 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(query, text, kb)
         return
 
+    if data.startswith("due_cat_"):
+        cat_val = data.split("_")[-1]
+        cat_filter = "all" if cat_val == "all" else int(cat_val)
+        text, kb = _build_due_reviews(user_id, category_filter=cat_filter, page=1)
+        await safe_edit(query, text, kb)
+        return
+
+    if data.startswith("due_page_"):
+        parts = data.split("_")
+        cat_val = parts[2]
+        page = int(parts[3])
+        cat_filter = "all" if cat_val == "all" else int(cat_val)
+        text, kb = _build_due_reviews(user_id, category_filter=cat_filter, page=page)
+        await safe_edit(query, text, kb)
+        return
+
     if data == "review_schedule":
         text, kb = _build_review_schedule(user_id)
         await safe_edit(query, text, kb)
         return
 
-    if data.startswith("schedule_page_"):
-        page = int(data.split("_")[-1])
-        text, kb = _build_review_schedule(user_id, page=page)
+    if data.startswith("sched_cat_"):
+        cat_val = data.split("_")[-1]
+        cat_filter = "all" if cat_val == "all" else int(cat_val)
+        text, kb = _build_review_schedule(user_id, category_filter=cat_filter, page=1)
         await safe_edit(query, text, kb)
         return
 
-    if data == "weak_questions" or data.startswith("weak_page_"):
-        page = int(data.split("_")[-1]) if data.startswith("weak_page_") else 1
-        text, kb = _build_weak_questions(user_id, page=page)
+    if data.startswith("sched_page_"):
+        parts = data.split("_")
+        cat_val = parts[2]
+        page = int(parts[3])
+        cat_filter = "all" if cat_val == "all" else int(cat_val)
+        text, kb = _build_review_schedule(user_id, category_filter=cat_filter, page=page)
+        await safe_edit(query, text, kb)
+        return
+
+    if data.startswith("schedule_page_"):
+        page = int(data.split("_")[-1])
+        text, kb = _build_review_schedule(user_id, category_filter="all", page=page)
+        await safe_edit(query, text, kb)
+        return
+
+    if data == "weak_questions":
+        text, kb = _build_weak_questions(user_id)
+        await safe_edit(query, text, kb)
+        return
+
+    if data.startswith("weak_cat_"):
+        cat_val = data.split("_")[-1]
+        cat_filter = "all" if cat_val == "all" else int(cat_val)
+        text, kb = _build_weak_questions(user_id, category_filter=cat_filter, page=1)
+        await safe_edit(query, text, kb)
+        return
+
+    if data.startswith("weak_page_"):
+        parts = data.split("_")
+        if len(parts) == 4:
+            cat_val = parts[2]
+            page = int(parts[3])
+            cat_filter = "all" if cat_val == "all" else int(cat_val)
+        else:
+            cat_filter = "all"
+            page = int(parts[2])
+        text, kb = _build_weak_questions(user_id, category_filter=cat_filter, page=page)
         await safe_edit(query, text, kb)
         return
 

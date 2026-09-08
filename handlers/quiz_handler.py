@@ -110,7 +110,7 @@ async def start_quiz_session(
         else:
             title = "▶️ الكويز"
 
-    if not review_id and quiz_id and session_type not in ("weakall", "weak", "weakpractice"):
+    if session_type == "review" and not review_id and quiz_id:
         conn = db.get_connection()
         c = conn.cursor()
         c.execute("SELECT id FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id))
@@ -582,29 +582,71 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
             db.add_or_reset_weak_question(quiz_id, wq_id, user_id=user_id)
 
     sr_text = ""
-    # Check if there is an active review to advance
-    review_id = session.get("review_id")
-    advanced = False
-    if review_id:
-        db.advance_quiz_review(review_id, user_id=user_id)
-        advanced = True
-    elif quiz_id and session_type not in ("weakall", "weak", "weakpractice"):
-        advanced = db.advance_quiz_review_for_quiz(quiz_id, user_id=user_id)
+    # Check spaced repetition based on session_type
+    if session_type == "review":
+        # Explicit scheduled review session
+        advanced = False
+        review_id = session.get("review_id")
+        if review_id:
+            db.advance_quiz_review(review_id, user_id=user_id)
+            advanced = True
+        elif quiz_id:
+            advanced = db.advance_quiz_review_for_quiz(quiz_id, user_id=user_id)
 
-    if advanced:
-        sr_text = "✅ تم تسجيل حلك وتقدم الكويز للمرحلة التالية في التكرار المتباعد 🧠!"
+        if advanced:
+            sr_text = "✅ تم تسجيل إتمام المراجعة وتقدم الكويز للمرحلة التالية في التكرار المتباعد 🧠!"
+        else:
+            sr_text = "✅ تم إنجاز مراجعة الكويز بنجاح!"
+
+        # Resolve weak questions answered correctly
+        if quiz_id:
+            user_weak_list = db.get_weak_questions_by_quiz(quiz_id, user_id=user_id)
+            if user_weak_list:
+                user_weak_map = {w["question_id"]: w for w in user_weak_list}
+                correct_ids = [qid for qid in session["question_ids"] if qid not in wrong_ids]
+                resolved_count = 0
+                for qid in correct_ids:
+                    if qid in user_weak_map:
+                        db.advance_weak_question(user_weak_map[qid]["id"])
+                        resolved_count += 1
+                if resolved_count > 0:
+                    sr_text += f"\n🎯 تم ترقية وإتقان {resolved_count} سؤال ضعيف في هذا الكويز!"
+
+    elif session_type == "quiz":
+        # Initial solve or practice via "ابدأ الكويز"
+        existing_rev = db.get_quiz_review(quiz_id, user_id=user_id)
+        if not existing_rev:
+            # First solve / initial study: schedule review 1 for tomorrow at Stage 0
+            db.schedule_first_review(quiz_id, user_id=user_id, start_today=False)
+            sr_text = "📅 <b>تم إدراج الكويز في جدول التكرار المتباعد!</b>\nستصلك أول مراجعة (المرحلة 1) غداً لترسيخ المعلومات 🧠."
+        else:
+            from spaced_repetition import days_until
+            due_d = days_until(existing_rev.get("next_review_date", ""))
+            if due_d <= 0:
+                # Review was due today, count solve as advancing the review
+                db.advance_quiz_review(existing_rev["id"], user_id=user_id)
+                sr_text = "✅ تم إنجاز المراجعة المستحقة بنجاح وتقدم الكويز للمرحلة التالية 🧠!"
+            else:
+                # Review not due yet, this is free practice
+                sr_text = f"✨ تم تسجيل نتيجتك وتحديث الأخطاء (تمرين إضافي - موعد مراجعتك القادمة بعد {due_d} يوم)."
+
         # When solving a full quiz: also advance/resolve any weak questions that were answered correctly
-        user_weak_list = db.get_weak_questions_by_quiz(quiz_id, user_id=user_id)
-        if user_weak_list:
-            user_weak_map = {w["question_id"]: w for w in user_weak_list}
-            correct_ids = [qid for qid in session["question_ids"] if qid not in wrong_ids]
-            resolved_count = 0
-            for qid in correct_ids:
-                if qid in user_weak_map:
-                    db.advance_weak_question(user_weak_map[qid]["id"])
-                    resolved_count += 1
-            if resolved_count > 0:
-                sr_text += f"\n🎯 تم ترقية وإتقان {resolved_count} سؤال ضعيف في هذا الكويز!"
+        if quiz_id:
+            user_weak_list = db.get_weak_questions_by_quiz(quiz_id, user_id=user_id)
+            if user_weak_list:
+                user_weak_map = {w["question_id"]: w for w in user_weak_list}
+                correct_ids = [qid for qid in session["question_ids"] if qid not in wrong_ids]
+                resolved_count = 0
+                for qid in correct_ids:
+                    if qid in user_weak_map:
+                        db.advance_weak_question(user_weak_map[qid]["id"])
+                        resolved_count += 1
+                if resolved_count > 0:
+                    sr_text += f"\n🎯 تم ترقية وإتقان {resolved_count} سؤال ضعيف في هذا الكويز!"
+
+    elif session_type == "practice":
+        sr_text = "🎮 تم تسجيل جلسة التمرين بنجاح!"
+
     elif session_type == "weak":
         weak_all = db.get_due_weak_questions(user_id=user_id)
         quiz_weak = {w["question_id"]: w for w in weak_all if w["quiz_id"] == quiz_id}
@@ -612,7 +654,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         for qid in correct_ids:
             if qid in quiz_weak:
                 db.advance_weak_question(quiz_weak[qid]["id"])
-        sr_text = f"✅ {len(correct_ids)} سؤال تم تقدمهم في التكرار المتباعد."
+        sr_text = f"✅ تم تثبيت إجاباتك وتقدم {len(correct_ids)} سؤال في التكرار المتباعد."
 
     elif session_type == "weakall":
         all_weak = db.get_all_weak_questions_sorted_for_practice(user_id=user_id)
@@ -640,7 +682,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         f"{rating}\n\n"
         f"📊 <b>النتيجة:</b> {correct}/{total} ({score}%)\n"
         f"✅ صح: {correct} | ❌ خطأ: {len(wrong_ids)}\n\n"
-        f"{html.escape(sr_text)}"
+        f"{sr_text}"
     )
 
     keyboard = []

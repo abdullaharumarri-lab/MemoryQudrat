@@ -1,14 +1,14 @@
 import datetime
 import pytz
 
-DEFAULT_REVIEW_INTERVALS = [0, 3, 7, 14, 30]
+DEFAULT_REVIEW_INTERVALS = [1, 3, 7, 14, 30]
 
 def get_riyadh_today() -> datetime.date:
     riyadh_tz = pytz.timezone("Asia/Riyadh")
     return datetime.datetime.now(riyadh_tz).date()
 
 
-def next_review_date(stage: int, previous_date_str: str, intervals: list = None) -> str:
+def next_review_date(stage: int, previous_date_str: str = None, intervals: list = None) -> str:
     if intervals is None:
         intervals = DEFAULT_REVIEW_INTERVALS
 
@@ -20,12 +20,8 @@ def next_review_date(stage: int, previous_date_str: str, intervals: list = None)
         stg = len(intervals) - 1
         
     days_to_add = intervals[stg]
-    try:
-        prev_date = datetime.date.fromisoformat(str(previous_date_str))
-    except Exception:
-        prev_date = get_riyadh_today()
-    
-    next_date = prev_date + datetime.timedelta(days=days_to_add)
+    base_date = get_riyadh_today()
+    next_date = base_date + datetime.timedelta(days=days_to_add)
     return next_date.isoformat()
 
 
@@ -46,11 +42,17 @@ def days_until(target_date_str: str) -> int:
 
 
 def stage_label(stage: int) -> str:
-    labels = ["المراجعة الأولى", "المراجعة الثانية", "المراجعة الثالثة", "المراجعة الرابعة", "المراجعة الخامسة"]
+    labels = [
+        "المراجعة 1 (بعد يوم)",
+        "المراجعة 2 (بعد 3 أيام)",
+        "المراجعة 3 (بعد أسبوع)",
+        "المراجعة 4 (بعد أسبوعين)",
+        "المراجعة 5 (بعد شهر)",
+    ]
     try:
         stg = int(stage)
         if 0 <= stg < len(labels):
             return labels[stg]
     except (ValueError, TypeError):
         pass
-    return "مكتمل"
+    return "مكتمل ومثبت 🌟"

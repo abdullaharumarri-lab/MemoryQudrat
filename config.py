@@ -36,7 +36,7 @@ def is_admin(user_id: int) -> bool:
 ALLOWED_CHANNEL_ID = int(os.getenv("ALLOWED_CHANNEL_ID", "0"))
 
 # Spaced repetition intervals in days
-REVIEW_INTERVALS = [1, 3, 7, 30]
+REVIEW_INTERVALS = [1, 3, 7, 14, 30]
 
 # Database file path
 DB_PATH = "memory_qudrat.db"

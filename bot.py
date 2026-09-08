@@ -55,28 +55,31 @@ def schedule_reminder(job_queue, chat_id: int, hour: int = None, minute: int = N
 
 
 async def daily_reminder(context):
-    chat_id = context.job.data
-    user_id = chat_id  # In private chat, chat_id is the user_id
-    reviews = db.get_due_quiz_reviews(user_id=user_id)
-    weak = db.get_due_weak_questions(user_id=user_id)
-    if not reviews and not weak: return
-    parts = []
-    if reviews: parts.append(f"🔁 {len(reviews)} مراجعة كويز")
-    if weak: parts.append(f"❌ {len(weak)} سؤال ضعيف")
-    text = (
-        "🌅 <b>تذكير يومي — ذاكرة القدرات</b>\n\n"
-        "لديك مهام مراجعة مستحقة اليوم:\n" + "\n".join(f"• {p}" for p in parts) +
-        "\n\nافتح البوت وابدأ المراجعة لترسيخ معلوماتك 💪"
-    )
-    
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("▶️ حل مراجعات اليوم", callback_data="due_reviews")
-    ]])
-    
-    await send_clean_message(
-        context=context, chat_id=chat_id, text=text, reply_markup=keyboard
-    )
+    try:
+        chat_id = context.job.data
+        user_id = chat_id  # In private chat, chat_id is the user_id
+        reviews = db.get_due_quiz_reviews(user_id=user_id)
+        weak = db.get_due_weak_questions(user_id=user_id)
+        if not reviews and not weak: return
+        parts = []
+        if reviews: parts.append(f"🔁 {len(reviews)} مراجعة كويز")
+        if weak: parts.append(f"❌ {len(weak)} سؤال ضعيف")
+        text = (
+            "🌅 <b>تذكير يومي — ذاكرة القدرات</b>\n\n"
+            "لديك مهام مراجعة مستحقة اليوم:\n" + "\n".join(f"• {p}" for p in parts) +
+            "\n\nافتح البوت وابدأ المراجعة لترسيخ معلوماتك 💪"
+        )
+        
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("▶️ حل مراجعات اليوم", callback_data="due_reviews")
+        ]])
+        
+        await send_clean_message(
+            context=context, chat_id=chat_id, text=text, reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.warning("Error in daily_reminder: %s", e)
 
 
 async def start_command(update: Update, context):
