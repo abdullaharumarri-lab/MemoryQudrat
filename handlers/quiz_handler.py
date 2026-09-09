@@ -1,5 +1,7 @@
 import os
+import io
 import html
+import base64
 import asyncio
 import logging
 
@@ -242,19 +244,49 @@ async def send_next_question(update, context, session):
     passage_image = question.get("passage_image")
     last_passage = context.user_data.get(f"active_passage_{chat_id}")
 
-    if passage_image and os.path.exists(passage_image):
-        if last_passage != passage_image:
+    has_photo = False
+    photo_payload = None
+
+    if passage_image:
+        if os.path.exists(passage_image):
+            has_photo = True
+            photo_payload = passage_image
+        elif isinstance(passage_image, str) and (len(passage_image) > 50 or "base64" in passage_image):
             try:
-                with open(passage_image, "rb") as p_file:
+                raw_b64 = passage_image
+                if "," in raw_b64 and ("data:image" in raw_b64[:35] or "base64" in raw_b64[:35]):
+                    raw_b64 = raw_b64.split(",", 1)[1]
+                img_bytes = base64.b64decode(raw_b64)
+                if len(img_bytes) > 50:
+                    has_photo = True
+                    photo_payload = io.BytesIO(img_bytes)
+                    photo_payload.name = "passage.png"
+            except Exception as b64_err:
+                logger.warning("Could not decode base64 passage image: %s", b64_err)
+
+    if has_photo:
+        passage_key = passage_image if len(str(passage_image)) < 200 else str(hash(passage_image))
+        if last_passage != passage_key:
+            try:
+                if isinstance(photo_payload, str):
+                    with open(photo_payload, "rb") as p_file:
+                        p_msg = await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=p_file,
+                            caption="📄 <b>[قطعة القراءة]</b>\n<i>اقرأ القطعة في الصورة أعلاه ثم أجب عن السؤال التالي ⬇️</i>",
+                            parse_mode="HTML"
+                        )
+                else:
+                    photo_payload.seek(0)
                     p_msg = await context.bot.send_photo(
                         chat_id=chat_id,
-                        photo=p_file,
+                        photo=photo_payload,
                         caption="📄 <b>[قطعة القراءة]</b>\n<i>اقرأ القطعة في الصورة أعلاه ثم أجب عن السؤال التالي ⬇️</i>",
                         parse_mode="HTML"
                     )
-                    msg_ids.append(p_msg.message_id)
-                    db.track_chat_message(chat_id, p_msg.message_id)
-                    context.user_data[f"active_passage_{chat_id}"] = passage_image
+                msg_ids.append(p_msg.message_id)
+                db.track_chat_message(chat_id, p_msg.message_id)
+                context.user_data[f"active_passage_{chat_id}"] = passage_key
             except Exception as pe:
                 logger.error("Could not send passage photo: %s", pe)
             await asyncio.sleep(0.4)

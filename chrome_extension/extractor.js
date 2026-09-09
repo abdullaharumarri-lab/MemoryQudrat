@@ -220,10 +220,18 @@ function extractGoogleFormsQuiz() {
                             itemId: itemId
                         };
 
-                        // Mark DOM element for screenshot capture
+                        // Mark DOM element for screenshot capture by text snippet matching
                         try {
-                            const cardEl = document.querySelector(`[data-item-id="${itemId}"]`) ||
-                                           document.getElementById(`i.desc.${itemId}`)?.closest('.Qr7Oae, [role="listitem"]');
+                            const allCards = Array.from(document.querySelectorAll('.Qr7Oae, [role="listitem"]'));
+                            const snippet = passageCandidate.slice(0, 35).trim();
+                            let cardEl = allCards.find(c => {
+                                const t = (c.innerText || '').trim();
+                                return (snippet && t.includes(snippet)) || (itemTitle && itemTitle.length > 5 && t.includes(itemTitle));
+                            });
+                            if (!cardEl) {
+                                cardEl = document.querySelector(`[data-item-id="${itemId}"]`)?.closest('.Qr7Oae, [role="listitem"]') ||
+                                         document.querySelector(`[data-item-id="${itemId}"]`);
+                            }
                             if (cardEl) {
                                 cardEl.setAttribute('data-qudrat-passage-id', pId);
                             }
@@ -255,8 +263,16 @@ function extractGoogleFormsQuiz() {
                         };
 
                         try {
-                            const cardEl = document.querySelector(`[data-item-id="${itemId}"]`) ||
-                                           document.getElementById(`i.desc.${itemId}`)?.closest('.Qr7Oae, [role="listitem"]');
+                            const allCards = Array.from(document.querySelectorAll('.Qr7Oae, [role="listitem"]'));
+                            const secSnippet = secText.slice(0, 35).trim();
+                            let cardEl = allCards.find(c => {
+                                const t = (c.innerText || '').trim();
+                                return (secSnippet && t.includes(secSnippet)) || (secTitle && secTitle.length > 5 && t.includes(secTitle));
+                            });
+                            if (!cardEl) {
+                                cardEl = document.querySelector(`[data-item-id="${itemId}"]`)?.closest('.Qr7Oae, [role="listitem"]') ||
+                                         document.querySelector(`[data-item-id="${itemId}"]`);
+                            }
                             if (cardEl) {
                                 cardEl.setAttribute('data-qudrat-passage-id', pId);
                             }
@@ -297,57 +313,112 @@ function extractGoogleFormsQuiz() {
                         }
                     }
 
-                    // Look up DOM card by item ID for answers and explanations
+                    // Look up DOM card by item ID or question text snippet (strictly within question cards)
                     const qNum = questions.length + 1;
                     let isWrong = false;
                     let correctAnswer = "";
                     let explanation = "";
 
-                    const cardEl = document.querySelector(`[data-item-id="${itemId}"]`) ||
-                                   document.getElementById(`i.desc.${itemId}`)?.closest('.Qr7Oae, [role="listitem"]') ||
-                                   document.querySelectorAll('.Qr7Oae, [role="listitem"]')[qNum - 1];
+                    let cardEl = document.querySelector(`[data-item-id="${itemId}"]`)?.closest('.Qr7Oae, [role="listitem"]') ||
+                                 document.querySelector(`[data-item-id="${itemId}"]`);
+
+                    if (!cardEl) {
+                        const questionCards = Array.from(document.querySelectorAll('.Qr7Oae, [role="listitem"]')).filter(c => c.querySelector('[role="radiogroup"], [role="checkbox"]'));
+                        const qSnippet = cleanQText.slice(0, 30).trim();
+                        cardEl = questionCards.find(c => (c.innerText || '').includes(qSnippet));
+                        if (!cardEl && qNum - 1 < questionCards.length) {
+                            cardEl = questionCards[qNum - 1];
+                        }
+                    }
 
                     if (cardEl) {
                         const cardClone = cardEl.cloneNode(true);
                         cardClone.querySelectorAll('.M2vV3e, .RDPZE, .freebirdFormviewerViewItemsItemGradingPoints, [aria-describedby*="points"]').forEach(e => e.remove());
                         const cardText = cardClone.innerText || '';
 
-                        // Score & Wrong detection
-                        if (/\b0\s*\/\s*[1-9]/.test(cardEl.innerText || '') || /\b٠\s*\/\s*[١-٩]/.test(cardEl.innerText || '')) {
+                        // Score & Wrong detection (e.g. 0 / 1 or 0/1 or red indicators)
+                        if (/\b0\s*\/\s*[1-9]/.test(cardEl.innerText || '') ||
+                            /\b٠\s*\/\s*[١-٩]/.test(cardEl.innerText || '') ||
+                            cardEl.querySelector('[fill="#d93025"], [fill="#c5221f"], .freebirdFormviewerViewItemsItemGradingIncorrectContainer')) {
                             isWrong = true;
                         }
 
-                        // "الإجابة الصحيحة" box
+                        // 1. "الإجابة الصحيحة" search patterns
                         const caPatterns = [
-                            /(?:الإجابة الصحيحة|الإجابات الصحيحة)\s*[:\n]\s*([^\n]+)/,
-                            /(?:Correct answer|Correct answers)\s*[:\n]\s*([^\n]+)/i
+                            /(?:الإجابة الصحيحة|الإجابات الصحيحة|الإجابة النموذجية|الإجابة الصحيحة هي)\s*[:\n\-]?\s*([^\n]+)/i,
+                            /(?:Correct answer|Correct answers)\s*[:\n\-]?\s*([^\n]+)/i
                         ];
                         for (const pat of caPatterns) {
                             const m = cardText.match(pat);
-                            if (m) {
+                            if (m && m[1].trim()) {
                                 correctAnswer = m[1].trim();
                                 isWrong = true;
                                 break;
                             }
                         }
 
-                        // Check green highlight or checked radio
+                        // 2. Search grading callout containers explicitly
+                        if (!correctAnswer) {
+                            const gradingEls = cardEl.querySelectorAll('.Y6Myj, .zfd4wb, .bUzgoc, .freebirdFormviewerViewItemsItemGradingExplanation, .freebirdFormviewerViewItemsItemGradingContainer, [aria-label*="الإجابة الصحيحة"], [aria-label*="Correct"]');
+                            for (const gel of gradingEls) {
+                                const txt = (gel.innerText || '').trim();
+                                if (txt) {
+                                    for (const pat of caPatterns) {
+                                        const m = txt.match(pat);
+                                        if (m && m[1].trim()) {
+                                            correctAnswer = m[1].trim();
+                                            isWrong = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!correctAnswer && (txt.includes('الإجابة الصحيحة') || /correct answer/i.test(txt))) {
+                                        const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
+                                        const caIdx = lines.findIndex(l => l.includes('الإجابة الصحيحة') || /correct answer/i.test(l));
+                                        if (caIdx !== -1 && caIdx + 1 < lines.length) {
+                                            correctAnswer = lines[caIdx + 1];
+                                            isWrong = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (correctAnswer) break;
+                            }
+                        }
+
+                        // 3. Check green highlight (correct radio indicator)
                         if (!correctAnswer) {
                             const greenRadio = cardEl.querySelector('[fill="#137333"], [fill="#188038"], [fill="#34a853"], [fill="#0f9d58"], [fill="#1e8e3e"]');
                             if (greenRadio) {
-                                const greenBox = greenRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab') || greenRadio.parentElement;
+                                const greenBox = greenRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, [role="radio"]') || greenRadio.parentElement;
                                 if (greenBox) {
                                     correctAnswer = (greenBox.innerText || '').split('\n')[0].trim();
                                 }
                             }
                         }
 
-                        if (!correctAnswer) {
+                        // 4. If question was NOT wrong, use the checked radio
+                        // CRITICAL: NEVER use checkedRadio if isWrong is true, because that was the student's wrong answer!
+                        if (!correctAnswer && !isWrong) {
                             const checkedRadio = cardEl.querySelector('[aria-checked="true"]');
                             if (checkedRadio) {
-                                const checkedBox = checkedRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab') || checkedRadio.parentElement;
+                                const checkedBox = checkedRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, [role="radio"]') || checkedRadio.parentElement;
                                 if (checkedBox) {
                                     correctAnswer = (checkedBox.innerText || '').split('\n')[0].trim();
+                                }
+                            }
+                        }
+
+                        // 5. Deep fallback for wrong cards: find any child text node with "الإجابة الصحيحة"
+                        if (!correctAnswer && isWrong) {
+                            const allElements = Array.from(cardEl.querySelectorAll('div, span, p'));
+                            for (const el of allElements) {
+                                const t = (el.innerText || '').trim();
+                                if (t.startsWith('الإجابة الصحيحة') || t.startsWith('Correct answer')) {
+                                    const cleaned = t.replace(/^(?:الإجابة الصحيحة|Correct answers?)\s*[:\n\-]?\s*/i, '').trim();
+                                    if (cleaned && cleaned.length < 150) {
+                                        correctAnswer = cleaned.split('\n')[0].trim();
+                                        break;
+                                    }
                                 }
                             }
                         }

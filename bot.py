@@ -279,7 +279,7 @@ def main():
         .build()
     )
 
-    from handlers.admin_handler import admin_command, admin_broadcast_command
+    from handlers.admin_handler import admin_command, admin_broadcast_command, admin_update_command
     from handlers.main_menu import today_command, weak_command, schedule_command, stats_command, help_command, find_command
 
     app.add_handler(CommandHandler("start", start_command))
@@ -296,6 +296,7 @@ def main():
     app.add_handler(CommandHandler("fixstage", fixstage_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("broadcast", admin_broadcast_command))
+    app.add_handler(CommandHandler("update", admin_update_command))
 
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("xlsx") | filters.Document.FileExtension("xls") | filters.Document.FileExtension("csv") |

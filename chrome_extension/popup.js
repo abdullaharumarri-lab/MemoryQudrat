@@ -90,6 +90,9 @@ async function capturePassageScreenshots(tab, data) {
   const passageImages = {};
 
   for (const pid of passageIds) {
+    const pText = data.questions.find(q => q.passage_id === pid)?.passage_text || "";
+    let capturedUrl = null;
+
     try {
       // 1. Locate element and scroll into view
       const execRes = await chrome.scripting.executeScript({
@@ -98,44 +101,190 @@ async function capturePassageScreenshots(tab, data) {
           const el = document.querySelector(`[data-qudrat-passage-id="${id}"]`);
           if (!el) return null;
           el.scrollIntoView({ behavior: 'instant', block: 'start' });
-          const r = el.getBoundingClientRect();
-          return {
-            x: r.left,
-            y: r.top,
-            width: r.width,
-            height: r.height,
-            dpr: window.devicePixelRatio || 1,
-            vh: window.innerHeight
-          };
+          return true;
         },
         args: [pid]
       });
 
-      if (!execRes || !execRes[0] || !execRes[0].result) continue;
-      const rect = execRes[0].result;
+      if (execRes && execRes[0] && execRes[0].result) {
+        // Small delay for scroll and repaint to settle
+        await new Promise(r => setTimeout(r, 200));
 
-      // Small delay for scroll and repaint to settle
-      await new Promise(r => setTimeout(r, 180));
+        // Re-measure exact bounding rect after layout is stable
+        const rectRes = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (id) => {
+            const el = document.querySelector(`[data-qudrat-passage-id="${id}"]`);
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return {
+              x: Math.max(0, r.left),
+              y: Math.max(0, r.top),
+              width: r.width,
+              height: r.height,
+              dpr: window.devicePixelRatio || 1,
+              vh: window.innerHeight,
+              vw: window.innerWidth
+            };
+          },
+          args: [pid]
+        });
 
-      // 2. Capture the visible tab
-      const tabDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-
-      // 3. Crop to the element's bounding rect
-      const croppedUrl = await cropImage(tabDataUrl, rect);
-      if (croppedUrl) {
-        passageImages[pid] = croppedUrl;
+        if (rectRes && rectRes[0] && rectRes[0].result) {
+          const rect = rectRes[0].result;
+          if (rect.width > 20 && rect.height > 20) {
+            // 2. Capture the visible tab
+            const tabDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+            // 3. Crop to the element's bounding rect
+            capturedUrl = await cropImage(tabDataUrl, rect);
+          }
+        }
       }
     } catch (err) {
       console.warn("Failed to capture screenshot for passage", pid, err);
     }
+
+    // 4. Fallback: If screenshot capture failed, generate a pristine Canvas card
+    if (!capturedUrl && pText) {
+      try {
+        capturedUrl = generatePassageCardCanvas(pText);
+      } catch (ce) {
+        console.warn("Canvas card generation failed", ce);
+      }
+    }
+
+    if (capturedUrl) {
+      passageImages[pid] = capturedUrl;
+    }
   }
 
-  // 4. Attach cropped screenshot to questions
+  // 5. Attach cropped screenshot or canvas card to questions
   data.questions.forEach(q => {
     if (q.passage_id && passageImages[q.passage_id]) {
       q.passage_image = passageImages[q.passage_id];
     }
   });
+}
+
+function generatePassageCardCanvas(text) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = 2; // High-DPI Retina
+  const width = 740;
+  const padding = 36;
+  const contentWidth = width - (padding * 2);
+
+  // Setup font for measurement
+  const fontSize = 18;
+  const lineHeight = 32;
+  const fontStyle = `normal ${fontSize}px "Segoe UI", Tahoma, Arial, sans-serif`;
+  ctx.font = fontStyle;
+
+  // Word wrap Arabic text
+  const cleanText = text.replace(/\r\n/g, '\n').trim();
+  const rawParagraphs = cleanText.split('\n');
+  const lines = [];
+
+  for (const para of rawParagraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) {
+      lines.push('');
+      continue;
+    }
+    const words = trimmed.split(/\s+/);
+    let currentLine = '';
+    for (const w of words) {
+      const testLine = currentLine ? (currentLine + ' ' + w) : w;
+      if (ctx.measureText(testLine).width > contentWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = w;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    if (currentLine) lines.push(currentLine);
+  }
+
+  const headerHeight = 65;
+  const footerHeight = 45;
+  const textHeight = Math.max(60, lines.length * lineHeight);
+  const height = headerHeight + textHeight + footerHeight + (padding * 2);
+
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  ctx.scale(dpr, dpr);
+
+  // Background Card
+  ctx.fillStyle = '#0f172a'; // Deep slate
+  ctx.fillRect(0, 0, width, height);
+
+  // Inner card with border
+  const margin = 12;
+  const cardW = width - (margin * 2);
+  const cardH = height - (margin * 2);
+  const radius = 16;
+
+  ctx.fillStyle = '#1e293b'; // Slate 800
+  ctx.strokeStyle = '#3b82f6'; // Blue 500
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.roundRect(margin, margin, cardW, cardH, radius);
+  ctx.fill();
+  ctx.stroke();
+
+  // Header Badge: "📄 قطعة القراءة"
+  const badgeW = 160;
+  const badgeH = 34;
+  const badgeX = (width - badgeW) / 2;
+  const badgeY = margin + 20;
+
+  ctx.fillStyle = '#1d4ed8'; // Royal blue
+  ctx.beginPath();
+  ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 8);
+  ctx.fill();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 15px "Segoe UI", Tahoma, Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.direction = 'rtl';
+  ctx.fillText('📄 قطعة القراءة', width / 2, badgeY + (badgeH / 2));
+
+  // Render Arabic Text
+  ctx.font = fontStyle;
+  ctx.fillStyle = '#f8fafc'; // Crisp white text
+  ctx.textAlign = 'right';
+  ctx.direction = 'rtl';
+  ctx.textBaseline = 'top';
+
+  let currentY = margin + headerHeight + 15;
+  const startX = width - padding - margin;
+
+  for (const line of lines) {
+    if (line) {
+      ctx.fillText(line, startX, currentY);
+    }
+    currentY += lineHeight;
+  }
+
+  // Footer: MemoryQudrat Watermark
+  const footerY = height - margin - 22;
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(margin + 20, footerY - 10);
+  ctx.lineTo(width - margin - 20, footerY - 10);
+  ctx.stroke();
+
+  ctx.font = '13px "Segoe UI", Tahoma, Arial, sans-serif';
+  ctx.fillStyle = '#64748b';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.direction = 'ltr';
+  ctx.fillText('🧠 ذاكرة القدرات — MemoryQudrat', width / 2, footerY + 4);
+
+  return canvas.toDataURL('image/png');
 }
 
 function cropImage(dataUrl, rect) {

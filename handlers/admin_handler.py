@@ -1,3 +1,5 @@
+import os
+import sys
 import html
 import asyncio
 import logging
@@ -42,6 +44,9 @@ def build_admin_dashboard() -> tuple[str, InlineKeyboardMarkup]:
         [
             InlineKeyboardButton("🔧 تعديل مراحل الكويزات (/fixstage)", callback_data="fixstage_page_1"),
             InlineKeyboardButton("📚 تصفح بنك الكويزات", callback_data="browse_root"),
+        ],
+        [
+            InlineKeyboardButton("🚀 تحديث البوت من GitHub (/update)", callback_data="admin_trigger_update"),
         ],
         [
             InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu"),
@@ -221,3 +226,80 @@ async def admin_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
         ])
         await query.message.reply_text(report, parse_mode="HTML", reply_markup=kb)
+
+    # ── Update & Restart via Admin Callback ──
+    elif data == "admin_trigger_update":
+        await query.answer()
+        await admin_update_command(update, context)
+
+
+async def admin_update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Automated one-click update command for the Admin.
+    Executes git pull origin main and restarts the bot service or reloads python.
+    """
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        if update.message:
+            await update.message.reply_text("❌ هذا الأمر متاح للمشرف فقط.", parse_mode="HTML")
+        elif update.callback_query:
+            await update.callback_query.answer("❌ هذا الإجراء متاح للمشرف فقط.", show_alert=True)
+        return
+
+    chat_id = update.effective_chat.id
+    status_msg = None
+
+    if update.message:
+        status_msg = await update.message.reply_text("⏳ <b>جاري سحب آخر التحديثات من GitHub...</b>", parse_mode="HTML")
+    elif update.callback_query and update.callback_query.message:
+        status_msg = await update.callback_query.message.reply_text("⏳ <b>جاري سحب آخر التحديثات من GitHub...</b>", parse_mode="HTML")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "pull", "origin", "main",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        out_str = stdout.decode("utf-8", errors="replace").strip()
+        err_str = stderr.decode("utf-8", errors="replace").strip()
+
+        if proc.returncode != 0:
+            err_report = f"❌ <b>فشل سحب التحديثات (Git Pull Failed):</b>\n<pre>{html.escape(err_str or out_str)}</pre>"
+            if status_msg:
+                await status_msg.edit_text(err_report, parse_mode="HTML")
+            return
+
+        report = (
+            f"✅ <b>تم سحب أحدث كود بنجاح من GitHub!</b>\n\n"
+            f"<pre>{html.escape(out_str)}</pre>\n\n"
+            f"🔄 <b>جاري إعادة تشغيل خدمة البوت الآن لتفعيل التحديثات...</b>"
+        )
+        if status_msg:
+            await status_msg.edit_text(report, parse_mode="HTML")
+        await asyncio.sleep(1)
+
+        # Trigger restart via systemd
+        try:
+            r_proc = await asyncio.create_subprocess_exec(
+                "systemctl", "restart", "memoryqudrat",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await r_proc.communicate()
+        except Exception:
+            pass
+
+        # Also reload the current python process if running directly
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception:
+            pass
+
+    except Exception as ex:
+        logger.error("Error during admin_update_command: %s", ex)
+        if status_msg:
+            try:
+                await status_msg.edit_text(f"⚠️ حدث خطأ أثناء التحديث: {html.escape(str(ex))}")
+            except Exception:
+                pass
