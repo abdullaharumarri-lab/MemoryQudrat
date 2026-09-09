@@ -60,6 +60,10 @@ async function initExtractor() {
 
     if (response && response.success && response.data) {
       extractedData = response.data;
+
+      // Capture high-res passage screenshots if any passages were detected
+      await capturePassageScreenshots(tab, extractedData);
+
       renderQuizData(extractedData);
       showState("content");
     } else {
@@ -75,6 +79,94 @@ async function initExtractor() {
       showError("خطأ غير متوقع: " + msg);
     }
   }
+}
+
+async function capturePassageScreenshots(tab, data) {
+  if (!data || !data.questions) return;
+  
+  const passageIds = [...new Set(data.questions.map(q => q.passage_id).filter(Boolean))];
+  if (passageIds.length === 0) return;
+
+  const passageImages = {};
+
+  for (const pid of passageIds) {
+    try {
+      // 1. Locate element and scroll into view
+      const execRes = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (id) => {
+          const el = document.querySelector(`[data-qudrat-passage-id="${id}"]`);
+          if (!el) return null;
+          el.scrollIntoView({ behavior: 'instant', block: 'start' });
+          const r = el.getBoundingClientRect();
+          return {
+            x: r.left,
+            y: r.top,
+            width: r.width,
+            height: r.height,
+            dpr: window.devicePixelRatio || 1,
+            vh: window.innerHeight
+          };
+        },
+        args: [pid]
+      });
+
+      if (!execRes || !execRes[0] || !execRes[0].result) continue;
+      const rect = execRes[0].result;
+
+      // Small delay for scroll and repaint to settle
+      await new Promise(r => setTimeout(r, 180));
+
+      // 2. Capture the visible tab
+      const tabDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+
+      // 3. Crop to the element's bounding rect
+      const croppedUrl = await cropImage(tabDataUrl, rect);
+      if (croppedUrl) {
+        passageImages[pid] = croppedUrl;
+      }
+    } catch (err) {
+      console.warn("Failed to capture screenshot for passage", pid, err);
+    }
+  }
+
+  // 4. Attach cropped screenshot to questions
+  data.questions.forEach(q => {
+    if (q.passage_id && passageImages[q.passage_id]) {
+      q.passage_image = passageImages[q.passage_id];
+    }
+  });
+}
+
+function cropImage(dataUrl, rect) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const dpr = rect.dpr || 1;
+        const canvas = document.createElement('canvas');
+        
+        // Element dimensions on canvas
+        const w = Math.max(10, Math.round(rect.width * dpr));
+        const maxH = Math.round((rect.vh || window.innerHeight) * dpr);
+        const h = Math.max(10, Math.min(Math.round(rect.height * dpr), maxH - Math.max(0, Math.round(rect.y * dpr))));
+
+        canvas.width = w;
+        canvas.height = h;
+
+        const ctx = canvas.getContext('2d');
+        const sx = Math.max(0, Math.round(rect.x * dpr));
+        const sy = Math.max(0, Math.round(rect.y * dpr));
+
+        ctx.drawImage(img, sx, sy, w, h, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
 }
 
 function renderQuizData(data) {
@@ -101,6 +193,23 @@ function renderQuizData(data) {
       titleEl.className = "q-title";
       titleEl.innerHTML = `<b>س${qNum}:</b> ${escapeHtml(q.question)} ${isWrong ? '<span style="color:#f87171; font-size:10px;">(خاطئ ❌)</span>' : ''}`;
       itemEl.appendChild(titleEl);
+
+      // Render passage screenshot preview if available
+      if (q.passage_image) {
+        const pImgEl = document.createElement("div");
+        pImgEl.style.margin = "6px 0";
+        pImgEl.style.padding = "4px";
+        pImgEl.style.border = "1px solid #3b82f6";
+        pImgEl.style.borderRadius = "6px";
+        pImgEl.style.background = "#1e293b";
+        pImgEl.innerHTML = `
+          <div style="font-size: 10px; color: #60a5fa; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
+            <span>📸</span> <b>لقطة شاشة لقطعة القراءة:</b>
+          </div>
+          <img src="${q.passage_image}" style="max-width: 100%; max-height: 120px; object-fit: contain; border-radius: 4px; border: 1px solid #475569;" alt="Passage Screenshot" />
+        `;
+        itemEl.appendChild(pImgEl);
+      }
 
       const optList = document.createElement("div");
       optList.className = "opt-list";

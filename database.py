@@ -97,9 +97,20 @@ def init_db():
             options TEXT NOT NULL,
             correct_answer TEXT NOT NULL,
             explanation TEXT,
+            passage_image TEXT,
             FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
         )
     """)
+
+    # Migration: ensure passage_image exists on questions table
+    cursor.execute("PRAGMA table_info(questions)")
+    existing_q_cols = [c[1] for c in cursor.fetchall()]
+    if "passage_image" not in existing_q_cols:
+        try:
+            cursor.execute("ALTER TABLE questions ADD COLUMN passage_image TEXT")
+            logger.info("Added passage_image column to questions table")
+        except Exception as e:
+            logger.warning("Could not add passage_image column: %s", e)
 
     # ── 5. Quiz Spaced Repetition Reviews ──
     cursor.execute("""
@@ -682,20 +693,17 @@ def save_quiz_without_review(name: str, questions: list, category_id: int = None
     quiz_id = cursor.lastrowid
     for q in questions:
         cursor.execute(
-            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 quiz_id,
                 q["question"],
                 json.dumps(q["options"], ensure_ascii=False),
                 q["answer"],
                 q.get("explanation", ""),
+                q.get("passage_image"),
             ),
         )
-    conn.commit()
-    conn.close()
-    return quiz_id
-
     conn.commit()
     conn.close()
     return quiz_id
@@ -719,14 +727,15 @@ def update_quiz_questions(quiz_id: int, questions: list, new_name: str = None) -
     # Insert new questions
     for q in questions:
         cursor.execute(
-            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 quiz_id,
                 q["question"],
                 json.dumps(q["options"], ensure_ascii=False),
                 q["answer"],
                 q.get("explanation", ""),
+                q.get("passage_image"),
             ),
         )
     conn.commit()
@@ -900,14 +909,15 @@ def copy_quiz_to_user(quiz_id: int, user_id: int) -> int:
     for q in questions:
         q_dict = dict(q)
         cursor.execute(
-            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 new_quiz_id,
                 q_dict["question_text"],
                 q_dict["options"],
                 q_dict["correct_answer"],
                 q_dict.get("explanation", ""),
+                q_dict.get("passage_image"),
             ),
         )
     conn.commit()

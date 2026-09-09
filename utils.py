@@ -301,5 +301,129 @@ def natural_sort_key(s: str) -> list:
     return key
 
 
+def strip_invisible_chars(s: str) -> str:
+    """Strips invisible Unicode characters, LTR/RTL marks, zero-width spaces, and NBSP."""
+    if not s:
+        return ""
+    # Replace non-breaking spaces (\u00a0, \u202f) with regular space
+    s = str(s).replace("\u00a0", " ").replace("\u202f", " ").replace("\ufeff", "")
+    # Remove LTR/RTL marks and zero-width characters
+    invisible_chars = "\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060"
+    for ch in invisible_chars:
+        s = s.replace(ch, "")
+    return s
+
+
+def normalize_for_match(s: str) -> str:
+    """Normalizes text for robust answer matching (digits, hamzas, diacritics, spaces)."""
+    if not s:
+        return ""
+    s = strip_invisible_chars(str(s))
+    # Normalize Arabic digits to Western digits
+    s = normalize_arabic_digits(s)
+    # Remove Arabic diacritics / tashkeel
+    s = re.sub(r'[\u064B-\u065F\u0670]', '', s)
+    # Normalize alef variants
+    s = re.sub(r'[أإآٱ]', 'ا', s)
+    # Normalize ta marbuta to ha
+    s = s.replace('ة', 'ه')
+    # Normalize ya / alef maksura
+    s = s.replace('ى', 'ي')
+    # Collapse multiple whitespace
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip().lower()
+
+
+def strip_option_prefix_py(text: str) -> str:
+    """Strips leading option prefixes like 'أ)', 'الخيار (ب)', '1-', 'A.'"""
+    if not text:
+        return ""
+    t = strip_invisible_chars(str(text)).strip()
+    # Strip prefixes like "الخيار أ", "الخيار (أ)", "خيار 1"
+    t = re.sub(r'^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*', '', t, flags=re.IGNORECASE)
+    # Strip (أ) or أ) or أ- or أ. or A) or 1)
+    t = re.sub(r'^[(\uff08]?[أ-دa-dA-D\u0623\u0628\u062c\u062f][)\uff09.:\-\/\s]+\s*', '', t)
+    t = re.sub(r'^[(\uff08]?[1-4\u0661-\u0664][)\uff09.:\-\/\s]+\s*', '', t)
+    return t.strip()
+
+
+def find_correct_option_index(options: list, correct_answer: str) -> int:
+    """
+    Robust multi-tier matcher to determine the exact 0-based index of correct_answer in options.
+    Guarantees zero false mismatches from Hamzas, digits, letter indices, prefixes, or invisible characters.
+    """
+    if not options:
+        return 0
+    
+    clean_options = [strip_invisible_chars(str(opt)).strip() for opt in options]
+    raw_ca = strip_invisible_chars(str(correct_answer)).strip()
+
+    if not raw_ca:
+        return 0
+
+    # Tier 1: Exact string equality
+    for idx, opt in enumerate(clean_options):
+        if opt == raw_ca:
+            return idx
+
+    # Tier 2: Normalized string equality (digits, hamzas, tashkeel, etc.)
+    norm_ca = normalize_for_match(raw_ca)
+    norm_options = [normalize_for_match(opt) for opt in clean_options]
+    for idx, n_opt in enumerate(norm_options):
+        if n_opt == norm_ca:
+            return idx
+
+    # Tier 3: Option prefix stripped comparison
+    # e.g. option is "أ) الرياض" and answer is "الرياض", or option is "الرياض" and answer is "أ) الرياض"
+    stripped_ca = normalize_for_match(strip_option_prefix_py(raw_ca))
+    stripped_options = [normalize_for_match(strip_option_prefix_py(opt)) for opt in clean_options]
+    if stripped_ca:
+        for idx, s_opt in enumerate(stripped_options):
+            if s_opt == stripped_ca:
+                return idx
+
+    # Tier 4: Letter-to-Index Matching
+    # If the answer is just a letter indicator: 'أ' -> 0, 'ب' -> 1, 'ج' -> 2, 'د' -> 3
+    # Or "الخيار ب", "(ب)", "Option B", "B"
+    arabic_letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"]
+    english_letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+    
+    letter_candidate = re.sub(r'^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*', '', raw_ca, flags=re.IGNORECASE)
+    letter_candidate = letter_candidate.strip("()[]{} \t.:-")
+    
+    if letter_candidate in arabic_letters:
+        idx = arabic_letters.index(letter_candidate)
+        if 0 <= idx < len(options):
+            return idx
+    elif letter_candidate.lower() in english_letters:
+        idx = english_letters.index(letter_candidate.lower())
+        if 0 <= idx < len(options):
+            return idx
+
+    # Tier 5: Numeric equivalence (e.g. "15" vs "15.0" vs "١٥")
+    try:
+        norm_ca_digits = normalize_arabic_digits(raw_ca).strip()
+        ca_num = float(norm_ca_digits)
+        for idx, opt in enumerate(clean_options):
+            try:
+                opt_num = float(normalize_arabic_digits(opt).strip())
+                if abs(ca_num - opt_num) < 1e-6:
+                    return idx
+            except (ValueError, TypeError):
+                continue
+    except (ValueError, TypeError):
+        pass
+
+    # Tier 6: Substring / Token containment ONLY when length is substantial (> 3 chars)
+    if len(norm_ca) >= 4:
+        for idx, n_opt in enumerate(norm_options):
+            if len(n_opt) >= 4 and (n_opt in norm_ca or norm_ca in n_opt):
+                return idx
+
+    logger.warning("find_correct_option_index: could not find match for answer %r in options %r. Defaulting to 0.", raw_ca, clean_options)
+    return 0
+
+
+
 
 

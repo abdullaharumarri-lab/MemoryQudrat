@@ -5,11 +5,14 @@ import re
 import tempfile
 import html
 
+import base64
+import hashlib
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
-from utils import send_clean_message
+from utils import send_clean_message, find_correct_option_index
 from config import MAX_JSON_FILE_SIZE_BYTES, MAX_QUESTIONS_PER_QUIZ, is_admin
 
 logger = logging.getLogger(__name__)
@@ -89,6 +92,42 @@ async def template_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─── Input Validation Helpers ─────────────────────────────────────────────────
+
+def save_passage_image(base64_data: str, quiz_id_or_tag: str, idx: int) -> str | None:
+    """
+    Saves a base64 encoded passage image to disk under data/passages/
+    and returns the local file path.
+    """
+    if not base64_data or not isinstance(base64_data, str) or len(base64_data) < 20:
+        return None
+    
+    if os.path.exists(base64_data):
+        return base64_data
+
+    raw_b64 = base64_data
+    if "," in raw_b64 and ("data:image" in raw_b64[:30] or "base64" in raw_b64[:30]):
+        raw_b64 = raw_b64.split(",", 1)[1]
+
+    try:
+        img_bytes = base64.b64decode(raw_b64)
+        if len(img_bytes) < 10:
+            return None
+
+        passages_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "passages")
+        os.makedirs(passages_dir, exist_ok=True)
+
+        content_hash = hashlib.md5(img_bytes).hexdigest()[:12]
+        filename = f"passage_{quiz_id_or_tag}_{idx}_{content_hash}.png"
+        filepath = os.path.join(passages_dir, filename)
+
+        with open(filepath, "wb") as f:
+            f.write(img_bytes)
+
+        return filepath
+    except Exception as e:
+        logger.error("Failed to decode and save passage image: %s", e)
+        return None
+
 
 def _validate_json_upload(doc, data: dict) -> None:
     """
@@ -201,31 +240,12 @@ def _validate_json_upload(doc, data: dict) -> None:
             else:
                 normalized_opts.append("خيار بديل")
 
-        # Resolve answer if given as index (0, 1 or "A", "B" or "أ", "ب")
+        # Resolve answer cleanly using find_correct_option_index
         if not ans:
             ans = normalized_opts[0]
-        elif ans not in normalized_opts:
-            if ans.isdigit():
-                idx = int(ans)
-                if 0 <= idx < len(normalized_opts):
-                    ans = normalized_opts[idx]
-                elif 1 <= idx <= len(normalized_opts):
-                    ans = normalized_opts[idx - 1]
-            elif ans.upper() in ["A", "B", "C", "D", "E", "F", "G", "H"]:
-                letter_idx = ord(ans.upper()) - ord("A")
-                if 0 <= letter_idx < len(normalized_opts):
-                    ans = normalized_opts[letter_idx]
-            elif ans in ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح"]:
-                arabic_letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح"]
-                a_idx = arabic_letters.index(ans)
-                if 0 <= a_idx < len(normalized_opts):
-                    ans = normalized_opts[a_idx]
-            else:
-                # If still not found, add it to options so it's a valid option
-                if len(normalized_opts) < 10:
-                    normalized_opts.append(ans)
-                else:
-                    ans = normalized_opts[0]
+        else:
+            ans_idx = find_correct_option_index(normalized_opts, ans)
+            ans = normalized_opts[ans_idx]
 
         q["options"] = normalized_opts
         q["answer"] = ans
@@ -243,7 +263,7 @@ def audit_quiz_quality(questions: list) -> dict:
 
     for i, q in enumerate(questions, start=1):
         q_text = str(q.get("question", "")).strip()
-        if "📄" in q_text or ("\n\n" in q_text and len(q_text.split("\n\n")[0]) > 25):
+        if q.get("passage_image") or "📄" in q_text or ("\n\n" in q_text and len(q_text.split("\n\n")[0]) > 25):
             passages_count += 1
 
         if q.get("explanation") and str(q.get("explanation")).strip():
@@ -310,6 +330,14 @@ async def process_json_quiz_data(
     """Processes parsed JSON data for either updating an existing quiz, upgrading an existing URL quiz, or saving a new quiz."""
     u_id = user.id if user else 6099429826
 
+    # Decode and save any base64 passage images to disk
+    q_tag = str(quiz_update_id or quiz_upgrade_id or "new")
+    for idx, q in enumerate(data.get("questions", [])):
+        p_img = q.get("passage_image")
+        if p_img:
+            saved_path = save_passage_image(p_img, q_tag, idx + 1)
+            q["passage_image"] = saved_path
+
     # 1. Update/Replace questions of an existing quiz (Preserves all Spaced Repetition reviews!)
     if quiz_update_id:
         new_name = data.get("quiz_name") or data.get("name")
@@ -368,14 +396,15 @@ async def process_json_quiz_data(
         conn.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_upgrade_id,))
         for q in data["questions"]:
             conn.execute(
-                """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation)
-                   VALUES (?, ?, ?, ?, ?)""",
+                """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     quiz_upgrade_id,
                     q["question"],
                     json.dumps(q["options"], ensure_ascii=False),
                     q["answer"],
                     q.get("explanation", ""),
+                    q.get("passage_image"),
                 ),
             )
         conn.commit()

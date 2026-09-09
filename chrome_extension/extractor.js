@@ -17,6 +17,140 @@
  *      - Maps each question by unique item ID to extract the exact correct answer and explanation.
  */
 
+// ─── Universal Answer & Text Normalization Helpers ───────────────────────────
+
+function stripInvisible(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/[\u00a0\u202f]/g, ' ')
+        .replace(/[\ufeff\u200b\u200c\u200d\u200e\u200f\u202a-\u202e\u2060]/g, '')
+        .trim();
+}
+
+function normalizeArabicDigitsJS(str) {
+    if (!str) return '';
+    const arabic = "٠١٢٣٤٥٦٧٨٩";
+    let res = String(str);
+    for (let i = 0; i < arabic.length; i++) {
+        res = res.replaceAll(arabic[i], i.toString());
+    }
+    return res;
+}
+
+function normalizeForMatchJS(str) {
+    if (!str) return '';
+    let s = stripInvisible(str);
+    s = normalizeArabicDigitsJS(s);
+    // Remove Arabic diacritics / tashkeel
+    s = s.replace(/[\u064B-\u065F\u0670]/g, '');
+    // Normalize alef variants
+    s = s.replace(/[أإآٱ]/g, 'ا');
+    // Normalize ta marbuta
+    s = s.replace(/ة/g, 'ه');
+    // Normalize ya / alef maksura
+    s = s.replace(/ى/g, 'ي');
+    return s.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function stripOptionPrefix(text) {
+    if (!text) return '';
+    let t = stripInvisible(String(text));
+    // Strip prefixes like "الخيار أ", "الخيار (أ)", "خيار 1"
+    t = t.replace(/^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*/i, '');
+    // Strip (أ) or أ) or أ- or أ. or A) or 1)
+    t = t.replace(/^[(\uff08]?[أ-دa-dA-D\u0623\u0628\u062c\u062f][)\uff09.:\-\/\s]+\s*/, '');
+    if (/^[(\uff08][1-4\u0661-\u0664][)\uff09]\s+/.test(t) || /^[1-4\u0661-\u0664][)\uff09\.\-]\s+/.test(t)) {
+        t = t.replace(/^[(\uff08]?[1-4\u0661-\u0664][)\uff09\.\-]+\s*/, '');
+    }
+    return t.trim();
+}
+
+function resolveCorrectAnswer(options, rawCA) {
+    if (!rawCA || !options || options.length === 0) return options[0] || '';
+    
+    const cleanCA = stripInvisible(rawCA);
+    const strippedPrefixCA = stripOptionPrefix(cleanCA);
+
+    // 1. Exact string match
+    for (const opt of options) {
+        const cleanOpt = stripInvisible(opt);
+        if (cleanOpt === cleanCA || cleanOpt === strippedPrefixCA) {
+            return opt;
+        }
+    }
+
+    // 2. Normalized match (digits, hamzas, diacritics, invisible chars)
+    const normCA = normalizeForMatchJS(cleanCA);
+    const normStrippedCA = normalizeForMatchJS(strippedPrefixCA);
+    for (const opt of options) {
+        const normOpt = normalizeForMatchJS(opt);
+        const normStrippedOpt = normalizeForMatchJS(stripOptionPrefix(opt));
+        if (normOpt === normCA || normOpt === normStrippedCA || normStrippedOpt === normCA || normStrippedOpt === normStrippedCA) {
+            return opt;
+        }
+    }
+
+    // 3. Letter-to-Index match: e.g. 'أ', 'ب', 'ج', 'د' or 'الخيار (ب)' or '(أ)' or 'A', 'B'
+    const arabicLetters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"];
+    const englishLetters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+    
+    let letterCandidate = cleanCA.replace(/^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*/i, '');
+    letterCandidate = letterCandidate.replace(/^[(\uff08\[{]+|[)\uff09\]} \t.:-]+$/g, '').trim();
+
+    const arIdx = arabicLetters.indexOf(letterCandidate);
+    if (arIdx !== -1 && arIdx < options.length) {
+        return options[arIdx];
+    }
+    const enIdx = englishLetters.indexOf(letterCandidate.toLowerCase());
+    if (enIdx !== -1 && enIdx < options.length) {
+        return options[enIdx];
+    }
+
+    // 4. Numeric equivalence: e.g. 15 vs 15.0 vs ١٥
+    const numCA = parseFloat(normalizeArabicDigitsJS(cleanCA));
+    if (!isNaN(numCA)) {
+        for (const opt of options) {
+            const numOpt = parseFloat(normalizeArabicDigitsJS(opt));
+            if (!isNaN(numOpt) && Math.abs(numCA - numOpt) < 1e-6) {
+                return opt;
+            }
+        }
+    }
+
+    // 5. If cleanCA is substantial (> 4 chars), try token boundary containment
+    if (normCA.length >= 4) {
+        for (const opt of options) {
+            const normOpt = normalizeForMatchJS(opt);
+            if (normOpt.length >= 4 && (normOpt === normCA || normCA.includes(normOpt) || normOpt.includes(normCA))) {
+                return opt;
+            }
+        }
+    }
+
+    return strippedPrefixCA || options[0] || '';
+}
+
+function isVerbalAnalogy(qText) {
+    if (!qText) return false;
+    let t = qText.trim().replace(/[\*\s]+$/, '').trim();
+    if (t.endsWith(':') || t.endsWith('：') || t.endsWith('؟') || t.endsWith('?')) {
+        return false;
+    }
+    const parts = t.split(/[:\：]/);
+    if (parts.length === 2) {
+        const left = parts[0].trim();
+        const right = parts[1].trim();
+        if (left && right && left.split(/\s+/).length <= 4 && right.split(/\s+/).length <= 4 && t.length < 40) {
+            const nonAnalogyWords = ['ما', 'لماذا', 'كيف', 'متى', 'أين', 'كم', 'أي', 'هل', 'من', 'ماذا', 'علاقة', 'معنى', 'يدل', 'تعني', 'يقصد', 'وفق', 'النص', 'القطعة', 'الفقرة'];
+            for (const w of nonAnalogyWords) {
+                if (left.includes(w) || right.includes(w)) return false;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 function extractGoogleFormsQuiz() {
     try {
         let rawData = null;
@@ -54,41 +188,10 @@ function extractGoogleFormsQuiz() {
             }
 
             const items = rawData[1][1];
-            let currentActivePassage = "";
+            let passageCounter = 0;
+            let currentPassageObj = null; // { id, text, itemId }
             const questions = [];
             const wrongIndices = [];
-
-            // Helper to strip only option prefixes safely without mangling numbers
-            function stripOptionPrefix(text) {
-                if (!text) return '';
-                let t = String(text).trim();
-                t = t.replace(/^[(\uff08]?[أ-دa-dA-D\u0623\u0628\u062c\u062f][)\uff09.:\-\/\s]+\s*/, '');
-                if (/^[(\uff08][1-4\u0661-\u0664][)\uff09]\s+/.test(t) || /^[1-4\u0661-\u0664][)\uff09\.\-]\s+/.test(t)) {
-                    t = t.replace(/^[(\uff08]?[1-4\u0661-\u0664][)\uff09\.\-]+\s*/, '');
-                }
-                return t.trim();
-            }
-
-            function isVerbalAnalogy(qText) {
-                if (!qText) return false;
-                let t = qText.trim().replace(/[\*\s]+$/, '').trim();
-                if (t.endsWith(':') || t.endsWith('：') || t.endsWith('؟') || t.endsWith('?')) {
-                    return false;
-                }
-                const parts = t.split(/[:\：]/);
-                if (parts.length === 2) {
-                    const left = parts[0].trim();
-                    const right = parts[1].trim();
-                    if (left && right && left.split(/\s+/).length <= 4 && right.split(/\s+/).length <= 4 && t.length < 40) {
-                        const nonAnalogyWords = ['ما', 'لماذا', 'كيف', 'متى', 'أين', 'كم', 'أي', 'هل', 'من', 'ماذا', 'علاقة', 'معنى', 'يدل', 'تعني', 'يقصد', 'وفق', 'النص', 'القطعة', 'الفقرة'];
-                        for (const w of nonAnalogyWords) {
-                            if (left.includes(w) || right.includes(w)) return false;
-                        }
-                        return true;
-                    }
-                }
-                return false;
-            }
 
             for (const item of items) {
                 const itemId = item[0];
@@ -109,7 +212,22 @@ function extractGoogleFormsQuiz() {
 
                     const isInfoOrPledge = /(?:اسم\s+الطالب|اسم\s+المشترك|الاسم\s+الثلاثي|البريد|email|رقم\s+الجوال|كلمة\s+المرور|password|اقسم|أقسم|أتعهد|اتعهد|أقر|تعهد)/i.test(passageCandidate);
                     if (!isInfoOrPledge && passageCandidate.length > 5) {
-                        currentActivePassage = passageCandidate;
+                        passageCounter++;
+                        const pId = `passage_${passageCounter}`;
+                        currentPassageObj = {
+                            id: pId,
+                            text: passageCandidate,
+                            itemId: itemId
+                        };
+
+                        // Mark DOM element for screenshot capture
+                        try {
+                            const cardEl = document.querySelector(`[data-item-id="${itemId}"]`) ||
+                                           document.getElementById(`i.desc.${itemId}`)?.closest('.Qr7Oae, [role="listitem"]');
+                            if (cardEl) {
+                                cardEl.setAttribute('data-qudrat-passage-id', pId);
+                            }
+                        } catch (e) {}
                     }
                     continue;
                 }
@@ -128,7 +246,21 @@ function extractGoogleFormsQuiz() {
 
                     const isMeta = /(?:اسم\s+الطالب|بيانات|تسجيل|معلومات|تعليمات|درجات|القسم\s+الأول|القسم\s+الثاني)/i.test(secText);
                     if (!isMeta && secText.length > 25) {
-                        currentActivePassage = secText;
+                        passageCounter++;
+                        const pId = `passage_${passageCounter}`;
+                        currentPassageObj = {
+                            id: pId,
+                            text: secText,
+                            itemId: itemId
+                        };
+
+                        try {
+                            const cardEl = document.querySelector(`[data-item-id="${itemId}"]`) ||
+                                           document.getElementById(`i.desc.${itemId}`)?.closest('.Qr7Oae, [role="listitem"]');
+                            if (cardEl) {
+                                cardEl.setAttribute('data-qudrat-passage-id', pId);
+                            }
+                        } catch (e) {}
                     }
                     continue;
                 }
@@ -150,13 +282,17 @@ function extractGoogleFormsQuiz() {
                     let cleanQText = title.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').replace(/\s*\*\s*$/, '').trim();
                     if (!cleanQText) cleanQText = `السؤال ${questions.length + 1}`;
 
-                    // Attach active passage seamlessly without destructive wipe
-                    if (currentActivePassage) {
+                    // Attach active passage seamlessly
+                    let questionPassageId = null;
+                    let questionPassageText = null;
+                    if (currentPassageObj) {
                         const isAnalogy = isVerbalAnalogy(cleanQText);
                         if (!isAnalogy) {
-                            const snippet = currentActivePassage.slice(0, 25).trim();
+                            questionPassageId = currentPassageObj.id;
+                            questionPassageText = currentPassageObj.text;
+                            const snippet = currentPassageObj.text.slice(0, 25).trim();
                             if (!cleanQText.includes(snippet)) {
-                                cleanQText = '📄 ' + currentActivePassage + '\n\n❓ ' + cleanQText;
+                                cleanQText = '📄 ' + currentPassageObj.text + '\n\n❓ ' + cleanQText;
                             }
                         }
                     }
@@ -225,22 +361,16 @@ function extractGoogleFormsQuiz() {
 
                     if (isWrong) wrongIndices.push(qNum);
 
-                    // Normalize correct answer against options
-                    if (correctAnswer) {
-                        const cleanCA = stripOptionPrefix(correctAnswer);
-                        const exact = options.find(o => o.trim() === cleanCA.trim() || o.trim() === correctAnswer.trim());
-                        const partial = options.find(o => cleanCA.includes(o.trim()) || o.trim().includes(cleanCA.trim()));
-                        correctAnswer = exact || partial || cleanCA;
-                        if (!options.includes(correctAnswer)) options.push(correctAnswer);
-                    } else {
-                        correctAnswer = options[0] || '';
-                    }
+                    // Universal robust answer normalization
+                    const finalCorrectAnswer = resolveCorrectAnswer(options, correctAnswer);
 
                     questions.push({
                         question: cleanQText,
                         options: options,
-                        answer: correctAnswer,
-                        explanation: explanation
+                        answer: finalCorrectAnswer,
+                        explanation: explanation,
+                        passage_id: questionPassageId,
+                        passage_text: questionPassageText
                     });
                 }
             }
@@ -280,7 +410,8 @@ function extractGoogleFormsQuiz() {
         const cards = Array.from(document.querySelectorAll('.Qr7Oae, [role="listitem"]'));
         const questionsFallback = [];
         const wrongFallback = [];
-        let currentPassageFallback = "";
+        let passageCounterFB = 0;
+        let currentPassageFBO = null;
 
         cards.forEach((card) => {
             const rg = card.querySelector('[role="radiogroup"]');
@@ -288,7 +419,12 @@ function extractGoogleFormsQuiz() {
                 const txt = clean(card);
                 const isMeta = /(?:اسم\s+الطالب|اسم\s+المشترك|البريد|email|رقم\s+الجوال|كلمة\s+المرور|password|اقسم|أقسم|أتعهد|اتعهد|تعهد)/i.test(txt);
                 if (!isMeta && txt.length > 20 && !/^\s*(?:\d+\s*\/\s*\d+|\d+\s*من\s+إجمالي\s+\d+\s*نقطة)\s*$/.test(txt)) {
-                    currentPassageFallback = txt;
+                    passageCounterFB++;
+                    const pId = `passage_fb_${passageCounterFB}`;
+                    currentPassageFBO = { id: pId, text: txt };
+                    try {
+                        card.setAttribute('data-qudrat-passage-id', pId);
+                    } catch (e) {}
                 }
                 return;
             }
@@ -300,12 +436,16 @@ function extractGoogleFormsQuiz() {
             qText = qText.replace(/^[\d٠-٩]+[\s\.\:\-\)\/]+\s*/, '').replace(/\s*\*\s*$/, '').trim();
             if (!qText) qText = `السؤال ${qNum}`;
 
-            if (currentPassageFallback) {
+            let qPassageId = null;
+            let qPassageText = null;
+            if (currentPassageFBO) {
                 const isAnalogy = isVerbalAnalogy(qText);
                 if (!isAnalogy) {
-                    const snippet = currentPassageFallback.slice(0, 25).trim();
+                    qPassageId = currentPassageFBO.id;
+                    qPassageText = currentPassageFBO.text;
+                    const snippet = currentPassageFBO.text.slice(0, 25).trim();
                     if (!qText.includes(snippet)) {
-                        qText = '📄 ' + currentPassageFallback + '\n\n❓ ' + qText;
+                        qText = '📄 ' + currentPassageFBO.text + '\n\n❓ ' + qText;
                     }
                 }
             }
@@ -316,18 +456,21 @@ function extractGoogleFormsQuiz() {
 
             radios.forEach((r) => {
                 const box = r.closest('.docssharedWizToggleLabeledContainer, .SG0AAe') || r.parentElement;
-                let opt = stripPrefixFallback(clean(box));
+                let opt = stripOptionPrefix(clean(box));
                 if (opt && !options.includes(opt)) options.push(opt);
                 if (r.getAttribute('aria-checked') === 'true') ans = opt;
             });
 
-            if (!ans && options.length > 0) ans = options[0];
+            const safeOpts = options.length >= 2 ? options : ["صح", "خطأ"];
+            const finalAns = resolveCorrectAnswer(safeOpts, ans);
 
             questionsFallback.push({
                 question: qText,
-                options: options.length >= 2 ? options : ["صح", "خطأ"],
-                answer: ans,
-                explanation: ""
+                options: safeOpts,
+                answer: finalAns,
+                explanation: "",
+                passage_id: qPassageId,
+                passage_text: qPassageText
             });
         });
 

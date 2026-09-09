@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 
 import database as db
 from config import is_admin, ADMIN_USER_ID
-from utils import safe_edit, send_clean_message, normalize_arabic_digits
+from utils import safe_edit, send_clean_message, normalize_arabic_digits, find_correct_option_index
 from spaced_repetition import days_until, stage_label
 
 logger = logging.getLogger(__name__)
@@ -665,11 +665,12 @@ def _build_quiz_preview(quiz_id: int, q_index: int = 0):
     exp = str(q.get("explanation", "")).strip() if q.get("explanation") else ""
 
     arabic_letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح"]
+    correct_idx = find_correct_option_index(raw_options, correct_ans)
     options_lines = []
     for idx, opt in enumerate(raw_options):
         letter = arabic_letters[idx] if idx < len(arabic_letters) else str(idx + 1)
         opt_str = str(opt).strip()
-        is_correct = (opt_str == correct_ans)
+        is_correct = (idx == correct_idx)
         if is_correct:
             options_lines.append(f"  <b>({letter})</b> {html.escape(opt_str)} ✅ <b>(الإجابة الصحيحة)</b>")
         else:
@@ -680,7 +681,9 @@ def _build_quiz_preview(quiz_id: int, q_index: int = 0):
         f"📝 <b>السؤال {q_index + 1} من {total_q}</b>\n",
     ]
 
-    if passage_text:
+    if q.get("passage_image"):
+        msg_lines.append("🖼️ <b>صورة القطعة:</b> محفوظة بجودة عالية وجاهزة للعرض كصورة 📷\n")
+    elif passage_text:
         msg_lines.append(f"📄 <b>القطعة / النص:</b>\n<blockquote>{html.escape(passage_text)}</blockquote>\n")
 
     msg_lines.append(f"❓ <b>{html.escape(clean_q_prompt)}</b>\n")

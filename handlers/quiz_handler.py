@@ -1,3 +1,4 @@
+import os
 import html
 import asyncio
 import logging
@@ -7,7 +8,7 @@ from telegram.ext import ContextTypes
 
 import database as db
 from config import is_admin
-from utils import safe_edit, strip_html_tags
+from utils import safe_edit, strip_html_tags, find_correct_option_index
 
 logger = logging.getLogger(__name__)
 
@@ -175,16 +176,9 @@ async def send_next_question(update, context, session):
     if len(options) > 10:
         options = options[:10]
     
-    # Determine correct index
+    # Determine correct index with universal multi-tier matcher
     correct_str = str(question.get("correct_answer", "")).strip()
-    correct_idx = 0
-    for idx, opt in enumerate(options):
-        if opt == correct_str or str(raw_options[idx] if idx < len(raw_options) else "").strip() == correct_str:
-            correct_idx = idx
-            break
-
-    if correct_idx < 0 or correct_idx >= len(options):
-        correct_idx = 0
+    correct_idx = find_correct_option_index(options, correct_str)
 
     q_text = str(question.get("question_text", "")).strip()
     if not q_text:
@@ -244,9 +238,30 @@ async def send_next_question(update, context, session):
                 clean_q_prompt = clean_q_prompt[idx + len(passage_text):].strip()
         clean_q_prompt = clean_q_prompt.lstrip("❓: \n\t").strip()
 
-    # ── Reading Passage Deduplication: Send ONCE per passage block ──
+    # ── Reading Passage Deduplication & Display (Image or Text) ──
+    passage_image = question.get("passage_image")
     last_passage = context.user_data.get(f"active_passage_{chat_id}")
-    if passage_text:
+
+    if passage_image and os.path.exists(passage_image):
+        if last_passage != passage_image:
+            try:
+                with open(passage_image, "rb") as p_file:
+                    p_msg = await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=p_file,
+                        caption="📄 <b>[قطعة القراءة]</b>\n<i>اقرأ القطعة في الصورة أعلاه ثم أجب عن السؤال التالي ⬇️</i>",
+                        parse_mode="HTML"
+                    )
+                    msg_ids.append(p_msg.message_id)
+                    db.track_chat_message(chat_id, p_msg.message_id)
+                    context.user_data[f"active_passage_{chat_id}"] = passage_image
+            except Exception as pe:
+                logger.error("Could not send passage photo: %s", pe)
+            await asyncio.sleep(0.4)
+        else:
+            if not clean_q_prompt.startswith("📖 (تابع"):
+                clean_q_prompt = "📖 (تابع لقطعة القراءة في الصورة أعلاه ☝️)\n" + clean_q_prompt
+    elif passage_text:
         safe_passage = passage_text
         if len(safe_passage) > 3800:
             safe_passage = safe_passage[:3750] + "\n\n...(تم اختصار النص لطوله)"
@@ -528,11 +543,7 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         options = ["نعم", "لا"]
 
     correct_str = str(question.get("correct_answer", "")).strip()
-    correct_idx = 0
-    for idx, opt in enumerate(options):
-        if str(opt).strip() == correct_str:
-            correct_idx = idx
-            break
+    correct_idx = find_correct_option_index(options, correct_str)
 
     user_option_id = selected_options[0] if selected_options else -1
     is_correct = user_option_id == correct_idx
