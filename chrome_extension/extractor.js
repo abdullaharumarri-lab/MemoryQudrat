@@ -348,19 +348,15 @@ function extractGoogleFormsQuiz() {
                         }
                     }
 
+                    let questionImage = null;
+
                     if (cardEl) {
                         const cardClone = cardEl.cloneNode(true);
                         cardClone.querySelectorAll('.M2vV3e, .RDPZE, .freebirdFormviewerViewItemsItemGradingPoints, [aria-describedby*="points"]').forEach(e => e.remove());
                         const cardText = cardClone.innerText || '';
 
-                        // Score & Wrong detection (e.g. 0 / 1 or 0/1 or red indicators)
-                        if (/\b0\s*\/\s*[1-9]/.test(cardEl.innerText || '') ||
-                            /\b٠\s*\/\s*[١-٩]/.test(cardEl.innerText || '') ||
-                            cardEl.querySelector('[fill="#d93025"], [fill="#c5221f"], .freebirdFormviewerViewItemsItemGradingIncorrectContainer')) {
-                            isWrong = true;
-                        }
-
-                        // 1. "الإجابة الصحيحة" search patterns
+                        // 1. Check for explicit "الإجابة الصحيحة" (Correct answer) box first!
+                        // In Google Forms, this box ONLY appears when the student answered WRONGLY.
                         const caPatterns = [
                             /(?:الإجابة الصحيحة|الإجابات الصحيحة|الإجابة النموذجية|الإجابة الصحيحة هي)\s*[:\n\-]?\s*([^\n]+)/i,
                             /(?:Correct answer|Correct answers)\s*[:\n\-]?\s*([^\n]+)/i
@@ -413,9 +409,8 @@ function extractGoogleFormsQuiz() {
                             }
                         }
 
-                        // 4. If question was NOT wrong, use the checked radio
-                        // CRITICAL: NEVER use checkedRadio if isWrong is true, because that was the student's wrong answer!
-                        if (!correctAnswer && !isWrong) {
+                        // 4. If no correction box was present, student's checked radio IS the correct answer
+                        if (!correctAnswer) {
                             const checkedRadio = cardEl.querySelector('[aria-checked="true"]');
                             if (checkedRadio) {
                                 const checkedBox = checkedRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, [role="radio"]') || checkedRadio.parentElement;
@@ -425,26 +420,37 @@ function extractGoogleFormsQuiz() {
                             }
                         }
 
-                        // 5. Deep fallback for wrong cards: find any child text node with "الإجابة الصحيحة"
-                        if (!correctAnswer && isWrong) {
-                            const allElements = Array.from(cardEl.querySelectorAll('div, span, p'));
-                            for (const el of allElements) {
-                                const t = (el.innerText || '').trim();
-                                if (t.startsWith('الإجابة الصحيحة') || t.startsWith('Correct answer')) {
-                                    const cleaned = t.replace(/^(?:الإجابة الصحيحة|Correct answers?)\s*[:\n\-]?\s*/i, '').trim();
-                                    if (cleaned && cleaned.length < 150) {
-                                        correctAnswer = cleaned.split('\n')[0].trim();
-                                        break;
-                                    }
-                                }
+                        // 5. Wrong detection based ONLY on points container or error container
+                        const pointsEl = cardEl.querySelector('.freebirdFormviewerViewItemsItemGradingPoints, .RDPZE, [aria-describedby*="points"], .M2vV3e');
+                        if (pointsEl) {
+                            const ptText = (pointsEl.innerText || '').trim();
+                            if (/\b0\s*\/\s*[1-9]/.test(ptText) || /\b٠\s*\/\s*[١-٩]/.test(ptText)) {
+                                isWrong = true;
                             }
+                        } else if (cardEl.querySelector('.freebirdFormviewerViewItemsItemGradingIncorrectContainer, [aria-label="غير صحيح"], [aria-label="Incorrect"]')) {
+                            isWrong = true;
                         }
 
-                        // Feedback explanation
+                        // 6. Extract Question Image if present (diagrams, geometry figures)
+                        const imgEl = cardEl.querySelector('img.Hvn9Fb, img[src*="googleusercontent.com"], img[src*="docs.google.com"], .freebirdFormviewerViewItemsEmbeddedobjectImage img');
+                        if (imgEl && imgEl.src && !imgEl.src.includes('cleardot.gif')) {
+                            questionImage = imgEl.src;
+                        }
+
+                        // 7. Feedback explanation
                         const fbEl = cardEl.querySelector('.g4k55c, .freebirdFormviewerViewItemsGradingFeedbackContainer');
                         if (fbEl) {
                             explanation = (fbEl.innerText || '').replace(/^(ملاحظات|تعليقات|Feedback)\s*[:\n]+\s*/i, '').trim();
                         }
+                    }
+
+                    // Fallback to data model for question image if not found in DOM
+                    if (!questionImage && item.length > 5) {
+                        try {
+                            const itemStr = JSON.stringify(item);
+                            const m = itemStr.match(/https:\/\/(?:lh\d+\.googleusercontent\.com|docs\.google\.com\/forms\/d\/e\/[^"'\\]+)/);
+                            if (m) questionImage = m[0];
+                        } catch (e) {}
                     }
 
                     if (isWrong) wrongIndices.push(qNum);
@@ -458,7 +464,8 @@ function extractGoogleFormsQuiz() {
                         answer: finalCorrectAnswer,
                         explanation: explanation,
                         passage_id: questionPassageId,
-                        passage_text: questionPassageText
+                        passage_text: questionPassageText,
+                        image: questionImage
                     });
                 }
             }
@@ -552,13 +559,20 @@ function extractGoogleFormsQuiz() {
             const safeOpts = options.length >= 2 ? options : ["صح", "خطأ"];
             const finalAns = resolveCorrectAnswer(safeOpts, ans);
 
+            let qImage = null;
+            const imgEl = card.querySelector('img.Hvn9Fb, img[src*="googleusercontent.com"], img[src*="docs.google.com"], .freebirdFormviewerViewItemsEmbeddedobjectImage img');
+            if (imgEl && imgEl.src && !imgEl.src.includes('cleardot.gif')) {
+                qImage = imgEl.src;
+            }
+
             questionsFallback.push({
                 question: qText,
                 options: safeOpts,
                 answer: finalAns,
                 explanation: "",
                 passage_id: qPassageId,
-                passage_text: qPassageText
+                passage_text: qPassageText,
+                image: qImage
             });
         });
 

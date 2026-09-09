@@ -169,19 +169,18 @@ async function capturePassageScreenshots(tab, data) {
 function generatePassageCardCanvas(text) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
-  const dpr = 2; // High-DPI Retina
-  const width = 740;
-  const padding = 36;
+  const dpr = 1.25; // Clean crisp scale without huge file size
+  const width = 640;
+  const padding = 28;
   const contentWidth = width - (padding * 2);
 
-  // Setup font for measurement
-  const fontSize = 18;
-  const lineHeight = 32;
+  const fontSize = 16;
+  const lineHeight = 28;
   const fontStyle = `normal ${fontSize}px "Segoe UI", Tahoma, Arial, sans-serif`;
   ctx.font = fontStyle;
 
   // Word wrap Arabic text
-  const cleanText = text.replace(/\r\n/g, '\n').trim();
+  const cleanText = (text || '').replace(/\r\n/g, '\n').trim();
   const rawParagraphs = cleanText.split('\n');
   const lines = [];
 
@@ -205,28 +204,28 @@ function generatePassageCardCanvas(text) {
     if (currentLine) lines.push(currentLine);
   }
 
-  const headerHeight = 65;
-  const footerHeight = 45;
-  const textHeight = Math.max(60, lines.length * lineHeight);
+  const headerHeight = 52;
+  const footerHeight = 36;
+  const textHeight = Math.max(50, lines.length * lineHeight);
   const height = headerHeight + textHeight + footerHeight + (padding * 2);
 
   canvas.width = Math.round(width * dpr);
   canvas.height = Math.round(height * dpr);
   ctx.scale(dpr, dpr);
 
-  // Background Card
-  ctx.fillStyle = '#0f172a'; // Deep slate
+  // Background Paper (Clean, light, pleasant to read)
+  ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
 
-  // Inner card with border
-  const margin = 12;
+  // Border
+  const margin = 8;
   const cardW = width - (margin * 2);
   const cardH = height - (margin * 2);
-  const radius = 16;
+  const radius = 10;
 
-  ctx.fillStyle = '#1e293b'; // Slate 800
-  ctx.strokeStyle = '#3b82f6'; // Blue 500
-  ctx.lineWidth = 2;
+  ctx.fillStyle = '#f8fafc';
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 1.5;
 
   ctx.beginPath();
   ctx.roundRect(margin, margin, cardW, cardH, radius);
@@ -234,18 +233,18 @@ function generatePassageCardCanvas(text) {
   ctx.stroke();
 
   // Header Badge: "📄 قطعة القراءة"
-  const badgeW = 160;
-  const badgeH = 34;
+  const badgeW = 140;
+  const badgeH = 28;
   const badgeX = (width - badgeW) / 2;
-  const badgeY = margin + 20;
+  const badgeY = margin + 14;
 
-  ctx.fillStyle = '#1d4ed8'; // Royal blue
+  ctx.fillStyle = '#2563eb'; // Blue 600
   ctx.beginPath();
-  ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 8);
+  ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
   ctx.fill();
 
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 15px "Segoe UI", Tahoma, Arial, sans-serif';
+  ctx.font = 'bold 13px "Segoe UI", Tahoma, Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.direction = 'rtl';
@@ -253,12 +252,12 @@ function generatePassageCardCanvas(text) {
 
   // Render Arabic Text
   ctx.font = fontStyle;
-  ctx.fillStyle = '#f8fafc'; // Crisp white text
+  ctx.fillStyle = '#1e293b'; // Slate 800 - high contrast
   ctx.textAlign = 'right';
   ctx.direction = 'rtl';
   ctx.textBaseline = 'top';
 
-  let currentY = margin + headerHeight + 15;
+  let currentY = margin + headerHeight + 10;
   const startX = width - padding - margin;
 
   for (const line of lines) {
@@ -268,23 +267,17 @@ function generatePassageCardCanvas(text) {
     currentY += lineHeight;
   }
 
-  // Footer: MemoryQudrat Watermark
-  const footerY = height - margin - 22;
-  ctx.strokeStyle = '#334155';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(margin + 20, footerY - 10);
-  ctx.lineTo(width - margin - 20, footerY - 10);
-  ctx.stroke();
-
-  ctx.font = '13px "Segoe UI", Tahoma, Arial, sans-serif';
-  ctx.fillStyle = '#64748b';
+  // Footer
+  const footerY = height - margin - 16;
+  ctx.font = '11px "Segoe UI", Tahoma, Arial, sans-serif';
+  ctx.fillStyle = '#94a3b8';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.direction = 'ltr';
-  ctx.fillText('🧠 ذاكرة القدرات — MemoryQudrat', width / 2, footerY + 4);
+  ctx.fillText('🧠 ذاكرة القدرات — MemoryQudrat', width / 2, footerY);
 
-  return canvas.toDataURL('image/png');
+  // Export as lightweight JPEG (under 25 KB!)
+  return canvas.toDataURL('image/jpeg', 0.82);
 }
 
 function cropImage(dataUrl, rect) {
@@ -308,7 +301,8 @@ function cropImage(dataUrl, rect) {
         const sy = Math.max(0, Math.round(rect.y * dpr));
 
         ctx.drawImage(img, sx, sy, w, h, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/png'));
+        // Export as lightweight JPEG (under 30 KB!)
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
       } catch (e) {
         resolve(null);
       }
@@ -342,6 +336,18 @@ function renderQuizData(data) {
       titleEl.className = "q-title";
       titleEl.innerHTML = `<b>س${qNum}:</b> ${escapeHtml(q.question)} ${isWrong ? '<span style="color:#f87171; font-size:10px;">(خاطئ ❌)</span>' : ''}`;
       itemEl.appendChild(titleEl);
+
+      // Render question diagram/image if available
+      if (q.image) {
+        const qImgEl = document.createElement("div");
+        qImgEl.style.margin = "6px 0";
+        qImgEl.style.textAlign = "center";
+        qImgEl.innerHTML = `
+          <div style="font-size: 10px; color: #38bdf8; margin-bottom: 2px;">🖼️ <b>صورة السؤال:</b></div>
+          <img src="${escapeHtml(q.image)}" style="max-width: 100%; max-height: 140px; border-radius: 6px; border: 1px solid #0284c7; background: #fff;" alt="Question Image" />
+        `;
+        itemEl.appendChild(qImgEl);
+      }
 
       // Render passage screenshot preview if available
       if (q.passage_image) {

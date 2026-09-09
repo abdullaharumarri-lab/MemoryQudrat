@@ -735,6 +735,7 @@ def _build_settings(user_id):
         [InlineKeyboardButton("🌙 8:00 م", callback_data="set_reminder_20_0"),
          InlineKeyboardButton("🌙 9:00 م", callback_data="set_reminder_21_0"),
          InlineKeyboardButton("🌙 10:00 م", callback_data="set_reminder_22_0")],
+        [InlineKeyboardButton("🔔 تجربة إرسال التذكير الآن", callback_data="test_reminder_now")],
         [InlineKeyboardButton("ℹ️ كيف يعمل نظام التكرار المتباعد؟", callback_data="how_it_works")],
         [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
     ]
@@ -1355,6 +1356,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dh = h if 1 <= h <= 12 else (h - 12 if h > 12 else 12)
         await safe_edit(query, f"✅ تم تعيين وقت التذكير: <b>{dh}:{m:02d} {period}</b>",
                         InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
+        return
+
+    if data == "test_reminder_now":
+        await query.answer("🔔 تم إرسال التذكير التجريبي!")
+        uid = query.from_user.id
+        chat_id = update.effective_chat.id
+        reviews = db.get_due_quiz_reviews(user_id=uid)
+        weak = db.get_due_weak_questions(user_id=uid)
+        if reviews or weak:
+            parts = []
+            if reviews: parts.append(f"🔁 {len(reviews)} مراجعة كويز")
+            if weak: parts.append(f"❌ {len(weak)} سؤال ضعيف")
+            t = (
+                "🔔 <b>[تذكير تجريبي] — ذاكرة القدرات 🧠</b>\n\n"
+                "لديك مهام مراجعة مستحقة اليوم:\n" + "\n".join(f"• {p}" for p in parts) +
+                "\n\nافتح البوت وابدأ المراجعة لترسيخ معلوماتك 💪"
+            )
+            k = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ حل مراجعات اليوم", callback_data="due_reviews")]])
+        else:
+            t = (
+                "🔔 <b>[تذكير تجريبي] — ذاكرة القدرات 🧠</b>\n\n"
+                "أهلاً بك يا بطل! 🌟\n"
+                "نظام التذكير اليومي يعمل بنجاح 100% 🎯!\n\n"
+                "لا توجد مراجعات متراكمة عليك اليوم. سيصلك التذكير تلقائياً كل يوم في الوقت الذي حددته."
+            )
+            k = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📚 تصفح الكويزات", callback_data="browse_root")],
+                [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings_menu")]
+            ])
+        await send_clean_message(context=context, chat_id=chat_id, text=t, reply_markup=k)
         return
 
     if data == "create_upload_menu":

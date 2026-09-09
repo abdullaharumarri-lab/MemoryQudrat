@@ -330,13 +330,17 @@ async def process_json_quiz_data(
     """Processes parsed JSON data for either updating an existing quiz, upgrading an existing URL quiz, or saving a new quiz."""
     u_id = user.id if user else 6099429826
 
-    # Decode and save any base64 passage images to disk
+    # Decode and save any base64 passage/question images to disk
     q_tag = str(quiz_update_id or quiz_upgrade_id or "new")
     for idx, q in enumerate(data.get("questions", [])):
         p_img = q.get("passage_image")
         if p_img:
             saved_path = save_passage_image(p_img, q_tag, idx + 1)
             q["passage_image"] = saved_path
+        q_img = q.get("image") or q.get("question_image")
+        if q_img and isinstance(q_img, str) and (len(q_img) > 50 or "base64" in q_img) and not q_img.startswith("http"):
+            saved_qimg = save_passage_image(q_img, f"{q_tag}_qimg", idx + 1)
+            q["image"] = saved_qimg
 
     # 1. Update/Replace questions of an existing quiz (Preserves all Spaced Repetition reviews!)
     if quiz_update_id:

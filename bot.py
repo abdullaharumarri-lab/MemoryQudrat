@@ -42,7 +42,12 @@ def schedule_reminder(job_queue, chat_id: int, hour: int = None, minute: int = N
         if hour is None: hour = 4
         if minute is None: minute = 30
 
-        riyadh_tz = pytz.timezone("Asia/Riyadh")
+        try:
+            from zoneinfo import ZoneInfo
+            riyadh_tz = ZoneInfo("Asia/Riyadh")
+        except ImportError:
+            riyadh_tz = pytz.timezone("Asia/Riyadh")
+
         job_queue.run_daily(
             daily_reminder,
             time=time(int(hour), int(minute), tzinfo=riyadh_tz),
@@ -60,17 +65,35 @@ async def daily_reminder(context):
         user_id = chat_id  # In private chat, chat_id is the user_id
         reviews = db.get_due_quiz_reviews(user_id=user_id)
         weak = db.get_due_weak_questions(user_id=user_id)
-        if not reviews and not weak: return
+        
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        if not reviews and not weak:
+            # Send daily positive check-in so user knows reminder is active and stays engaged
+            text = (
+                "🌅 <b>تذكير يومي — ذاكرة القدرات 🧠</b>\n\n"
+                "أهلاً بك يا بطل! 🌟\n"
+                "أحسنت، جدولك نظيف ولا توجد مراجعات متراكمة عليك اليوم ✨\n\n"
+                "💪 <i>استغل هذا الوقت لحل كويز جديد أو تقوية مهاراتك من بنك الكويزات لترسيخ مستواك!</i>"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📚 تصفح الكويزات", callback_data="browse_root")],
+                [InlineKeyboardButton("📊 إحصائياتي وتقدمي", callback_data="my_stats")]
+            ])
+            await send_clean_message(
+                context=context, chat_id=chat_id, text=text, reply_markup=keyboard
+            )
+            return
+
         parts = []
         if reviews: parts.append(f"🔁 {len(reviews)} مراجعة كويز")
         if weak: parts.append(f"❌ {len(weak)} سؤال ضعيف")
         text = (
-            "🌅 <b>تذكير يومي — ذاكرة القدرات</b>\n\n"
+            "🌅 <b>تذكير يومي — ذاكرة القدرات 🧠</b>\n\n"
             "لديك مهام مراجعة مستحقة اليوم:\n" + "\n".join(f"• {p}" for p in parts) +
             "\n\nافتح البوت وابدأ المراجعة لترسيخ معلوماتك 💪"
         )
         
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton("▶️ حل مراجعات اليوم", callback_data="due_reviews")
         ]])

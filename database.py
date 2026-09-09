@@ -112,6 +112,13 @@ def init_db():
         except Exception as e:
             logger.warning("Could not add passage_image column: %s", e)
 
+    if "image" not in existing_q_cols:
+        try:
+            cursor.execute("ALTER TABLE questions ADD COLUMN image TEXT")
+            logger.info("Added image column to questions table")
+        except Exception as e:
+            logger.warning("Could not add image column: %s", e)
+
     # ── 5. Quiz Spaced Repetition Reviews ──
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS quiz_reviews (
@@ -693,8 +700,8 @@ def save_quiz_without_review(name: str, questions: list, category_id: int = None
     quiz_id = cursor.lastrowid
     for q in questions:
         cursor.execute(
-            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image, image)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 quiz_id,
                 q["question"],
@@ -702,6 +709,7 @@ def save_quiz_without_review(name: str, questions: list, category_id: int = None
                 q["answer"],
                 q.get("explanation", ""),
                 q.get("passage_image"),
+                q.get("image") or q.get("question_image"),
             ),
         )
     conn.commit()
@@ -727,8 +735,8 @@ def update_quiz_questions(quiz_id: int, questions: list, new_name: str = None) -
     # Insert new questions
     for q in questions:
         cursor.execute(
-            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image, image)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 quiz_id,
                 q["question"],
@@ -736,6 +744,7 @@ def update_quiz_questions(quiz_id: int, questions: list, new_name: str = None) -
                 q["answer"],
                 q.get("explanation", ""),
                 q.get("passage_image"),
+                q.get("image") or q.get("question_image"),
             ),
         )
     conn.commit()

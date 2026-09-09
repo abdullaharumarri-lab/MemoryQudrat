@@ -328,6 +328,33 @@ async def send_next_question(update, context, session):
     else:
         context.user_data.pop(f"active_passage_{chat_id}", None)
 
+    # ── Question Diagram / Image Display (e.g. Geometry figures, graphs) ──
+    q_img_path = question.get("image") or question.get("question_image")
+    if q_img_path:
+        try:
+            if os.path.exists(q_img_path):
+                with open(q_img_path, "rb") as qf:
+                    q_msg = await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=qf,
+                        caption=f"🖼️ <b>[صورة السؤال {session['current_index'] + 1}]</b>",
+                        parse_mode="HTML"
+                    )
+                    msg_ids.append(q_msg.message_id)
+                    db.track_chat_message(chat_id, q_msg.message_id)
+            elif isinstance(q_img_path, str) and q_img_path.startswith("http"):
+                q_msg = await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=q_img_path,
+                    caption=f"🖼️ <b>[صورة السؤال {session['current_index'] + 1}]</b>",
+                    parse_mode="HTML"
+                )
+                msg_ids.append(q_msg.message_id)
+                db.track_chat_message(chat_id, q_msg.message_id)
+        except Exception as qie:
+            logger.warning("Could not send question diagram: %s", qie)
+        await asyncio.sleep(0.3)
+
     # Check Telegram Poll limits (Question max 300, Option max 100)
     long_question = len(clean_q_prompt) > 250
     long_options = any(len(opt) > 90 for opt in options)
