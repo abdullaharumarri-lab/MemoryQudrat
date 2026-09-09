@@ -45,7 +45,7 @@ DB_PATH = "memory_qudrat.db"
 GEMINI_MODEL = "gemini-2.0-flash"
 
 # Upload limits (security)
-MAX_JSON_FILE_SIZE_BYTES = 500 * 1024  # 500 KB max
+MAX_JSON_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (allows embedded passage screenshots as base64)
 MAX_QUESTIONS_PER_QUIZ = 200           # max questions per upload
 
 # Official Channel

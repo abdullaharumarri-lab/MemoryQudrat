@@ -137,9 +137,9 @@ def _validate_json_upload(doc, data: dict) -> None:
     """
     # 1. File size guard
     if doc and hasattr(doc, "file_size") and doc.file_size and doc.file_size > MAX_JSON_FILE_SIZE_BYTES:
-        size_kb = doc.file_size // 1024
+        size_mb = round(doc.file_size / (1024 * 1024), 1)
         raise ValueError(
-            f"حجم الملف ({size_kb} KB) يتجاوز الحد المسموح ({MAX_JSON_FILE_SIZE_BYTES // 1024} KB). "
+            f"حجم الملف ({size_mb} MB) يتجاوز الحد المسموح ({MAX_JSON_FILE_SIZE_BYTES // (1024 * 1024)} MB). "
             "قسّم الكويز إلى ملفات أصغر."
         )
 
@@ -555,13 +555,14 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
     # ── Early size check before downloading ──────────────────────────────────
     if doc.file_size and doc.file_size > MAX_JSON_FILE_SIZE_BYTES:
         size_kb = doc.file_size // 1024
+        size_mb = round(doc.file_size / (1024 * 1024), 1)
         await send_clean_message(
             context=context,
             chat_id=update.effective_chat.id,
             update=update,
             text=(
-                f"❌ <b>حجم الملف كبير جداً</b> ({size_kb} KB).\n"
-                f"الحد المسموح هو <b>{MAX_JSON_FILE_SIZE_BYTES // 1024} KB</b>.\n"
+                f"❌ <b>حجم الملف كبير جداً</b> ({size_mb} MB).\n"
+                f"الحد المسموح هو <b>{MAX_JSON_FILE_SIZE_BYTES // (1024 * 1024)} MB</b>.\n"
                 "قسّم الكويز إلى ملفات أصغر وأرفعها بشكل منفصل."
             )
         )

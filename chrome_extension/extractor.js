@@ -313,21 +313,38 @@ function extractGoogleFormsQuiz() {
                         }
                     }
 
-                    // Look up DOM card by item ID or question text snippet (strictly within question cards)
+                    // Look up DOM card — first by data-item-id, then by text, then by position
                     const qNum = questions.length + 1;
                     let isWrong = false;
                     let correctAnswer = "";
                     let explanation = "";
 
+                    // Primary: by data-item-id attribute (works for question cards in most forms)
                     let cardEl = document.querySelector(`[data-item-id="${itemId}"]`)?.closest('.Qr7Oae, [role="listitem"]') ||
                                  document.querySelector(`[data-item-id="${itemId}"]`);
 
+                    // Fallback: search all listitem-style cards by text snippet of the question
                     if (!cardEl) {
-                        const questionCards = Array.from(document.querySelectorAll('.Qr7Oae, [role="listitem"]')).filter(c => c.querySelector('[role="radiogroup"], [role="checkbox"]'));
-                        const qSnippet = cleanQText.slice(0, 30).trim();
-                        cardEl = questionCards.find(c => (c.innerText || '').includes(qSnippet));
-                        if (!cardEl && qNum - 1 < questionCards.length) {
-                            cardEl = questionCards[qNum - 1];
+                        const allCards = Array.from(document.querySelectorAll('.Qr7Oae, [role="listitem"]'));
+                        const qSnippet = cleanQText.slice(0, 25).trim();
+                        if (qSnippet.length >= 6) {
+                            cardEl = allCards.find(c => (c.innerText || '').includes(qSnippet));
+                        }
+                        // Last resort: positional index using ONLY question cards (has radiogroup or checkbox)
+                        if (!cardEl) {
+                            const questionCardsOnly = allCards.filter(c =>
+                                c.querySelector('[role="radiogroup"]') ||
+                                c.querySelector('[role="group"][data-params]') ||
+                                c.querySelector('.AB7Lab') // Google Forms MCQ radio container
+                            );
+                            if (qNum - 1 < questionCardsOnly.length) {
+                                cardEl = questionCardsOnly[qNum - 1];
+                            } else {
+                                // Very last resort — raw positional (may be off if passages exist)
+                                if (qNum - 1 < allCards.length) {
+                                    cardEl = allCards[qNum - 1];
+                                }
+                            }
                         }
                     }
 
