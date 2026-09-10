@@ -400,8 +400,8 @@ async def process_json_quiz_data(
         conn.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_upgrade_id,))
         for q in data["questions"]:
             conn.execute(
-                """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image, image)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     quiz_upgrade_id,
                     q["question"],
@@ -409,6 +409,7 @@ async def process_json_quiz_data(
                     q["answer"],
                     q.get("explanation", ""),
                     q.get("passage_image"),
+                    q.get("image") or q.get("question_image"),
                 ),
             )
         conn.commit()

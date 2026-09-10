@@ -123,7 +123,9 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
         name = manual_quiz.get("name", "كويز بدون اسم")
         questions = manual_quiz.get("questions", [])
 
-        quiz_id = db.save_quiz(name, questions, user_id=u_id, is_public=is_pub)
+        # Admin-created quizzes are public; user-created are private
+        is_public_val = 1 if is_admin(u_id) else 0
+        quiz_id = db.save_quiz(name, questions, user_id=u_id, is_public=is_public_val)
 
         categories = db.get_categories(is_public=1)
         folder_prompt = "\n\n📁 <b>اختر المجلد الذي ترغب بإضافة الكويز إليه:</b>" if categories else ""
@@ -153,6 +155,7 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
             InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")
         ])
         kb = InlineKeyboardMarkup(kb_rows)
+        await safe_edit(query, text, kb)
     elif data.startswith("manual_set_correct_"):
         correct_idx = int(data.split("_")[-1])
         current_q = context.user_data.pop("current_q", {})

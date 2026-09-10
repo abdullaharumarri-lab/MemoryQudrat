@@ -57,8 +57,8 @@ function stripOptionPrefix(text) {
     let t = stripInvisible(String(text));
     // Strip prefixes like "الخيار أ", "الخيار (أ)", "خيار 1"
     t = t.replace(/^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*/i, '');
-    // Strip Arabic letter prefixes (أ through ي = all 10 letters) with any separator
-    t = t.replace(/^[(\uff08]?[\u0623-\u064a\u0647\u0648a-jA-J][)\uff09.:\-\/\s]+\s*/, '');
+    // Strip Arabic letter prefixes (أ through ي = all 10 letters) with any separator and optional tatweel
+    t = t.replace(/^[(\uff08]?[\u0623-\u064a\u0647\u0648a-jA-J]\u0640*[)\uff09.:\-\/\s]+\s*/, '');
     // Strip numeric prefixes 1-9
     if (/^[(\uff08][1-9\u0661-\u0669][)\uff09]\s+/.test(t) || /^[1-9\u0661-\u0669][)\uff09\.\-]\s+/.test(t)) {
         t = t.replace(/^[(\uff08]?[1-9\u0661-\u0669][)\uff09\.\-]+\s*/, '');
@@ -92,15 +92,28 @@ function resolveCorrectAnswer(options, rawCA) {
     }
 
     // 3. Letter-to-Index match: e.g. 'أ', 'ب', 'ج', 'د' or 'الخيار (ب)' or '(أ)' or 'A', 'B'
-    const arabicLetters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"];
+    const arabicLetterMap = {
+        "أ": 0, "ا": 0, "إ": 0, "آ": 0,
+        "ب": 1,
+        "ج": 2,
+        "د": 3,
+        "هـ": 4, "ه": 4,
+        "و": 5,
+        "ز": 6,
+        "ح": 7,
+        "ط": 8,
+        "ي": 9, "ى": 9
+    };
     const englishLetters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
     
     let letterCandidate = cleanCA.replace(/^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*/i, '');
     letterCandidate = letterCandidate.replace(/^[(\uff08\[{]+|[)\uff09\]} \t.:-]+$/g, '').trim();
 
-    const arIdx = arabicLetters.indexOf(letterCandidate);
-    if (arIdx !== -1 && arIdx < options.length) {
-        return options[arIdx];
+    if (letterCandidate in arabicLetterMap) {
+        const arIdx = arabicLetterMap[letterCandidate];
+        if (arIdx < options.length) {
+            return options[arIdx];
+        }
     }
     const enIdx = englishLetters.indexOf(letterCandidate.toLowerCase());
     if (enIdx !== -1 && enIdx < options.length) {

@@ -749,6 +749,7 @@ def _build_settings(user_id):
 def _build_create_menu():
     text = "➕ <b>إنشاء / رفع كويز</b>\n\nاختر طريقة الإضافة المناسبة:"
     kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✍️ إنشاء كويز يدوياً", callback_data="create_manual_quiz")],
         [InlineKeyboardButton("📊 رفع ملف Excel / CSV", callback_data="upload_excel")],
         [InlineKeyboardButton("📥 تحميل قالب Excel", callback_data="download_excel_template")],
         [InlineKeyboardButton("📋 رفع ملف JSON", callback_data="upload_json")],

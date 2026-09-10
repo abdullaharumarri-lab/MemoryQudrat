@@ -9,17 +9,6 @@ from config import DB_PATH, ADMIN_USER_ID
 
 logger = logging.getLogger(__name__)
 
-
-def get_first_review_date() -> str:
-    """Smart first review: before 4:30 AM Riyadh → today, after 4:30 AM → tomorrow."""
-    riyadh_tz = pytz.timezone("Asia/Riyadh")
-    now_riyadh = datetime.now(riyadh_tz)
-    if now_riyadh.hour < 4 or (now_riyadh.hour == 4 and now_riyadh.minute < 30):
-        return date.today().isoformat()
-    else:
-        return (date.today() + timedelta(days=1)).isoformat()
-
-
 def get_connection():
     conn = sqlite3.connect(DB_PATH, timeout=20.0)
     conn.execute("PRAGMA journal_mode = WAL;")

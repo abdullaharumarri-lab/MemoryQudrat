@@ -341,8 +341,8 @@ def strip_option_prefix_py(text: str) -> str:
     t = strip_invisible_chars(str(text)).strip()
     # Strip prefixes like "الخيار أ", "الخيار (أ)", "خيار 1"
     t = re.sub(r'^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*', '', t, flags=re.IGNORECASE)
-    # Strip Arabic letter prefixes (أ-ي = all 10 letters) with any separator: ) . : - /
-    t = re.sub(r'^[\(\uff08]?[\u0623-\u064a\u0647\u0648a-jA-J][\)\uff09\.:\-\/\s]+\s*', '', t)
+    # Strip Arabic letter prefixes (أ-ي = all 10 letters) with any separator: ) . : - / and optional tatweel
+    t = re.sub(r'^[\(\uff08]?[\u0623-\u064a\u0647\u0648a-jA-J]\u0640*[\)\uff09\.:\-\/\s]+\s*', '', t)
     # Strip numeric prefixes: 1) 2. 3- etc.
     t = re.sub(r'^[\(\uff08]?[1-9\u0661-\u0669][\)\uff09\.\:\-\/\s]+\s*', '', t)
     return t.strip()
@@ -386,14 +386,25 @@ def find_correct_option_index(options: list, correct_answer: str) -> int:
     # Tier 4: Letter-to-Index Matching
     # If the answer is just a letter indicator: 'أ' -> 0, 'ب' -> 1, 'ج' -> 2, 'د' -> 3
     # Or "الخيار ب", "(ب)", "Option B", "B"
-    arabic_letters = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"]
-    english_letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
-    
     letter_candidate = re.sub(r'^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*', '', raw_ca, flags=re.IGNORECASE)
     letter_candidate = letter_candidate.strip("()[]{} \t.:-")
+
+    arabic_letter_map = {
+        "أ": 0, "ا": 0, "إ": 0, "آ": 0,
+        "ب": 1,
+        "ج": 2,
+        "د": 3,
+        "هـ": 4, "ه": 4,
+        "و": 5,
+        "ز": 6,
+        "ح": 7,
+        "ط": 8,
+        "ي": 9, "ى": 9
+    }
+    english_letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
     
-    if letter_candidate in arabic_letters:
-        idx = arabic_letters.index(letter_candidate)
+    if letter_candidate in arabic_letter_map:
+        idx = arabic_letter_map[letter_candidate]
         if 0 <= idx < len(options):
             return idx
     elif letter_candidate.lower() in english_letters:
