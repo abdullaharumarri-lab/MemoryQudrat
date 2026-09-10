@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 seed_tables.py — إضافة مجلد وكويزات جدول الضرب (1 - 30)
 بدون أي مكتبات خارجية (Standard Library Only: sqlite3, json, random)
@@ -7,6 +7,12 @@ import sqlite3
 import json
 import random
 import os
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 ADMIN_USER_ID = 6099429826
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_qudrat.db")
