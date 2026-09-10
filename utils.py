@@ -341,9 +341,10 @@ def strip_option_prefix_py(text: str) -> str:
     t = strip_invisible_chars(str(text)).strip()
     # Strip prefixes like "الخيار أ", "الخيار (أ)", "خيار 1"
     t = re.sub(r'^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*', '', t, flags=re.IGNORECASE)
-    # Strip (أ) or أ) or أ- or أ. or A) or 1)
-    t = re.sub(r'^[(\uff08]?[أ-دa-dA-D\u0623\u0628\u062c\u062f][)\uff09.:\-\/\s]+\s*', '', t)
-    t = re.sub(r'^[(\uff08]?[1-4\u0661-\u0664][)\uff09.:\-\/\s]+\s*', '', t)
+    # Strip Arabic letter prefixes (أ-ي = all 10 letters) with any separator: ) . : - /
+    t = re.sub(r'^[\(\uff08]?[\u0623-\u064a\u0647\u0648a-jA-J][\)\uff09\.:\-\/\s]+\s*', '', t)
+    # Strip numeric prefixes: 1) 2. 3- etc.
+    t = re.sub(r'^[\(\uff08]?[1-9\u0661-\u0669][\)\uff09\.\:\-\/\s]+\s*', '', t)
     return t.strip()
 
 

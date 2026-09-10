@@ -57,16 +57,17 @@ function stripOptionPrefix(text) {
     let t = stripInvisible(String(text));
     // Strip prefixes like "الخيار أ", "الخيار (أ)", "خيار 1"
     t = t.replace(/^(?:الخيار|خيار|Option)\s*[:\-\.]?\s*/i, '');
-    // Strip (أ) or أ) or أ- or أ. or A) or 1)
-    t = t.replace(/^[(\uff08]?[أ-دa-dA-D\u0623\u0628\u062c\u062f][)\uff09.:\-\/\s]+\s*/, '');
-    if (/^[(\uff08][1-4\u0661-\u0664][)\uff09]\s+/.test(t) || /^[1-4\u0661-\u0664][)\uff09\.\-]\s+/.test(t)) {
-        t = t.replace(/^[(\uff08]?[1-4\u0661-\u0664][)\uff09\.\-]+\s*/, '');
+    // Strip Arabic letter prefixes (أ through ي = all 10 letters) with any separator
+    t = t.replace(/^[(\uff08]?[\u0623-\u064a\u0647\u0648a-jA-J][)\uff09.:\-\/\s]+\s*/, '');
+    // Strip numeric prefixes 1-9
+    if (/^[(\uff08][1-9\u0661-\u0669][)\uff09]\s+/.test(t) || /^[1-9\u0661-\u0669][)\uff09\.\-]\s+/.test(t)) {
+        t = t.replace(/^[(\uff08]?[1-9\u0661-\u0669][)\uff09\.\-]+\s*/, '');
     }
     return t.trim();
 }
 
 function resolveCorrectAnswer(options, rawCA) {
-    if (!rawCA || !options || options.length === 0) return options[0] || '';
+    if (!rawCA || !options || options.length === 0) return '';
     
     const cleanCA = stripInvisible(rawCA);
     const strippedPrefixCA = stripOptionPrefix(cleanCA);
@@ -127,7 +128,9 @@ function resolveCorrectAnswer(options, rawCA) {
         }
     }
 
-    return strippedPrefixCA || options[0] || '';
+    // No match found — return empty string rather than silently defaulting to the first option.
+    // An empty answer is safer than a wrong one; it will be visible and fixable.
+    return strippedPrefixCA || '';
 }
 
 function isVerbalAnalogy(qText) {
@@ -351,76 +354,13 @@ function extractGoogleFormsQuiz() {
                     let questionImage = null;
 
                     if (cardEl) {
-                        const cardClone = cardEl.cloneNode(true);
-                        cardClone.querySelectorAll('.M2vV3e, .RDPZE, .freebirdFormviewerViewItemsItemGradingPoints, [aria-describedby*="points"]').forEach(e => e.remove());
-                        const cardText = cardClone.innerText || '';
-
-                        // 1. Check for explicit "الإجابة الصحيحة" (Correct answer) box first!
-                        // In Google Forms, this box ONLY appears when the student answered WRONGLY.
                         const caPatterns = [
                             /(?:الإجابة الصحيحة|الإجابات الصحيحة|الإجابة النموذجية|الإجابة الصحيحة هي)\s*[:\n\-]?\s*([^\n]+)/i,
                             /(?:Correct answer|Correct answers)\s*[:\n\-]?\s*([^\n]+)/i
                         ];
-                        for (const pat of caPatterns) {
-                            const m = cardText.match(pat);
-                            if (m && m[1].trim()) {
-                                correctAnswer = m[1].trim();
-                                isWrong = true;
-                                break;
-                            }
-                        }
 
-                        // 2. Search grading callout containers explicitly
-                        if (!correctAnswer) {
-                            const gradingEls = cardEl.querySelectorAll('.Y6Myj, .zfd4wb, .bUzgoc, .freebirdFormviewerViewItemsItemGradingExplanation, .freebirdFormviewerViewItemsItemGradingContainer, [aria-label*="الإجابة الصحيحة"], [aria-label*="Correct"]');
-                            for (const gel of gradingEls) {
-                                const txt = (gel.innerText || '').trim();
-                                if (txt) {
-                                    for (const pat of caPatterns) {
-                                        const m = txt.match(pat);
-                                        if (m && m[1].trim()) {
-                                            correctAnswer = m[1].trim();
-                                            isWrong = true;
-                                            break;
-                                        }
-                                    }
-                                    if (!correctAnswer && (txt.includes('الإجابة الصحيحة') || /correct answer/i.test(txt))) {
-                                        const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
-                                        const caIdx = lines.findIndex(l => l.includes('الإجابة الصحيحة') || /correct answer/i.test(l));
-                                        if (caIdx !== -1 && caIdx + 1 < lines.length) {
-                                            correctAnswer = lines[caIdx + 1];
-                                            isWrong = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (correctAnswer) break;
-                            }
-                        }
-
-                        // 3. Check green highlight (correct radio indicator)
-                        if (!correctAnswer) {
-                            const greenRadio = cardEl.querySelector('[fill="#137333"], [fill="#188038"], [fill="#34a853"], [fill="#0f9d58"], [fill="#1e8e3e"]');
-                            if (greenRadio) {
-                                const greenBox = greenRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, [role="radio"]') || greenRadio.parentElement;
-                                if (greenBox) {
-                                    correctAnswer = (greenBox.innerText || '').split('\n')[0].trim();
-                                }
-                            }
-                        }
-
-                        // 4. If no correction box was present, student's checked radio IS the correct answer
-                        if (!correctAnswer) {
-                            const checkedRadio = cardEl.querySelector('[aria-checked="true"]');
-                            if (checkedRadio) {
-                                const checkedBox = checkedRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, [role="radio"]') || checkedRadio.parentElement;
-                                if (checkedBox) {
-                                    correctAnswer = (checkedBox.innerText || '').split('\n')[0].trim();
-                                }
-                            }
-                        }
-
-                        // 5. Wrong detection based ONLY on points container or error container
+                        // ── STEP 1: Detect isWrong FIRST (via points or error container) ──
+                        // Must run before checkedRadio so we know if student's selection is trustworthy
                         const pointsEl = cardEl.querySelector('.freebirdFormviewerViewItemsItemGradingPoints, .RDPZE, [aria-describedby*="points"], .M2vV3e');
                         if (pointsEl) {
                             const ptText = (pointsEl.innerText || '').trim();
@@ -431,13 +371,62 @@ function extractGoogleFormsQuiz() {
                             isWrong = true;
                         }
 
-                        // 6. Extract Question Image if present (diagrams, geometry figures)
+                        // ── STEP 2: Search grading/correction containers for explicit correct answer text ──
+                        // These containers ONLY appear in Google Forms when student answered wrongly
+                        const gradingEls = cardEl.querySelectorAll('.Y6Myj, .zfd4wb, .bUzgoc, .freebirdFormviewerViewItemsItemGradingExplanation, .freebirdFormviewerViewItemsItemGradingContainer, [aria-label*="الإجابة الصحيحة"], [aria-label*="Correct"]');
+                        for (const gel of gradingEls) {
+                            const txt = (gel.innerText || '').trim();
+                            if (!txt) continue;
+                            for (const pat of caPatterns) {
+                                const m = txt.match(pat);
+                                if (m && m[1].trim()) {
+                                    correctAnswer = m[1].trim();
+                                    isWrong = true;
+                                    break;
+                                }
+                            }
+                            if (!correctAnswer && (txt.includes('الإجابة الصحيحة') || /correct answer/i.test(txt))) {
+                                const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
+                                const caIdx = lines.findIndex(l => l.includes('الإجابة الصحيحة') || /correct answer/i.test(l));
+                                if (caIdx !== -1 && caIdx + 1 < lines.length) {
+                                    correctAnswer = lines[caIdx + 1];
+                                    isWrong = true;
+                                    break;
+                                }
+                            }
+                            if (correctAnswer) break;
+                        }
+
+                        // ── STEP 3: Check green highlight on radio button (visual correct indicator) ──
+                        if (!correctAnswer) {
+                            const greenRadio = cardEl.querySelector('[fill="#137333"], [fill="#188038"], [fill="#34a853"], [fill="#0f9d58"], [fill="#1e8e3e"]');
+                            if (greenRadio) {
+                                const greenBox = greenRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, [role="radio"]') || greenRadio.parentElement;
+                                if (greenBox) {
+                                    correctAnswer = (greenBox.innerText || '').split('\n')[0].trim();
+                                }
+                            }
+                        }
+
+                        // ── STEP 4: Only use student's selected answer if NOT wrong ──
+                        // If isWrong=true, student's selection is by definition incorrect — do NOT use it
+                        if (!correctAnswer && !isWrong) {
+                            const checkedRadio = cardEl.querySelector('[aria-checked="true"]');
+                            if (checkedRadio) {
+                                const checkedBox = checkedRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, [role="radio"]') || checkedRadio.parentElement;
+                                if (checkedBox) {
+                                    correctAnswer = (checkedBox.innerText || '').split('\n')[0].trim();
+                                }
+                            }
+                        }
+
+                        // ── STEP 5: Extract Question Image if present (diagrams, geometry figures) ──
                         const imgEl = cardEl.querySelector('img.Hvn9Fb, img[src*="googleusercontent.com"], img[src*="docs.google.com"], .freebirdFormviewerViewItemsEmbeddedobjectImage img');
                         if (imgEl && imgEl.src && !imgEl.src.includes('cleardot.gif')) {
                             questionImage = imgEl.src;
                         }
 
-                        // 7. Feedback explanation
+                        // ── STEP 6: Feedback / Explanation ──
                         const fbEl = cardEl.querySelector('.g4k55c, .freebirdFormviewerViewItemsGradingFeedbackContainer');
                         if (fbEl) {
                             explanation = (fbEl.innerText || '').replace(/^(ملاحظات|تعليقات|Feedback)\s*[:\n]+\s*/i, '').trim();
@@ -547,17 +536,77 @@ function extractGoogleFormsQuiz() {
 
             const radios = Array.from(rg.querySelectorAll('[role="radio"]'));
             const options = [];
-            let ans = "";
+            let checkedAns = "";
 
             radios.forEach((r) => {
                 const box = r.closest('.docssharedWizToggleLabeledContainer, .SG0AAe') || r.parentElement;
                 let opt = stripOptionPrefix(clean(box));
                 if (opt && !options.includes(opt)) options.push(opt);
-                if (r.getAttribute('aria-checked') === 'true') ans = opt;
+                if (r.getAttribute('aria-checked') === 'true') checkedAns = opt;
             });
 
             const safeOpts = options.length >= 2 ? options : ["صح", "خطأ"];
-            const finalAns = resolveCorrectAnswer(safeOpts, ans);
+
+            // ── Engine B: Detect isWrong and find correct answer ──
+            let fbIsWrong = false;
+            let fbCorrectAnswer = "";
+            const fbCaPatterns = [
+                /(?:الإجابة الصحيحة|الإجابات الصحيحة|الإجابة النموذجية|الإجابة الصحيحة هي)\s*[:\n\-]?\s*([^\n]+)/i,
+                /(?:Correct answer|Correct answers)\s*[:\n\-]?\s*([^\n]+)/i
+            ];
+
+            // Check points/incorrect containers first
+            const fbPointsEl = card.querySelector('.freebirdFormviewerViewItemsItemGradingPoints, .RDPZE, [aria-describedby*="points"], .M2vV3e');
+            if (fbPointsEl) {
+                const ptText = (fbPointsEl.innerText || '').trim();
+                if (/\b0\s*\/\s*[1-9]/.test(ptText) || /\b٠\s*\/\s*[١-٩]/.test(ptText)) fbIsWrong = true;
+            } else if (card.querySelector('.freebirdFormviewerViewItemsItemGradingIncorrectContainer, [aria-label="غير صحيح"], [aria-label="Incorrect"]')) {
+                fbIsWrong = true;
+            }
+
+            // Search grading containers for explicit correct answer text
+            const fbGradingEls = card.querySelectorAll('.Y6Myj, .zfd4wb, .bUzgoc, .freebirdFormviewerViewItemsItemGradingExplanation, .freebirdFormviewerViewItemsItemGradingContainer, [aria-label*="الإجابة الصحيحة"], [aria-label*="Correct"]');
+            for (const gel of fbGradingEls) {
+                const txt = (gel.innerText || '').trim();
+                if (!txt) continue;
+                for (const pat of fbCaPatterns) {
+                    const m = txt.match(pat);
+                    if (m && m[1].trim()) {
+                        fbCorrectAnswer = m[1].trim();
+                        fbIsWrong = true;
+                        break;
+                    }
+                }
+                if (!fbCorrectAnswer && (txt.includes('الإجابة الصحيحة') || /correct answer/i.test(txt))) {
+                    const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
+                    const caIdx = lines.findIndex(l => l.includes('الإجابة الصحيحة') || /correct answer/i.test(l));
+                    if (caIdx !== -1 && caIdx + 1 < lines.length) {
+                        fbCorrectAnswer = lines[caIdx + 1];
+                        fbIsWrong = true;
+                        break;
+                    }
+                }
+                if (fbCorrectAnswer) break;
+            }
+
+            // Check green highlight
+            if (!fbCorrectAnswer) {
+                const greenR = card.querySelector('[fill="#137333"], [fill="#188038"], [fill="#34a853"], [fill="#0f9d58"], [fill="#1e8e3e"]');
+                if (greenR) {
+                    const greenBox = greenR.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, [role="radio"]') || greenR.parentElement;
+                    if (greenBox) fbCorrectAnswer = (greenBox.innerText || '').split('\n')[0].trim();
+                }
+            }
+
+            // Only use checkedAns if NOT wrong
+            if (!fbCorrectAnswer && !fbIsWrong) {
+                fbCorrectAnswer = checkedAns;
+            }
+
+            if (fbIsWrong) wrongFallback.push(qNum);
+
+            const finalAns = resolveCorrectAnswer(safeOpts, fbCorrectAnswer);
+
 
             let qImage = null;
             const imgEl = card.querySelector('img.Hvn9Fb, img[src*="googleusercontent.com"], img[src*="docs.google.com"], .freebirdFormviewerViewItemsEmbeddedobjectImage img');

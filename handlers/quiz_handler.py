@@ -114,11 +114,8 @@ async def start_quiz_session(
             title = "▶️ الكويز"
 
     if session_type == "review" and not review_id and quiz_id:
-        conn = db.get_connection()
-        c = conn.cursor()
-        c.execute("SELECT id FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id))
-        r = c.fetchone()
-        conn.close()
+        with db.get_connection() as conn:
+            r = conn.execute("SELECT id FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id)).fetchone()
         if r:
             review_id = r["id"]
 
@@ -763,9 +760,8 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
 
     # If quiz is not in review schedule, allow adding it
     if quiz_id and session_type not in ("weakall", "weak", "weakpractice"):
-        conn = db.get_connection()
-        has_rev = conn.execute("SELECT 1 FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id)).fetchone()
-        conn.close()
+        with db.get_connection() as conn:
+            has_rev = conn.execute("SELECT 1 FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id)).fetchone()
         if not has_rev:
             keyboard.append([
                 InlineKeyboardButton("🔁 أضف لجدول مراجعاتي", callback_data=f"add_to_schedule_{quiz_id}")
