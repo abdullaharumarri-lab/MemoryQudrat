@@ -27,20 +27,23 @@ def get_poll_keyboard() -> ReplyKeyboardMarkup:
 
 
 def build_create_upload_menu() -> tuple[str, InlineKeyboardMarkup]:
-    """Generates the main 'Create & Upload Quiz' menu with all 4 options."""
+    """Generates the main 'Create & Upload Quiz' menu with all options."""
     text = (
         "➕ <b>إنشاء ورفع كويز / مادة تدريبية</b> 🧠\n\n"
         "اختر الطريقة التي تفضلها لإضافة كويز أو مادة للمراجعة في التكرار المتباعد:\n\n"
-        "1️⃣ <b>إنشاء كويز يدوياً:</b> كتابة الأسئلة والخيارات مباشرة ✍️\n"
-        "2️⃣ <b>رفع ملف JSON:</b> استيراد كويز جاهز بصيغة JSON 📋\n"
-        "3️⃣ <b>إضافة رابط اختبار:</b> إدراج رابط Google Forms أو منصة أخرى 🔗\n"
-        "4️⃣ <b>إدراج ملف / صورة / مذكرة:</b> تكرار ملخصات، صور قوانين، أو مستندات 📁\n"
+        "🎯 <b>1- تحويل كويزات تيليجرام (الأسهل والأدق 100%):</b>\n"
+        "حوّل أي أسئلة كويز من أي قناة مباشرة للبوت وسيحفظها فوراً بأجوبتها الرسمية والشرح دون أي أخطاء أو تدخل للذكاء الاصطناعي!\n\n"
+        "✍️ <b>2- إنشاء كويز يدوياً:</b> كتابة الأسئلة والخيارات مباشرة ✍️\n"
+        "📋 <b>3- استيراد ملف:</b> رفع ملف (HTML / JSON / Excel) 📋\n"
+        "🔗 <b>4- إضافة رابط اختبار:</b> إدراج رابط Google Forms أو منصة أخرى 🔗\n"
+        "📁 <b>5- إدراج صورة / مذكرة:</b> تكرار ملخصات وقوانين 📁\n"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✍️ 1- إنشاء كويز يدوياً", callback_data="create_manual_quiz")],
-        [InlineKeyboardButton("📋 2- رفع كويز عبر ملف JSON", callback_data="upload_json")],
-        [InlineKeyboardButton("🔗 3- إضافة كويز كرابط (Forms)", callback_data="upload_url")],
-        [InlineKeyboardButton("📁 4- إدراج صورة / ملف / ملخص للتكرار", callback_data="upload_media_note")],
+        [InlineKeyboardButton("🎯 1- تحويل كويزات تيليجرام (شرح الطريقة)", callback_data="explain_poll_forward")],
+        [InlineKeyboardButton("✍️ 2- إنشاء كويز يدوياً", callback_data="create_manual_quiz")],
+        [InlineKeyboardButton("📋 3- استيراد ملف (HTML / JSON / Excel)", callback_data="upload_json")],
+        [InlineKeyboardButton("🔗 4- إضافة رابط اختبار (Forms)", callback_data="upload_url")],
+        [InlineKeyboardButton("📁 5- إدراج صورة / مذكرة للتكرار", callback_data="upload_media_note")],
         [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")],
     ])
     return text, kb
@@ -50,30 +53,42 @@ def build_create_upload_menu() -> tuple[str, InlineKeyboardMarkup]:
 
 def build_manual_quiz_dashboard(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeyboardMarkup]:
     manual_quiz = context.user_data.get("manual_quiz", {})
-    name = manual_quiz.get("name", "كويز جديد")
+    name = manual_quiz.get("name", "كويز تيليجرام")
     questions = manual_quiz.get("questions", [])
-    
+    total_q = len(questions)
+
     text = (
-        f"✍️ <b>منشئ الكويزات</b>\n\n"
+        f"🎯 <b>كويزات تيليجرام</b>\n\n"
         f"📌 اسم الكويز: <b>{html.escape(name)}</b>\n"
-        f"📝 عدد الأسئلة المضافة: <b>{len(questions)}</b> سؤال\n\n"
+        f"📝 عدد الأسئلة المضافة: <b>{total_q}</b> سؤال\n\n"
     )
     if questions:
-        text += "<b>قائمة الأسئلة المضافة:</b>\n"
-        for i, q in enumerate(questions, 1):
-            q_prev = q["question"][:40] + ("..." if len(q["question"]) > 40 else "")
-            text += f"{i}. {html.escape(q_prev)} (✅ {html.escape(q['answer'])})\n"
+        text += "<b>آخر الأسئلة المضافة:</b>\n"
+        start_preview = max(0, total_q - 4)
+        for i in range(start_preview, total_q):
+            q = questions[i]
+            q_prev = q["question"][:45] + ("..." if len(q["question"]) > 45 else "")
+            ans_prev = q.get("answer", "")
+            ans_mark = f"✅ {html.escape(ans_prev)}" if ans_prev else "⚠️ لم تُحدد إجابة"
+            text += f"{i+1}. {html.escape(q_prev)} ({ans_mark})\n"
+        if total_q > 4:
+            text += f"<i>...و {total_q - 4} أسئلة سابقة أخرى.</i>\n"
         text += "\n"
 
     text += (
-        "👇 <b>كيف تضيف سؤالاً؟</b>\n"
-        "اضغط على زر <b>[📝 إنشاء سؤال]</b> بالأسفل لفتح نافذة تيليجرام لكتابة السؤال وخياراته وتحديد الإجابة الصحيحة مباشرة! ✨"
+        "💡 <b>الخيارات المتاحة:</b>\n"
+        "• يمكنك تحويل المزيد من الأسئلة الآن من أي قناة وسيتم ضمها تلقائياً.\n"
+        "• أو اختر من الأزرار بالأسفل للحفظ أو بدء الحل فوراً:"
     )
 
     buttons = []
     if questions:
-        buttons.append([InlineKeyboardButton(f"✅ حفظ وإنهاء الكويز ({len(questions)} سؤال)", callback_data="manual_save_quiz")])
-    buttons.append([InlineKeyboardButton("❌ إلغاء وإنهاء", callback_data="manual_cancel")])
+        buttons.append([InlineKeyboardButton(f"▶️ حفظ وبدء الحل الآن ({total_q} سؤال)", callback_data="manual_save_and_start")])
+        buttons.append([
+            InlineKeyboardButton("💾 حفظ فقط", callback_data="manual_save_quiz"),
+            InlineKeyboardButton("✏️ تغيير اسم الكويز", callback_data="manual_rename_quiz")
+        ])
+    buttons.append([InlineKeyboardButton("❌ إلغاء وتفريغ", callback_data="manual_cancel")])
 
     return text, InlineKeyboardMarkup(buttons)
 
@@ -82,7 +97,29 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     data = query.data
 
-    if data == "create_manual_quiz":
+    if data == "explain_poll_forward":
+        text = (
+            "🎯 <b>طريقة تحويل كويزات تيليجرام بدقة 100% وبدون AI</b>\n\n"
+            "هذه أسرع طريقة لمذاكرة القدرات بدون أي تعقيد وبدون أي إضافات:\n\n"
+            "1️⃣ <b>افتح أي قناة أو قروب قدرات</b> يحتوي على كويزات (Telegram Polls).\n"
+            "2️⃣ <b>حدد سؤالاً أو مجموعة أسئلة دفعة واحدة</b> (حتى 50 سؤالاً).\n"
+            "3️⃣ اضغط على <b>تحويل (Forward)</b> وأرسلها مباشرة إلى هذا البوت.\n"
+            "4️⃣ سيتعرف البوت عليها تلقائياً ويسحب:\n"
+            "   • نص السؤال كاملاً\n"
+            "   • الخيارات الأربعة\n"
+            "   • الإجابة النموذجية الصحيحة المبرمجة رسمياً\n"
+            "   • الشرح وتوضيح الحل إن وجد\n"
+            "5️⃣ اضغط فوراً على <b>[▶️ حفظ وبدء الحل الآن]</b> لتتدرب عليها ويدخلها البوت في جدول مراجعاتك الذكية!\n\n"
+            "👇 <b>جرب الآن:</b> حوّل أي سؤال كويز من أي قناة إلى هنا مباشرة!"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع لقائمة الإضافة", callback_data="create_upload_menu")],
+            [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
+        ])
+        await safe_edit(query, text, kb)
+        return
+
+    elif data == "create_manual_quiz":
         context.user_data["manual_state"] = "awaiting_quiz_name"
         context.user_data["manual_quiz"] = {"name": "", "questions": []}
         text = (
@@ -98,6 +135,49 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
         context.user_data.pop("manual_state", None)
         text, kb = build_create_upload_menu()
         await safe_edit(query, text, kb)
+
+    elif data == "manual_rename_quiz":
+        context.user_data["manual_state"] = "awaiting_quiz_name"
+        text = (
+            "✏️ <b>تغيير اسم الكويز</b>\n\n"
+            "أرسل الآن الاسم الجديد للكويز في رسالة نصية:\n"
+            "<i>(مثال: كويز التناظر اللفظي - نموذج 1446)</i>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="manual_dashboard")]])
+        await safe_edit(query, text, kb)
+
+    elif data == "manual_save_and_start":
+        manual_quiz = context.user_data.pop("manual_quiz", None)
+        context.user_data.pop("manual_state", None)
+        chat_id = update.effective_chat.id
+
+        try:
+            rm_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text="⏳ جاري حفظ الكويز وبدء الجلسة...",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            asyncio.create_task(rm_msg.delete())
+        except Exception:
+            pass
+
+        if not manual_quiz or not manual_quiz.get("questions"):
+            await query.answer("⚠️ لا توجد أسئلة لحفظها.", show_alert=True)
+            return
+
+        user = update.effective_user
+        u_id = user.id if user else (update.effective_chat.id if update.effective_chat else None)
+        if not u_id:
+            await query.answer("❌ تعذر التعرف على المستخدم.", show_alert=True)
+            return
+        name = manual_quiz.get("name", "كويز تيليجرام")
+        questions = manual_quiz.get("questions", [])
+
+        is_public_val = 1 if is_admin(u_id) else 0
+        quiz_id = db.save_quiz(name, questions, user_id=u_id, is_public=is_public_val)
+
+        from handlers.quiz_handler import start_quiz_session
+        await start_quiz_session(update, context, quiz_id, session_type="quiz")
 
     elif data == "manual_save_quiz":
         manual_quiz = context.user_data.pop("manual_quiz", None)
@@ -165,7 +245,7 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
         options = current_q.get("options", [])
         if 0 <= correct_idx < len(options):
             current_q["answer"] = options[correct_idx]
-            manual_quiz = context.user_data.setdefault("manual_quiz", {"name": "كويز مخصص", "questions": []})
+            manual_quiz = context.user_data.setdefault("manual_quiz", {"name": "كويز تيليجرام", "questions": []})
             manual_quiz.setdefault("questions", []).append(current_q)
             context.user_data["manual_state"] = "awaiting_poll_questions"
             text, kb = build_manual_quiz_dashboard(context)
@@ -182,32 +262,64 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
 
 
 async def handle_incoming_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Handles polls/quizzes created by the user via the native Telegram poll creation modal."""
+    """Handles polls/quizzes forwarded or sent by the user with 100% precision and zero AI."""
     poll = update.message.poll if update.message else None
     if not poll:
         return False
 
     chat_id = update.effective_chat.id
-    # Delete the user's sent poll message from chat to keep it clean
+
+    # Track & delete user's forwarded poll message from chat to keep it clean
     if update.message:
         db.track_chat_message(chat_id, update.message.message_id)
         asyncio.create_task(update.message.delete())
 
+    # Detect channel title if forwarded
+    channel_title = None
+    fwd_chat = getattr(update.message, "forward_from_chat", None)
+    if fwd_chat and hasattr(fwd_chat, "title") and fwd_chat.title:
+        channel_title = fwd_chat.title
+    elif getattr(update.message, "forward_sender_name", None):
+        channel_title = update.message.forward_sender_name
+
     manual_quiz = context.user_data.get("manual_quiz")
     if manual_quiz is None:
-        # Auto-initialize manual quiz if user just sent a poll directly
-        context.user_data["manual_quiz"] = {"name": "كويز مخصص", "questions": []}
+        default_name = f"كويز: {channel_title}" if channel_title else "كويز تيليجرام"
+        context.user_data["manual_quiz"] = {"name": default_name, "questions": []}
         manual_quiz = context.user_data["manual_quiz"]
+    elif channel_title and manual_quiz.get("name") in ("كويز مخصص", "كويز تيليجرام", "كويز جديد"):
+        manual_quiz["name"] = f"كويز: {channel_title}"
 
     q_text = poll.question
     options = [opt.text for opt in poll.options]
     correct_idx = poll.correct_option_id
-    if correct_idx is not None and 0 <= correct_idx < len(options):
-        correct_answer = options[correct_idx]
-    else:
-        correct_answer = options[0] if options else ""
     explanation = getattr(poll, "explanation", "") or ""
 
+    # If it's a regular poll (not quiz type) without predefined correct answer
+    if correct_idx is None or correct_idx < 0 or correct_idx >= len(options):
+        current_q = {
+            "question": q_text,
+            "options": options,
+            "answer": "",
+            "explanation": explanation
+        }
+        context.user_data["current_q"] = current_q
+        kb_opts = []
+        for i, opt in enumerate(options):
+            lbl = f"({chr(0x623 + i) if i < 4 else i + 1}) {opt[:25]}"
+            kb_opts.append([InlineKeyboardButton(lbl, callback_data=f"manual_set_correct_{i}")])
+        kb_opts.append([InlineKeyboardButton("❌ تخطي هذا السؤال", callback_data="manual_dashboard")])
+        q_clean = html.escape(q_text)
+        prompt_text = (
+            f"❓ <b>سؤال استبيان عادي (بدون إجابة مسبقة):</b>\n\n"
+            f"<blockquote>{q_clean}</blockquote>\n\n"
+            f"👇 <b>اختر الإجابة الصحيحة لهذا السؤال:</b>"
+        )
+        await send_clean_message(context, chat_id, prompt_text, reply_markup=InlineKeyboardMarkup(kb_opts))
+        return True
+
+    # Telegram Quiz with 100% official verified answer
+    correct_answer = options[correct_idx]
     question_entry = {
         "question": q_text,
         "options": options,
@@ -217,8 +329,18 @@ async def handle_incoming_poll(update: Update, context: ContextTypes.DEFAULT_TYP
     manual_quiz.setdefault("questions", []).append(question_entry)
     context.user_data["manual_state"] = "awaiting_poll_questions"
 
+    # Batch debounce: Wait 0.4s so multiple forwarded polls accumulate smoothly
+    batch_token = context.user_data.get("poll_batch_token", 0) + 1
+    context.user_data["poll_batch_token"] = batch_token
+
+    await asyncio.sleep(0.4)
+
+    # If a newer poll arrived during sleep, let the latest poll update the UI
+    if context.user_data.get("poll_batch_token") != batch_token:
+        return True
+
     text, kb = build_manual_quiz_dashboard(context)
-    ack_text = f"✅ <b>تمت إضافة السؤال رقم {len(manual_quiz['questions'])} بنجاح!</b> 🎯\n\n" + text
+    ack_text = f"🎯 <b>تم استلام وتوثيق الأسئلة بنجاح!</b>\n\n" + text
     await send_clean_message(context, chat_id, ack_text, reply_markup=kb)
     return True
 

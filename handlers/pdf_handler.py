@@ -344,14 +344,10 @@ async def process_json_quiz_data(
             saved_qimg = save_passage_image(q_img, f"{q_tag}_qimg", idx + 1)
             q["image"] = saved_qimg
 
-    # Auto-solve missing answers using Gemini AI if any are empty
+    # Preserve exact answers without AI hallucination or alteration
     missing_qs = [q for q in data.get("questions", []) if not str(q.get("answer", "")).strip()]
     if missing_qs:
-        try:
-            from ai_extractor import solve_missing_answers
-            await solve_missing_answers(data["questions"])
-        except Exception as e:
-            logger.warning("Could not auto-solve missing answers via AI: %s", e)
+        logger.info("Found %d questions with empty answer, keeping original without AI alteration.", len(missing_qs))
 
     # 1. Update/Replace questions of an existing quiz (Preserves all Spaced Repetition reviews!)
     if quiz_update_id:
