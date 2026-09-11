@@ -6,6 +6,8 @@ import html
 import json
 import logging
 import re
+import asyncio
+import httpx
 from datetime import date, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -272,6 +274,100 @@ async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  الفكرة الملكية 👑: سحب كود صفحة الاختبار مباشرة من جوجل
+# ═══════════════════════════════════════════════════════════════
+
+async def fetch_and_process_google_form_url(
+    form_url: str,
+    user,
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    update: Update
+):
+    """
+    Directly fetches a Google Forms URL (viewscore or viewform) from Google servers,
+    extracts all questions, choices, passages, and verified answers via html_form_parser
+    (100% deterministic, 0% AI, zero extension, zero bookmarklet), and saves the quiz.
+    """
+    await send_clean_message(
+        context,
+        chat_id,
+        "⏳ <b>جاري سحب واستخراج كود الاختبار مباشرة من جوجل...</b> ⚡\n"
+        "<i>(تحليل محلي قطعي 100% بدون أي ذكاء اصطناعي وبدون أي إضافات)</i>",
+        update=update
+    )
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
+    }
+
+    html_content = None
+    import urllib.request
+    import ssl
+
+    try:
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=25.0) as client:
+            resp = await client.get(form_url)
+            if resp.status_code == 200:
+                html_content = resp.text
+            else:
+                raise ValueError(f"رمز استجابة سيرفر جوجل: {resp.status_code}")
+    except Exception as fetch_err:
+        logger.warning("HTTPX direct fetch error: %s, trying urllib fallback...", fetch_err)
+        try:
+            def _fetch_sync():
+                req = urllib.request.Request(form_url, headers=headers)
+                ctx = ssl.create_default_context()
+                with urllib.request.urlopen(req, timeout=25, context=ctx) as r:
+                    return r.read().decode("utf-8", errors="replace")
+            html_content = await asyncio.to_thread(_fetch_sync)
+        except Exception as fallback_err:
+            logger.error("Direct fetch failed completely: %s", fallback_err)
+            err_text = (
+                f"❌ <b>تعذر جلب صفحة النموذج مباشرة من سيرفر جوجل:</b>\n"
+                f"<code>{html.escape(str(fallback_err))}</code>\n\n"
+                "💡 <i>تأكد أن الرابط يعمل ومتاح للعامة بدون تسجيل دخول مقفل.</i>"
+            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+            await send_clean_message(context, chat_id, err_text, reply_markup=kb)
+            return
+
+    if not html_content:
+        await send_clean_message(
+            context,
+            chat_id,
+            "❌ صفحة النموذج فارغة أو تعذر قراءتها.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+        )
+        return
+
+    try:
+        from html_form_parser import parse_google_form_html
+        from handlers.pdf_handler import process_json_quiz_data
+        quiz_data = parse_google_form_html(html_content)
+        quiz_data["url"] = form_url
+
+        await process_json_quiz_data(
+            data=quiz_data,
+            user=user,
+            context=context,
+            chat_id=chat_id,
+            update=update
+        )
+    except Exception as parse_err:
+        logger.exception("Error parsing Google Forms HTML from URL: %s", parse_err)
+        err_text = (
+            f"❌ <b>حدث خطأ أثناء قراءة بيانات النموذج:</b>\n"
+            f"<code>{html.escape(str(parse_err))}</code>\n\n"
+            "💡 <i>إذا كان النموذج يتطلب تسجيل دخول بحساب مؤسسي أو مقفل، يمكنك حفظ الصفحة في المتصفح (Ctrl+S) وإرسال ملف .html وسيعمل فوراً بدقة 100%.</i>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+        await send_clean_message(context, chat_id, err_text, reply_markup=kb)
+
+
+# ═══════════════════════════════════════════════════════════════
 #  معالج النصوص
 # ═══════════════════════════════════════════════════════════════
 
@@ -320,61 +416,43 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(context, chat_id, f"❌ خطأ في استخراج كود الصفحة: {html.escape(str(e))}", update=update)
             return
 
-    # ── Google Forms URL Instant Handler ──
-    if is_adm and "docs.google.com/forms/" in msg:
+    # ── Google Forms Direct URL Fetch (The Royal Method 👑) ──
+    if "docs.google.com/forms/" in msg or context.user_data.get("waiting_for_url_quiz"):
         context.user_data.pop("waiting_for_url_quiz", None)
         import re
         m = re.search(r'https?://docs\.google\.com/forms/[^\s]+', msg)
         form_url = m.group(0) if m else msg.strip()
-        context.user_data["pending_raw_url"] = form_url
 
-        text = (
-            "🔗 <b>تم استلام رابط Google Forms:</b>\n"
-            f"<code>{html.escape(form_url)}</code>\n\n"
-            "⚡ <b>أفضل وأسرع 3 طرق لاستخراج الكويز عبر كود الصفحة (بدون ذكاء اصطناعي وبدون انتظار):</b>\n\n"
-            "1️⃣ <b>احفظ صفحة الاختبار كملف HTML (الأسرع والأسهل):</b>\n"
-            "افتح الرابط في متصفحك واضغط <code>Ctrl + S</code> (أو من الجوال: مشاركة ⬅️ حفظ كملف)، ثم أرسل ملف الـ <b>.html</b> هنا في الشات فوراً وسيقوم البوت باستخراجه في 0.05 ثانية بدقة 100%!\n\n"
-            "2️⃣ <b>المفضلة السحرية (Bookmarklet) 🪄:</b>\n"
-            "بنقرة واحدة من شريط المتصفح تنزل لك ملف JSON فوراً بدون أي برامج وبدون نت.\n\n"
-            "3️⃣ <b>إضافة Chrome v6.6.0 🧩:</b>\n"
-            "افتح الإضافة واضغط [تحميل JSON] أو [نسخ JSON]."
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🪄 كود المفضلة السحرية (Bookmarklet)", callback_data="show_bookmarklet")],
-            [InlineKeyboardButton("📥 حفظ الرابط كمرجع", callback_data="save_raw_url_quiz")],
-            [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
-        ])
-        await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
-        return
-
-        if not msg.startswith("http"):
-            await send_clean_message(context, chat_id, "❌ الرابط غير صحيح.", update=update,
+        if "docs.google.com/forms/" in form_url:
+            await fetch_and_process_google_form_url(form_url, user, context, chat_id, update)
+            return
+        elif msg.startswith("http"):
+            quiz_id = db.save_quiz_without_review("كويز رابط", [], owner_id=user_id, is_public=1 if is_adm else 0, url=msg)
+            db.schedule_first_review(quiz_id, user_id=user_id, start_today=False)
+            categories = db.get_categories(is_public=1)
+            kb = []
+            if categories:
+                cat_row = []
+                for c in categories:
+                    icon = c.get("icon", "📁")
+                    cat_row.append(InlineKeyboardButton(f"{icon} {c['name']}", callback_data=f"set_quiz_cat_{quiz_id}_{c['id']}"))
+                    if len(cat_row) == 2:
+                        kb.append(cat_row)
+                        cat_row = []
+                if cat_row:
+                    kb.append(cat_row)
+            kb.append([InlineKeyboardButton("📂 البقاء في الرئيسية (بدون مجلد)", callback_data=f"quiz_detail_{quiz_id}")])
+            kb.append([InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}"),
+                       InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
+            await send_clean_message(context, chat_id,
+                                     f"✅ <b>تم حفظ رابط الكويز بنجاح!</b>\n🔗 <code>{html.escape(msg)}</code>\n\n"
+                                     f"📁 <b>اختر المجلد الذي ترغب بإضافة الكويز إليه:</b>",
+                                     update=update, reply_markup=InlineKeyboardMarkup(kb))
+            return
+        else:
+            await send_clean_message(context, chat_id, "❌ الرابط غير صالح. يرجى إرسال رابط صحيح يبدأ بـ http أو https.",
                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]]))
             return
-        quiz_id = db.save_quiz_without_review("كويز رابط", [], owner_id=user_id, is_public=1, url=msg)
-        db.schedule_first_review(quiz_id, user_id=user_id, start_today=False)
-
-        categories = db.get_categories(is_public=1)
-        kb = []
-        if categories:
-            cat_row = []
-            for c in categories:
-                icon = c.get("icon", "📁")
-                cat_row.append(InlineKeyboardButton(f"{icon} {c['name']}", callback_data=f"set_quiz_cat_{quiz_id}_{c['id']}"))
-                if len(cat_row) == 2:
-                    kb.append(cat_row)
-                    cat_row = []
-            if cat_row:
-                kb.append(cat_row)
-        kb.append([InlineKeyboardButton("📂 البقاء في الرئيسية (بدون مجلد)", callback_data=f"quiz_detail_{quiz_id}")])
-        kb.append([InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}"),
-                   InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
-
-        await send_clean_message(context, chat_id,
-                                 f"✅ <b>تم حفظ رابط الكويز بنجاح!</b>\n🔗 <code>{html.escape(msg)}</code>\n\n"
-                                 f"📁 <b>اختر المجلد الذي ترغب بإضافة الكويز إليه:</b>",
-                                 update=update, reply_markup=InlineKeyboardMarkup(kb))
-        return
 
     if is_adm and context.user_data.get("waiting_for_quiz_rename"):
         quiz_id = context.user_data.pop("waiting_for_quiz_rename")
@@ -648,12 +726,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "upload_url":
-        if not is_adm:
-            await query.answer("❌", show_alert=True)
-            return
         context.user_data["waiting_for_url_quiz"] = True
-        await safe_edit(query, "🔗 أرسل الآن رابط الكويز:",
-                        InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]]))
+        text = (
+            "🔗 <b>الفكرة الملكية: إرسال رابط Forms مباشرة 👑</b>\n\n"
+            "أرسل الآن رابط الاختبار أو رابط النتيجة (View Score):\n"
+            "<code>https://docs.google.com/forms/...</code>\n\n"
+            "⚡ <b>سيتولى السيرفر سحب الأسئلة والخيارات والإجابات الصحيحة وأخطائك فوراً بـ 0% ذكاء اصطناعي وبدقة 100%!</b>"
+        )
+        await safe_edit(query, text, InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]]))
         return
 
     if data == "upload_media_note":
@@ -672,7 +752,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── 2. Creation Handler Callbacks ──
-    if data in ("create_manual_quiz", "manual_cancel", "manual_save_quiz", "manual_dashboard") or data.startswith("manual_set_correct_"):
+    if data in ("create_manual_quiz", "manual_cancel", "manual_save_quiz", "manual_dashboard", "explain_poll_forward", "manual_save_and_start", "manual_rename_quiz") or data.startswith("manual_set_correct_"):
         from handlers.creation_handler import handle_manual_quiz_callback
         await handle_manual_quiz_callback(update, context)
         return
