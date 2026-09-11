@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MemoryQudrat — مستخرج كويزات Google Forms",
-  "version": "6.4.0",
+  "version": "6.6.0",
   "description": "استخراج كويزات Google Forms وتحويلها إلى Excel و JSON متوافق مع بوت ميموري قدرات بنقرة واحدة وبدقة 100%",
   "permissions": [
     "activeTab",

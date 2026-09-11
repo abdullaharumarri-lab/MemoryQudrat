@@ -301,8 +301,47 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
         return
 
-    if is_adm and context.user_data.get("waiting_for_url_quiz"):
+    # ── Google Forms Direct AI Extraction & Solving ──────────────────────
+    if is_adm and ("docs.google.com/forms/" in msg or context.user_data.get("waiting_for_url_quiz")):
         context.user_data.pop("waiting_for_url_quiz", None)
+        if "docs.google.com/forms/" in msg:
+            import re
+            m = re.search(r'https?://docs\.google\.com/forms/[^\s]+', msg)
+            form_url = m.group(0) if m else msg.strip()
+
+            await send_clean_message(
+                context, chat_id,
+                "⏳ <b>جاري سحب نموذج Google Forms وفحص الأسئلة بالذكاء الاصطناعي...</b> 🧠\n\n"
+                "🔍 نقوم الآن بقراءة الأسئلة والخيارات والقطع والصور، وحل الأسئلة غير المجابة بدقة...\n"
+                "<i>يرجى الانتظار بضع ثوانٍ...</i>",
+                update=update
+            )
+            try:
+                from ai_extractor import extract_and_solve_google_form
+                from handlers.pdf_handler import process_json_quiz_data
+                quiz_data = await extract_and_solve_google_form(form_url)
+                if not quiz_data.get("questions"):
+                    await send_clean_message(
+                        context, chat_id,
+                        "❌ <b>لم يتم العثور على أي أسئلة داخل هذا النموذج.</b>\n"
+                        "تأكد من أن الرابط متاح للعامة وليس مقفلاً أو يتطلب تسجيل دخول المؤسسة.",
+                        update=update,
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]])
+                    )
+                    return
+                # Save and schedule via standard quiz data processor
+                await process_json_quiz_data(quiz_data, user, context, chat_id, update)
+                return
+            except Exception as e:
+                logger.error("Failed to extract Google Form: %s", e, exc_info=True)
+                await send_clean_message(
+                    context, chat_id,
+                    f"❌ <b>حدث خطأ أثناء تحليل النموذج:</b>\n<code>{html.escape(str(e))}</code>",
+                    update=update,
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]])
+                )
+                return
+
         if not msg.startswith("http"):
             await send_clean_message(context, chat_id, "❌ الرابط غير صحيح.", update=update,
                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]]))

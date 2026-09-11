@@ -241,11 +241,11 @@ def _validate_json_upload(doc, data: dict) -> None:
                 normalized_opts.append("خيار بديل")
 
         # Resolve answer cleanly using find_correct_option_index
-        if not ans:
-            ans = normalized_opts[0]
-        else:
+        if ans:
             ans_idx = find_correct_option_index(normalized_opts, ans)
             ans = normalized_opts[ans_idx]
+        else:
+            ans = ""
 
         q["options"] = normalized_opts
         q["answer"] = ans
@@ -343,6 +343,15 @@ async def process_json_quiz_data(
         if q_img and isinstance(q_img, str) and (len(q_img) > 50 or "base64" in q_img) and not q_img.startswith("http"):
             saved_qimg = save_passage_image(q_img, f"{q_tag}_qimg", idx + 1)
             q["image"] = saved_qimg
+
+    # Auto-solve missing answers using Gemini AI if any are empty
+    missing_qs = [q for q in data.get("questions", []) if not str(q.get("answer", "")).strip()]
+    if missing_qs:
+        try:
+            from ai_extractor import solve_missing_answers
+            await solve_missing_answers(data["questions"])
+        except Exception as e:
+            logger.warning("Could not auto-solve missing answers via AI: %s", e)
 
     # 1. Update/Replace questions of an existing quiz (Preserves all Spaced Repetition reviews!)
     if quiz_update_id:

@@ -189,6 +189,15 @@ function extractGoogleFormsQuiz() {
             }
         }
 
+        const pageUrl = (typeof window !== 'undefined' && window.location && window.location.href) ? window.location.href : '';
+        const bodyText = (typeof document !== 'undefined' && document.body) ? (document.body.innerText || '') : '';
+        const isViewScore = pageUrl.includes('viewscore') ||
+                            bodyText.includes('إجمالي النقاط') ||
+                            bodyText.includes('عرض النتيجة') ||
+                            bodyText.includes('View score') ||
+                            bodyText.includes('Total points');
+        const isViewForm = pageUrl.includes('viewform') && !isViewScore;
+
         // ══════════════════════════════════════════════════════════════
         // Engine A: Native Data Model Parser (Preferred & 100% Accurate)
         // ══════════════════════════════════════════════════════════════
@@ -372,45 +381,65 @@ function extractGoogleFormsQuiz() {
                             /(?:Correct answer|Correct answers)\s*[:\n\-]?\s*([^\n]+)/i
                         ];
 
-                        // ── STEP 1: Detect isWrong FIRST (via points or error container) ──
-                        // Must run before checkedRadio so we know if student's selection is trustworthy
+                        const fullCardText = (cardEl.innerText || '').trim();
+
+                        // ── STEP 1: Detect isWrong via text & DOM attributes ──
+                        if (/\b0\s*\/\s*[1-9]/.test(fullCardText) || 
+                            /\b٠\s*\/\s*[١-٩]/.test(fullCardText) || 
+                            /\b0\s*من\s+إجمالي/.test(fullCardText) ||
+                            /\b٠\s*من\s+إجمالي/.test(fullCardText) ||
+                            /غير صحيح|إجابة غير صحيحة|Incorrect/i.test(fullCardText)) {
+                            isWrong = true;
+                        }
+
                         const pointsEl = cardEl.querySelector('.freebirdFormviewerViewItemsItemGradingPoints, .RDPZE, [aria-describedby*="points"], .M2vV3e');
                         if (pointsEl) {
                             const ptText = (pointsEl.innerText || '').trim();
                             if (/\b0\s*\/\s*[1-9]/.test(ptText) || /\b٠\s*\/\s*[١-٩]/.test(ptText)) {
                                 isWrong = true;
                             }
-                        } else if (cardEl.querySelector('.freebirdFormviewerViewItemsItemGradingIncorrectContainer, [aria-label="غير صحيح"], [aria-label="Incorrect"]')) {
+                        }
+                        if (cardEl.querySelector('.freebirdFormviewerViewItemsItemGradingIncorrectContainer, [aria-label="غير صحيح"], [aria-label="Incorrect"]')) {
                             isWrong = true;
                         }
 
-                        // ── STEP 2: Search grading/correction containers for explicit correct answer text ──
-                        // These containers ONLY appear in Google Forms when student answered wrongly
-                        const gradingEls = cardEl.querySelectorAll('.Y6Myj, .zfd4wb, .bUzgoc, .freebirdFormviewerViewItemsItemGradingExplanation, .freebirdFormviewerViewItemsItemGradingContainer, [aria-label*="الإجابة الصحيحة"], [aria-label*="Correct"]');
-                        for (const gel of gradingEls) {
-                            const txt = (gel.innerText || '').trim();
-                            if (!txt) continue;
-                            for (const pat of caPatterns) {
-                                const m = txt.match(pat);
-                                if (m && m[1].trim()) {
-                                    correctAnswer = m[1].trim();
-                                    isWrong = true;
-                                    break;
-                                }
+                        // ── STEP 2: Extract explicit Correct Answer directly from card text ──
+                        for (const pat of caPatterns) {
+                            const m = fullCardText.match(pat);
+                            if (m && m[1].trim()) {
+                                correctAnswer = m[1].trim();
+                                isWrong = true;
+                                break;
                             }
-                            if (!correctAnswer && (txt.includes('الإجابة الصحيحة') || /correct answer/i.test(txt))) {
-                                const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
-                                const caIdx = lines.findIndex(l => l.includes('الإجابة الصحيحة') || /correct answer/i.test(l));
-                                if (caIdx !== -1 && caIdx + 1 < lines.length) {
-                                    correctAnswer = lines[caIdx + 1];
-                                    isWrong = true;
-                                    break;
-                                }
+                        }
+                        if (!correctAnswer && (fullCardText.includes('الإجابة الصحيحة') || /correct answer/i.test(fullCardText))) {
+                            const lines = fullCardText.split('\n').map(l => l.trim()).filter(Boolean);
+                            const caIdx = lines.findIndex(l => /(?:الإجابة الصحيحة|الإجابات الصحيحة|الإجابة النموذجية|Correct answers?)/i.test(l));
+                            if (caIdx !== -1 && caIdx + 1 < lines.length) {
+                                correctAnswer = lines[caIdx + 1];
+                                isWrong = true;
                             }
-                            if (correctAnswer) break;
                         }
 
-                        // ── STEP 3: Check green highlight on radio button (visual correct indicator) ──
+                        // Secondary check via grading DOM containers
+                        if (!correctAnswer) {
+                            const gradingEls = cardEl.querySelectorAll('.Y6Myj, .zfd4wb, .bUzgoc, .freebirdFormviewerViewItemsItemGradingExplanation, .freebirdFormviewerViewItemsItemGradingContainer, [aria-label*="الإجابة الصحيحة"], [aria-label*="Correct"]');
+                            for (const gel of gradingEls) {
+                                const txt = (gel.innerText || '').trim();
+                                if (!txt) continue;
+                                for (const pat of caPatterns) {
+                                    const m = txt.match(pat);
+                                    if (m && m[1].trim()) {
+                                        correctAnswer = m[1].trim();
+                                        isWrong = true;
+                                        break;
+                                    }
+                                }
+                                if (correctAnswer) break;
+                            }
+                        }
+
+                        // ── STEP 3: Green highlight indicator on radio button ──
                         if (!correctAnswer) {
                             const greenRadio = cardEl.querySelector('[fill="#137333"], [fill="#188038"], [fill="#34a853"], [fill="#0f9d58"], [fill="#1e8e3e"]');
                             if (greenRadio) {
@@ -421,9 +450,9 @@ function extractGoogleFormsQuiz() {
                             }
                         }
 
-                        // ── STEP 4: Only use student's selected answer if NOT wrong ──
-                        // If isWrong=true, student's selection is by definition incorrect — do NOT use it
-                        if (!correctAnswer && !isWrong) {
+                        // ── STEP 4: Checked radio (student selection) ──
+                        // CRITICAL: NEVER use checkedRadio if isWrong=true, and DO NOT use checkedRadio on unsubmitted forms (/viewform)
+                        if (!correctAnswer && !isWrong && isViewScore) {
                             const checkedRadio = cardEl.querySelector('[aria-checked="true"]');
                             if (checkedRadio) {
                                 const checkedBox = checkedRadio.closest('.docssharedWizToggleLabeledContainer, .SG0AAe, .Y6Myj, .bzfPab, [role="radio"]') || checkedRadio.parentElement;
@@ -475,7 +504,7 @@ function extractGoogleFormsQuiz() {
             if (questions.length > 0) {
                 return {
                     success: true,
-                    data: { quiz_name: quizTitle, wrong: wrongIndices, questions }
+                    data: { quiz_name: quizTitle, wrong: wrongIndices, questions, is_viewscore: isViewScore, is_viewform: isViewForm }
                 };
             }
         }
@@ -568,7 +597,17 @@ function extractGoogleFormsQuiz() {
                 /(?:Correct answer|Correct answers)\s*[:\n\-]?\s*([^\n]+)/i
             ];
 
-            // Check points/incorrect containers first
+            const fbCardText = (card.innerText || '').trim();
+
+            // ── STEP 1: Detect isWrong via text & DOM attributes ──
+            if (/\b0\s*\/\s*[1-9]/.test(fbCardText) || 
+                /\b٠\s*\/\s*[١-٩]/.test(fbCardText) || 
+                /\b0\s*من\s+إجمالي/.test(fbCardText) ||
+                /\b٠\s*من\s+إجمالي/.test(fbCardText) ||
+                /غير صحيح|إجابة غير صحيحة|Incorrect/i.test(fbCardText)) {
+                fbIsWrong = true;
+            }
+
             const fbPointsEl = card.querySelector('.freebirdFormviewerViewItemsItemGradingPoints, .RDPZE, [aria-describedby*="points"], .M2vV3e');
             if (fbPointsEl) {
                 const ptText = (fbPointsEl.innerText || '').trim();
@@ -577,32 +616,43 @@ function extractGoogleFormsQuiz() {
                 fbIsWrong = true;
             }
 
-            // Search grading containers for explicit correct answer text
-            const fbGradingEls = card.querySelectorAll('.Y6Myj, .zfd4wb, .bUzgoc, .freebirdFormviewerViewItemsItemGradingExplanation, .freebirdFormviewerViewItemsItemGradingContainer, [aria-label*="الإجابة الصحيحة"], [aria-label*="Correct"]');
-            for (const gel of fbGradingEls) {
-                const txt = (gel.innerText || '').trim();
-                if (!txt) continue;
-                for (const pat of fbCaPatterns) {
-                    const m = txt.match(pat);
-                    if (m && m[1].trim()) {
-                        fbCorrectAnswer = m[1].trim();
-                        fbIsWrong = true;
-                        break;
-                    }
+            // ── STEP 2: Extract explicit Correct Answer from card text ──
+            for (const pat of fbCaPatterns) {
+                const m = fbCardText.match(pat);
+                if (m && m[1].trim()) {
+                    fbCorrectAnswer = m[1].trim();
+                    fbIsWrong = true;
+                    break;
                 }
-                if (!fbCorrectAnswer && (txt.includes('الإجابة الصحيحة') || /correct answer/i.test(txt))) {
-                    const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
-                    const caIdx = lines.findIndex(l => l.includes('الإجابة الصحيحة') || /correct answer/i.test(l));
-                    if (caIdx !== -1 && caIdx + 1 < lines.length) {
-                        fbCorrectAnswer = lines[caIdx + 1];
-                        fbIsWrong = true;
-                        break;
-                    }
+            }
+            if (!fbCorrectAnswer && (fbCardText.includes('الإجابة الصحيحة') || /correct answer/i.test(fbCardText))) {
+                const lines = fbCardText.split('\n').map(l => l.trim()).filter(Boolean);
+                const caIdx = lines.findIndex(l => /(?:الإجابة الصحيحة|الإجابات الصحيحة|الإجابة النموذجية|Correct answers?)/i.test(l));
+                if (caIdx !== -1 && caIdx + 1 < lines.length) {
+                    fbCorrectAnswer = lines[caIdx + 1];
+                    fbIsWrong = true;
                 }
-                if (fbCorrectAnswer) break;
             }
 
-            // Check green highlight
+            // Secondary check via grading DOM containers
+            if (!fbCorrectAnswer) {
+                const fbGradingEls = card.querySelectorAll('.Y6Myj, .zfd4wb, .bUzgoc, .freebirdFormviewerViewItemsItemGradingExplanation, .freebirdFormviewerViewItemsItemGradingContainer, [aria-label*="الإجابة الصحيحة"], [aria-label*="Correct"]');
+                for (const gel of fbGradingEls) {
+                    const txt = (gel.innerText || '').trim();
+                    if (!txt) continue;
+                    for (const pat of fbCaPatterns) {
+                        const m = txt.match(pat);
+                        if (m && m[1].trim()) {
+                            fbCorrectAnswer = m[1].trim();
+                            fbIsWrong = true;
+                            break;
+                        }
+                    }
+                    if (fbCorrectAnswer) break;
+                }
+            }
+
+            // ── STEP 3: Green highlight indicator ──
             if (!fbCorrectAnswer) {
                 const greenR = card.querySelector('[fill="#137333"], [fill="#188038"], [fill="#34a853"], [fill="#0f9d58"], [fill="#1e8e3e"]');
                 if (greenR) {
@@ -611,15 +661,14 @@ function extractGoogleFormsQuiz() {
                 }
             }
 
-            // Only use checkedAns if NOT wrong
-            if (!fbCorrectAnswer && !fbIsWrong) {
+            // ── STEP 4: Only use checkedAns if NOT wrong AND isViewScore ──
+            if (!fbCorrectAnswer && !fbIsWrong && isViewScore) {
                 fbCorrectAnswer = checkedAns;
             }
 
             if (fbIsWrong) wrongFallback.push(qNum);
 
             const finalAns = resolveCorrectAnswer(safeOpts, fbCorrectAnswer);
-
 
             let qImage = null;
             const imgEl = card.querySelector('img.Hvn9Fb, img[src*="googleusercontent.com"], img[src*="docs.google.com"], .freebirdFormviewerViewItemsEmbeddedobjectImage img');
@@ -641,7 +690,7 @@ function extractGoogleFormsQuiz() {
         if (questionsFallback.length > 0) {
             return {
                 success: true,
-                data: { quiz_name: quizTitle, wrong: wrongFallback, questions: questionsFallback }
+                data: { quiz_name: quizTitle, wrong: wrongFallback, questions: questionsFallback, is_viewscore: isViewScore, is_viewform: isViewForm }
             };
         }
 

@@ -45,8 +45,8 @@ REVIEW_INTERVALS = [1, 3, 7, 14, 30]
 # Database file path
 DB_PATH = "memory_qudrat.db"
 
-# Gemini model
-GEMINI_MODEL = "gemini-2.0-flash"
+# Gemini model (State of the Art)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 # Upload limits (security)
 MAX_JSON_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (allows embedded passage screenshots as base64)

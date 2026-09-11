@@ -61,6 +61,16 @@ async function initExtractor() {
     if (response && response.success && response.data) {
       extractedData = response.data;
 
+      // Show/hide viewform warning banner
+      const viewformBanner = document.getElementById("viewform-banner");
+      if (viewformBanner) {
+        if (extractedData.is_viewform || (!tab.url.includes("viewscore") && !extractedData.is_viewscore)) {
+          viewformBanner.classList.remove("hidden");
+        } else {
+          viewformBanner.classList.add("hidden");
+        }
+      }
+
       // Capture high-res passage screenshots if any passages were detected
       await capturePassageScreenshots(tab, extractedData);
 
