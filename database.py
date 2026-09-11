@@ -8,7 +8,7 @@ import contextlib
 import base64
 import hashlib
 from datetime import datetime, date, timedelta
-from config import DB_PATH, ADMIN_USER_ID, ADMIN_IDS
+from config import DB_PATH, ADMIN_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,23 @@ def init_db():
             FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
         )
     """)
+
+    # Migration: ensure item_type and notes exist on quizzes table
+    cursor.execute("PRAGMA table_info(quizzes)")
+    existing_quiz_cols = [c[1] for c in cursor.fetchall()]
+    if "item_type" not in existing_quiz_cols:
+        try:
+            cursor.execute("ALTER TABLE quizzes ADD COLUMN item_type TEXT DEFAULT 'quiz'")
+            logger.info("Added item_type column to quizzes table")
+        except Exception as e:
+            logger.warning("Could not add item_type column: %s", e)
+
+    if "notes" not in existing_quiz_cols:
+        try:
+            cursor.execute("ALTER TABLE quizzes ADD COLUMN notes TEXT")
+            logger.info("Added notes column to quizzes table")
+        except Exception as e:
+            logger.warning("Could not add notes column: %s", e)
 
     # ── 4. Questions Table ──
     cursor.execute("""
@@ -1138,10 +1155,10 @@ def get_due_quiz_reviews(user_id: int = None) -> list:
     conn = get_connection()
     cursor = conn.cursor()
     today_iso = get_riyadh_today_iso()
-    valid_filter = "((q.url IS NOT NULL AND q.url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = q.id))"
+    valid_filter = "(q.item_type = 'topic' OR (q.url IS NOT NULL AND q.url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = q.id))"
     if user_id is not None:
         cursor.execute(
-            f"""SELECT qr.*, q.name as quiz_name, q.category_id
+            f"""SELECT qr.*, q.name as quiz_name, q.category_id, q.item_type, q.notes, q.url
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.user_id = ? AND qr.next_review_date <= ? AND {valid_filter}
@@ -1150,7 +1167,7 @@ def get_due_quiz_reviews(user_id: int = None) -> list:
         )
     else:
         cursor.execute(
-            f"""SELECT qr.*, q.name as quiz_name, q.category_id
+            f"""SELECT qr.*, q.name as quiz_name, q.category_id, q.item_type, q.notes, q.url
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.next_review_date <= ? AND {valid_filter}
@@ -1168,10 +1185,10 @@ def get_all_quiz_reviews(user_id: int = None) -> list:
     from utils import quiz_sort_key_desc
     conn = get_connection()
     cursor = conn.cursor()
-    valid_filter = "((q.url IS NOT NULL AND q.url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = q.id))"
+    valid_filter = "(q.item_type = 'topic' OR (q.url IS NOT NULL AND q.url != '') OR EXISTS (SELECT 1 FROM questions qs WHERE qs.quiz_id = q.id))"
     if user_id is not None:
         cursor.execute(
-            f"""SELECT qr.*, q.name as quiz_name, q.category_id
+            f"""SELECT qr.*, q.name as quiz_name, q.category_id, q.item_type, q.notes, q.url
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE qr.user_id = ? AND {valid_filter}
@@ -1180,7 +1197,7 @@ def get_all_quiz_reviews(user_id: int = None) -> list:
         )
     else:
         cursor.execute(
-            f"""SELECT qr.*, q.name as quiz_name, q.category_id
+            f"""SELECT qr.*, q.name as quiz_name, q.category_id, q.item_type, q.notes, q.url
                FROM quiz_reviews qr
                JOIN quizzes q ON qr.quiz_id = q.id
                WHERE {valid_filter}
@@ -1190,6 +1207,96 @@ def get_all_quiz_reviews(user_id: int = None) -> list:
     conn.close()
     rows.sort(key=quiz_sort_key_desc, reverse=True)
     return rows
+
+
+# ─── Study Topics & Tracker ──────────────────────────────────────────────────
+
+def save_study_topic(
+    name: str,
+    notes: str = "",
+    user_id: int = None,
+    category_id: int = None,
+    start_today: bool = False
+) -> int:
+    """
+    Saves a study topic/subject that the user studied into quizzes table
+    with item_type='topic' and schedules its first Spaced Repetition review.
+    """
+    if not user_id:
+        raise ValueError("user_id is required for save_study_topic")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO quizzes (name, url, category_id, owner_id, is_public, item_type, notes)
+           VALUES (?, ?, ?, ?, ?, 'topic', ?)""",
+        (name.strip(), f"topic:{name.strip()}", category_id, user_id, 0, notes.strip() if notes else ""),
+    )
+    topic_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    # Schedule first review (defaults to Stage 0: tomorrow)
+    schedule_first_review(topic_id, user_id=user_id, start_today=start_today)
+    return topic_id
+
+
+def get_study_topic(topic_id: int) -> dict | None:
+    """Returns a single study topic by ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM quizzes WHERE id = ?", (topic_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_study_topic_notes(topic_id: int, notes: str, user_id: int = None):
+    """Updates notes/summary for a study topic."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if user_id:
+        cursor.execute("UPDATE quizzes SET notes = ? WHERE id = ? AND owner_id = ?", (notes, topic_id, user_id))
+    else:
+        cursor.execute("UPDATE quizzes SET notes = ? WHERE id = ?", (notes, topic_id))
+    conn.commit()
+    conn.close()
+
+
+def reset_quiz_review(review_id: int, user_id: int = None):
+    """
+    Resets review stage to 0 and schedules next review for tomorrow
+    (used when student faces difficulty and wants to repeat the stage).
+    """
+    from spaced_repetition import next_review_date
+    next_date = next_review_date(0)
+    conn = get_connection()
+    cursor = conn.cursor()
+    if user_id:
+        cursor.execute(
+            "UPDATE quiz_reviews SET stage = 0, next_review_date = ? WHERE id = ? AND user_id = ?",
+            (next_date, review_id, user_id)
+        )
+    else:
+        cursor.execute(
+            "UPDATE quiz_reviews SET stage = 0, next_review_date = ? WHERE id = ?",
+            (next_date, review_id)
+        )
+    conn.commit()
+    conn.close()
+
+
+def delete_quiz_or_topic(quiz_id: int, user_id: int = None) -> bool:
+    """Deletes a quiz or study topic and cascades to reviews and questions."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if user_id:
+        cursor.execute("DELETE FROM quizzes WHERE id = ? AND (owner_id = ? OR owner_id IS NULL)", (quiz_id, user_id))
+    else:
+        cursor.execute("DELETE FROM quizzes WHERE id = ?", (quiz_id,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
 
 
 def advance_quiz_review(review_id: int, user_id: int = None):

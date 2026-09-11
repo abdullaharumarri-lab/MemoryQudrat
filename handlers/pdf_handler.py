@@ -908,58 +908,34 @@ async def excel_document_handler(update: Update, context: ContextTypes.DEFAULT_T
             os.unlink(tmp_path)
 
 
-# ─── PDF File Handler (AI Extractor) ──────────────────────────────────────────
+# ─── PDF File Handler ──────────────────────────────────────────────────────────
 
 async def pdf_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handles PDF uploads (e.g. Google Forms results printed to PDF or test PDFs).
-    Uses Gemini AI to extract questions, correct answers, and wrong question indices.
+    Informs user that PDF AI extraction was replaced with 100% verified manual / Excel / study tracking entry.
     """
     msg_obj = update.effective_message
-    if not msg_obj or not msg_obj.document: return
+    if not msg_obj or not msg_obj.document:
+        return
 
-    doc = msg_obj.document
     chat_id = update.effective_chat.id
     if update.message:
         db.track_chat_message(chat_id, update.message.message_id)
 
-    await send_clean_message(
-        context=context,
-        chat_id=chat_id,
-        update=update,
-        text="🤖 <b>جاري قراءة وتدقيق واستخراج الأسئلة بالذكاء الاصطناعي...</b> ⏳\n<i>(سيتم حل المسائل وتحديد الإجابات الصحيحة وأخطائك تلقائياً)</i>"
+    text = (
+        "ℹ️ <b>تنبيه بخصوص ملفات PDF</b>\n\n"
+        "لضمان <b>دقة 100%</b> وتجنب أي أخطاء في الإجابات أو تخمينات غير دقيقة، "
+        "تم استبدال الاستخراج التلقائي بطرق مباشرة وموثوقة:\n\n"
+        "🎯 <b>خياراتك الأفضل والأدق 100%:</b>\n"
+        "1️⃣ <b>📖 تسجيل مذاكرة جديدة:</b> جدول أي درس أو موضوع ذاكرته اليوم لتبدأ مراجعته تلقائياً بالتكرار المتباعد.\n"
+        "2️⃣ <b>🎯 كويزات تيليجرام:</b> حوّل أي سؤال كويز من قنوات تيليجرام للبوت وسيتم حفظه بإجابته الرسمية فوراً.\n"
+        "3️⃣ <b>📊 ملف Excel / CSV:</b> استخدم قالب Excel لإدخال الأسئلة بإجاباتها النموذجية.\n"
+        "4️⃣ <b>✍️ إنشاء كويز يدوياً:</b> أدخل الأسئلة والخيارات مباشرة."
     )
-
-    tmp_path = None
-    try:
-        from ai_extractor import extract_questions_from_pdf
-        file = await doc.get_file()
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp_path = tmp.name
-        await file.download_to_drive(tmp_path)
-
-        data = await extract_questions_from_pdf(tmp_path)
-
-        # Validate & normalize
-        _validate_json_upload(None, data)
-
-        user = update.effective_user
-        quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
-        quiz_update_id = context.user_data.pop("waiting_for_json_update", None)
-
-        await process_json_quiz_data(
-            data=data,
-            user=user,
-            context=context,
-            chat_id=chat_id,
-            update=update,
-            quiz_upgrade_id=quiz_upgrade_id,
-            quiz_update_id=quiz_update_id
-        )
-
-    except Exception as e:
-        err = f"❌ <b>تعذر استخراج الأسئلة من ملف PDF:</b>\n{str(e)}"
-        await send_clean_message(context, chat_id, err, update=update)
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📖 تسجيل موضوع مذاكرة", callback_data="log_study_new")],
+        [InlineKeyboardButton("📊 رفع ملف Excel", callback_data="upload_excel")],
+        [InlineKeyboardButton("✍️ إنشاء كويز يدوياً", callback_data="create_manual_quiz")],
+        [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
+    ])
+    await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)

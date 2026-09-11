@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 
 def main_menu_keyboard(user_id: int = None) -> InlineKeyboardMarkup:
     kb = [
+        [InlineKeyboardButton("📖 سجلت مذاكرة جديدة (تكرار متباعد)", callback_data="log_study_new")],
         [InlineKeyboardButton("📚 الكويزات", callback_data="browse_root")],
         [
             InlineKeyboardButton("🔔 مراجعات اليوم", callback_data="due_reviews"),
@@ -77,15 +78,23 @@ def main_menu_keyboard(user_id: int = None) -> InlineKeyboardMarkup:
 def main_menu_text(user_id: int = None) -> str:
     due = db.get_due_quiz_reviews(user_id=user_id) if user_id else []
     weak = db.get_due_weak_questions(user_id=user_id) if user_id else []
-    lines = ["🧠 <b>ذاكرة القدرات</b>\n"]
+    lines = ["🧠 <b>ذاكرة القدرات — رفيق المذاكرة الذكي</b>\n"]
     if due:
-        lines.append(f"🔔 لديك <b>{len(due)}</b> مراجعة مستحقة اليوم")
+        topics_due = sum(1 for r in due if r.get("item_type") == "topic")
+        quizzes_due = len(due) - topics_due
+        parts = []
+        if topics_due:
+            parts.append(f"<b>{topics_due}</b> موضوع مذاكرة")
+        if quizzes_due:
+            parts.append(f"<b>{quizzes_due}</b> كويز")
+        lines.append(f"🔔 مراجعات اليوم المستحقة: {' و '.join(parts)}")
     if weak:
         lines.append(f"❓ لديك <b>{len(weak)}</b> سؤال ضعيف مستحق")
     if not due and not weak:
         lines.append("✅ لا توجد مراجعات مستحقة اليوم — أحسنت!")
-    lines.append("\nاختر ما تريد 👇")
+    lines.append("\nاختر ما تريد البدء به 👇")
     return "\n".join(lines)
+
 
 
 async def _cleanup_and_return_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -212,25 +221,6 @@ def _build_settings(user_id):
     return text, InlineKeyboardMarkup(kb)
 
 
-def _build_create_menu():
-    text = (
-        "➕ <b>إنشاء / رفع كويز</b> 🧠\n\n"
-        "اختر الطريقة الأنسب لك:\n"
-        "• ⚡ <b>رفع صفحة الكويز (HTML أو JSON):</b> أسرع طريقة من كود الصفحة مباشرة!\n"
-        "• 🪄 <b>المفضلة السحرية (Bookmarklet):</b> استخراج بنقرة واحدة بدون برامج\n"
-        "• 📊 <b>رفع ملف Excel / CSV:</b> عبر القالب المنظم"
-    )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ رفع صفحة الكويز (HTML أو JSON)", callback_data="upload_json")],
-        [InlineKeyboardButton("🪄 كود المفضلة السحرية (Bookmarklet)", callback_data="show_bookmarklet")],
-        [InlineKeyboardButton("📊 رفع ملف Excel / CSV", callback_data="upload_excel")],
-        [InlineKeyboardButton("📥 تحميل قالب Excel", callback_data="download_excel_template")],
-        [InlineKeyboardButton("✍️ إنشاء كويز يدوياً", callback_data="create_manual_quiz")],
-        [InlineKeyboardButton("🔗 إضافة كويز كرابط", callback_data="upload_url")],
-        [InlineKeyboardButton("📁 إدارة المجلدات", callback_data="admin_cat_0")],
-        [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")],
-    ])
-    return text, kb
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -379,6 +369,11 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id if user else ADMIN_USER_ID
     is_adm = is_admin(user_id)
+
+    # ── Handle Study Tracker Text Input ──
+    from handlers.study_tracker import handle_study_text_input
+    if await handle_study_text_input(update, context):
+        return
 
     if is_adm and context.user_data.get("waiting_for_json_update"):
         quiz_update_id = context.user_data.pop("waiting_for_json_update")
@@ -576,6 +571,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _cleanup_and_return_home(update, context)
         return
 
+    # ── 0. Study Tracker Callbacks ──
+    from handlers.study_tracker import handle_study_tracker_callback
+    if await handle_study_tracker_callback(update, context):
+        return
+
     # ── 1. Settings & General Menus ──
     if data == "settings_menu":
         text, kb = _build_settings(user_id)
@@ -654,7 +654,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_adm:
             await query.answer("❌ للمشرف فقط.", show_alert=True)
             return
-        text, kb = _build_create_menu()
+        from handlers.creation_handler import build_create_upload_menu
+        text, kb = build_create_upload_menu()
         await safe_edit(query, text, kb)
         return
 
@@ -684,31 +685,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]]))
         return
 
-    if data == "show_bookmarklet":
-        if not is_adm:
-            await query.answer("❌", show_alert=True)
-            return
-        try:
-            with open("bookmarklet.js", "r", encoding="utf-8") as f:
-                b_file = f.read()
-            import re
-            m = re.search(r'(javascript:\(function\(\)\{.*\}\)\(\);)', b_file, re.DOTALL)
-            b_code = m.group(1).replace('\n', '').replace('\r', '') if m else b_file
-        except Exception:
-            b_code = "javascript:(function(){alert('Bookmarklet ready');})();"
-
-        text = (
-            "🪄 <b>المفضلة السحرية (Bookmarklet) — استخراج بنقرة واحدة</b> ⚡\n\n"
-            "طريقة عبقرية تعمل على <b>أي متصفح (كمبيوتر أو جوال)</b> بدون تثبيت أي إضافة وبدون إنترنت وبدون ذكاء اصطناعي!\n\n"
-            "📌 <b>كيف تستخدمها في 3 خطوات بسيطة؟</b>\n"
-            "1️⃣ <b>انسخ الكود بالأسفل</b> (اضغط على الكود ليتم نسخه فوراً).\n"
-            "2️⃣ <b>أنشئ علامة مرجعية (Bookmark)</b> في شريط متصفحك وسمّها «🧠 استخراج الكويز» والصق هذا الكود في خانة الرابط (URL).\n"
-            "3️⃣ <b>افتح أي اختبار Google Forms</b> (سواء صفحة النتيجة أو الأسئلة) واضغط على المفضلة من شريط المتصفح، وسيتم استخراج الكويز وتحميل ملف JSON تلقائياً في ثانية واحدة!\n\n"
-            f"👇 <b>اضغط على الكود لنسخه فوراً:</b>\n"
-            f"<code>{html.escape(b_code)}</code>"
-        )
-        await safe_edit(query, text, InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]]))
-        return
 
     if data == "save_raw_url_quiz":
         if not is_adm:

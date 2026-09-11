@@ -75,8 +75,10 @@ def _build_due_reviews(user_id, category_filter=None, page=1):
         if len(name) > 28:
             name = name[:25] + "..."
         lbl = stage_label(r.get("stage", 0))
-        kb.append([InlineKeyboardButton(f"▶️ {name} ({lbl})",
-                                        callback_data=f"start_review_{r['quiz_id']}_{r['id']}")])
+        is_topic = (r.get("item_type") == "topic")
+        icon = "📖" if is_topic else "📝"
+        callback = f"view_topic_review_{r['quiz_id']}_{r['id']}" if is_topic else f"start_review_{r['quiz_id']}_{r['id']}"
+        kb.append([InlineKeyboardButton(f"{icon} {name} ({lbl})", callback_data=callback)])
 
     nav = []
     c_param = "all" if category_filter == "all" else (category_filter if category_filter is not None else "0")
@@ -149,8 +151,10 @@ def _build_review_schedule(user_id, category_filter=None, page=1):
         d = days_until(r["next_review_date"])
         lbl = stage_label(r.get("stage", 0))
         timing = "🔴 مستحق" if d <= 0 else "🟡 غداً" if d == 1 else f"⏳ بعد {d} يوم"
-        kb.append([InlineKeyboardButton(f"{timing} | {name} ({lbl})",
-                                        callback_data=f"quiz_detail_{r['quiz_id']}")])
+        is_topic = (r.get("item_type") == "topic")
+        icon = "📖" if is_topic else "📝"
+        callback = f"view_topic_review_{r['quiz_id']}_{r['id']}" if is_topic else f"quiz_detail_{r['quiz_id']}"
+        kb.append([InlineKeyboardButton(f"{timing} | {icon} {name} ({lbl})", callback_data=callback)])
 
     nav = []
     c_param = "all" if category_filter == "all" else (category_filter if category_filter is not None else "0")
