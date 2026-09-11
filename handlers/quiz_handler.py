@@ -517,11 +517,16 @@ async def send_next_question(update, context, session):
 
 async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query if update else None
-    user_id = user.id if user else context.user_data.get("user_id")
+    user = update.effective_user if update else None
+    user_id = user.id if user else (context.user_data.get("user_id") if context and context.user_data else None)
+    if not user_id and update and getattr(update, "poll_answer", None) and update.poll_answer.user:
+        user_id = update.poll_answer.user.id
     if not user_id and update and update.effective_chat:
         user_id = update.effective_chat.id
     if not user_id:
         return
+    if context and context.user_data is not None:
+        context.user_data["user_id"] = user_id
 
     try:
         session = db.get_session(user_id=user_id)
@@ -543,35 +548,34 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.exception("Error in show_next_question: %s", e)
         # Advance index to skip the corrupted question so user isn't stuck forever
-        session = db.get_session(user_id=user_id)
-        if session and session["current_index"] < len(session["question_ids"]):
-            new_index = session["current_index"] + 1
-            db.update_session(
-                new_index,
-                session["correct_count"],
-                session["wrong_ids"],
-                None,
-                session.get("session_message_ids", []),
-                user_id=user_id,
-            )
-            session["current_index"] = new_index
+        uid = user_id if ('user_id' in locals() and user_id) else (context.user_data.get("user_id") if context and context.user_data else None)
+        if uid:
+            session = db.get_session(user_id=uid)
+            if session and session["current_index"] < len(session["question_ids"]):
+                new_index = session["current_index"] + 1
+                db.update_session(
+                    new_index,
+                    session["correct_count"],
+                    session["wrong_ids"],
+                    None,
+                    session.get("session_message_ids", []),
+                    user_id=uid,
+                )
+                session["current_index"] = new_index
 
         err_text = "⚠️ واجه السؤال مشكلة غير متوقعة في التنسيق وتم تخطيه تلقائياً.\nاضغط 'استكمال الكويز' لمتابعة بقية الأسئلة."
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ استكمال الكويز", callback_data="resume_quiz")],
             [InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]
         ])
-        if query:
-            await safe_edit_html(query, err_text, reply_markup=reply_markup, context=context)
-        else:
-            chat_id = context.user_data.get("chat_id") or user_id
-            if chat_id:
-                try:
-                    err_msg = await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=reply_markup)
-                    if err_msg:
-                        db.track_chat_message(chat_id, err_msg.message_id)
-                except Exception:
-                    pass
+        chat_id = (context.user_data.get("chat_id") if context and context.user_data else None) or (update.effective_chat.id if update and update.effective_chat else uid)
+        if chat_id and context and context.bot:
+            try:
+                err_msg = await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=reply_markup)
+                if err_msg:
+                    db.track_chat_message(chat_id, err_msg.message_id)
+            except Exception:
+                pass
 
 
 async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
