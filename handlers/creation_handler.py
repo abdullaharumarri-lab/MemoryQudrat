@@ -119,7 +119,10 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
             return
 
         user = update.effective_user
-        u_id = user.id if user else 6099429826
+        u_id = user.id if user else (update.effective_chat.id if update.effective_chat else None)
+        if not u_id:
+            await query.answer("❌ تعذر التعرف على المستخدم.", show_alert=True)
+            return
         name = manual_quiz.get("name", "كويز بدون اسم")
         questions = manual_quiz.get("questions", [])
 
@@ -230,7 +233,9 @@ async def handle_media_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop("waiting_for_media_note", None)
     user = update.effective_user
     chat_id = update.effective_chat.id
-    u_id = user.id if user else 6099429826
+    u_id = user.id if user else chat_id
+    if not u_id:
+        return False
     msg = update.message
 
     if msg:

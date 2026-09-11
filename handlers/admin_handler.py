@@ -270,8 +270,33 @@ async def admin_update_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 await status_msg.edit_text(err_report, parse_mode="HTML")
             return
 
+        # Pre-flight syntax check on pulled files before restarting
+        check_proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "py_compile", "bot.py", "database.py", "config.py", "utils.py",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        c_stdout, c_stderr = await check_proc.communicate()
+        if check_proc.returncode != 0:
+            c_err = c_stderr.decode("utf-8", errors="replace").strip()
+            # Rollback git pull to prevent crash loop
+            rollback_proc = await asyncio.create_subprocess_exec(
+                "git", "reset", "--hard", "HEAD@{1}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await rollback_proc.communicate()
+            err_msg = (
+                f"❌ <b>فشل فحص الكود الجديد (Syntax Check Failed):</b>\n"
+                f"<pre>{html.escape(c_err)}</pre>\n\n"
+                f"🛡️ <b>تم التراجع التلقائي (Auto-Rollback)</b> لحماية البوت من التوقف والانهيار."
+            )
+            if status_msg:
+                await status_msg.edit_text(err_msg, parse_mode="HTML")
+            return
+
         report = (
-            f"✅ <b>تم سحب أحدث كود بنجاح من GitHub!</b>\n\n"
+            f"✅ <b>تم سحب أحدث كود بنجاح من GitHub واجتاز الفحص!</b>\n\n"
             f"<pre>{html.escape(out_str)}</pre>\n\n"
             f"🔄 <b>جاري إعادة تشغيل خدمة البوت الآن لتفعيل التحديثات...</b>"
         )

@@ -28,7 +28,13 @@ async def start_quiz_session(
 ):
     query = update.callback_query
     user = update.effective_user
-    user_id = user.id if user else (context.user_data.get("user_id") or 6099429826)
+    user_id = user.id if user else context.user_data.get("user_id")
+    if not user_id and update and update.effective_chat:
+        user_id = update.effective_chat.id
+    if not user_id:
+        if query:
+            await query.answer("❌ تعذر التعرف على المستخدم. يرجى إرسال /start للبدء من جديد.", show_alert=True)
+        return
     context.user_data["user_id"] = user_id
 
     chat_id = None
@@ -114,8 +120,7 @@ async def start_quiz_session(
             title = "▶️ الكويز"
 
     if session_type == "review" and not review_id and quiz_id:
-        with db.get_connection() as conn:
-            r = conn.execute("SELECT id FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id)).fetchone()
+        r = db.get_quiz_review(quiz_id, user_id)
         if r:
             review_id = r["id"]
 
@@ -140,7 +145,7 @@ async def start_quiz_session(
 
 
 async def send_next_question(update, context, session):
-    user_id = session.get("user_id", 6099429826)
+    user_id = session.get("user_id") or (update.effective_user.id if update and update.effective_user else None)
     q_id = session["question_ids"][session["current_index"]]
     question = db.get_question(q_id)
     if not question:
@@ -245,9 +250,15 @@ async def send_next_question(update, context, session):
     photo_payload = None
 
     if passage_image:
-        if os.path.exists(passage_image):
+        resolved_p_path = passage_image
+        if isinstance(resolved_p_path, str) and not os.path.isabs(resolved_p_path):
+            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            candidate = os.path.join(repo_root, resolved_p_path)
+            if os.path.exists(candidate):
+                resolved_p_path = candidate
+        if isinstance(resolved_p_path, str) and os.path.exists(resolved_p_path):
             has_photo = True
-            photo_payload = passage_image
+            photo_payload = resolved_p_path
         elif isinstance(passage_image, str) and (len(passage_image) > 50 or "base64" in passage_image):
             try:
                 raw_b64 = passage_image
@@ -329,8 +340,14 @@ async def send_next_question(update, context, session):
     q_img_path = question.get("image") or question.get("question_image")
     if q_img_path:
         try:
-            if os.path.exists(q_img_path):
-                with open(q_img_path, "rb") as qf:
+            resolved_q_path = q_img_path
+            if isinstance(resolved_q_path, str) and not os.path.isabs(resolved_q_path):
+                repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                candidate = os.path.join(repo_root, resolved_q_path)
+                if os.path.exists(candidate):
+                    resolved_q_path = candidate
+            if isinstance(resolved_q_path, str) and os.path.exists(resolved_q_path):
+                with open(resolved_q_path, "rb") as qf:
                     q_msg = await context.bot.send_photo(
                         chat_id=chat_id,
                         photo=qf,
@@ -500,8 +517,11 @@ async def send_next_question(update, context, session):
 
 async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query if update else None
-    user = update.effective_user
-    user_id = user.id if user else (context.user_data.get("user_id") or 6099429826)
+    user_id = user.id if user else context.user_data.get("user_id")
+    if not user_id and update and update.effective_chat:
+        user_id = update.effective_chat.id
+    if not user_id:
+        return
 
     try:
         session = db.get_session(user_id=user_id)
@@ -571,7 +591,9 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.warning("No active session found for user_id=%s or poll_id=%s", user_id, poll_id)
         return
 
-    sess_user_id = session.get("user_id", user_id or 6099429826)
+    sess_user_id = session.get("user_id") or user_id
+    if not sess_user_id:
+        return
     context.user_data["user_id"] = sess_user_id
     context.user_data["chat_id"] = sess_user_id
 
@@ -626,7 +648,9 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, session: dict):
     query = update.callback_query
-    user_id = session.get("user_id", 6099429826)
+    user_id = session.get("user_id") or (update.effective_user.id if update and update.effective_user else None)
+    if not user_id:
+        return
     total = len(session["question_ids"])
     correct = session["correct_count"]
     wrong_ids = session["wrong_ids"]
@@ -760,8 +784,7 @@ async def finish_session(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
 
     # If quiz is not in review schedule, allow adding it
     if quiz_id and session_type not in ("weakall", "weak", "weakpractice"):
-        with db.get_connection() as conn:
-            has_rev = conn.execute("SELECT 1 FROM quiz_reviews WHERE quiz_id = ? AND user_id = ?", (quiz_id, user_id)).fetchone()
+        has_rev = db.get_quiz_review(quiz_id, user_id)
         if not has_rev:
             keyboard.append([
                 InlineKeyboardButton("🔁 أضف لجدول مراجعاتي", callback_data=f"add_to_schedule_{quiz_id}")

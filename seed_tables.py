@@ -14,7 +14,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
-ADMIN_USER_ID = 6099429826
+from config import ADMIN_USER_ID
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_qudrat.db")
 
 def generate_distractors(n, k, correct):

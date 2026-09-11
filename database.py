@@ -4,12 +4,45 @@ import os
 import shutil
 import logging
 import pytz
+import contextlib
+import base64
+import hashlib
 from datetime import datetime, date, timedelta
-from config import DB_PATH, ADMIN_USER_ID
+from config import DB_PATH, ADMIN_USER_ID, ADMIN_IDS
 
 logger = logging.getLogger(__name__)
 
+
+@contextlib.contextmanager
+def get_db_connection():
+    """
+    Thread-safe, leak-proof SQLite connection context manager.
+    Enforces WAL mode, foreign keys, auto-commit on success,
+    auto-rollback on exception, and guarantees connection closure in finally.
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=20.0)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA busy_timeout = 5000;")
+    conn.execute("PRAGMA cache_size = 10000;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
 def get_connection():
+    """Legacy raw connection factory for compatibility."""
     conn = sqlite3.connect(DB_PATH, timeout=20.0)
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
@@ -19,6 +52,48 @@ def get_connection():
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def ensure_image_saved_on_disk(image_payload: str, prefix: str = "img") -> str | None:
+    """
+    Guarantees that no raw Base64 image payload is stored directly in SQLite.
+    If image_payload is Base64, decodes and writes it to data/images/ and returns the relative filepath.
+    If it is already a local file path or URL, returns it unchanged.
+    """
+    if not image_payload or not isinstance(image_payload, str) or len(image_payload) < 20:
+        return image_payload
+    
+    if os.path.exists(image_payload):
+        return image_payload
+
+    if not ("base64" in image_payload[:60] or len(image_payload) > 200):
+        return image_payload
+
+    raw_b64 = image_payload
+    if "," in raw_b64 and ("data:image" in raw_b64[:30] or "base64" in raw_b64[:30]):
+        raw_b64 = raw_b64.split(",", 1)[1]
+
+    try:
+        img_bytes = base64.b64decode(raw_b64)
+        if len(img_bytes) < 10:
+            return None
+
+        base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "images")
+        os.makedirs(base_dir, exist_ok=True)
+
+        content_hash = hashlib.md5(img_bytes).hexdigest()[:12]
+        filename = f"{prefix}_{content_hash}.png"
+        filepath = os.path.join(base_dir, filename)
+
+        if not os.path.exists(filepath):
+            with open(filepath, "wb") as f:
+                f.write(img_bytes)
+
+        relpath = os.path.relpath(filepath, os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
+        return relpath
+    except Exception as e:
+        logger.error("Failed to decode and save base64 image: %s", e)
+        return None
 
 
 def init_db():
@@ -112,7 +187,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS quiz_reviews (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER DEFAULT 6099429826,
+            user_id INTEGER NOT NULL,
             quiz_id INTEGER NOT NULL,
             stage INTEGER DEFAULT 0,
             next_review_date DATE NOT NULL,
@@ -124,7 +199,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS weak_questions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER DEFAULT 6099429826,
+            user_id INTEGER NOT NULL,
             quiz_id INTEGER NOT NULL,
             question_id INTEGER NOT NULL,
             stage INTEGER DEFAULT 0,
@@ -154,13 +229,13 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS quiz_sessions_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER DEFAULT 6099429826,
+            user_id INTEGER NOT NULL,
             quiz_id INTEGER,
             session_type TEXT NOT NULL,
             total INTEGER NOT NULL,
             correct INTEGER NOT NULL,
             wrong INTEGER NOT NULL,
-            session_date DATE DEFAULT (date('now'))
+            session_date DATE NOT NULL
         )
     """)
 
@@ -175,7 +250,7 @@ def init_db():
     # ── 10. Quiz Weak Mastery (5 consecutive perfect scores to master) ──
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS quiz_weak_mastery (
-            user_id INTEGER DEFAULT 6099429826,
+            user_id INTEGER NOT NULL,
             quiz_id INTEGER NOT NULL,
             consecutive_perfect INTEGER DEFAULT 0,
             is_mastered INTEGER DEFAULT 0,
@@ -226,21 +301,21 @@ def init_db():
 
     # Quiz Reviews: add user_id if missing
     try:
-        cursor.execute("ALTER TABLE quiz_reviews ADD COLUMN user_id INTEGER DEFAULT 6099429826")
+        cursor.execute("ALTER TABLE quiz_reviews ADD COLUMN user_id INTEGER")
     except sqlite3.OperationalError: pass
-    cursor.execute("UPDATE quiz_reviews SET user_id = 6099429826 WHERE user_id IS NULL")
+    cursor.execute("UPDATE quiz_reviews SET user_id = ? WHERE user_id IS NULL", (ADMIN_USER_ID,))
 
     # Weak Questions: add user_id if missing
     try:
-        cursor.execute("ALTER TABLE weak_questions ADD COLUMN user_id INTEGER DEFAULT 6099429826")
+        cursor.execute("ALTER TABLE weak_questions ADD COLUMN user_id INTEGER")
     except sqlite3.OperationalError: pass
-    cursor.execute("UPDATE weak_questions SET user_id = 6099429826 WHERE user_id IS NULL")
+    cursor.execute("UPDATE weak_questions SET user_id = ? WHERE user_id IS NULL", (ADMIN_USER_ID,))
 
     # Quiz Sessions Log: add user_id if missing
     try:
-        cursor.execute("ALTER TABLE quiz_sessions_log ADD COLUMN user_id INTEGER DEFAULT 6099429826")
+        cursor.execute("ALTER TABLE quiz_sessions_log ADD COLUMN user_id INTEGER")
     except sqlite3.OperationalError: pass
-    cursor.execute("UPDATE quiz_sessions_log SET user_id = 6099429826 WHERE user_id IS NULL")
+    cursor.execute("UPDATE quiz_sessions_log SET user_id = ? WHERE user_id IS NULL", (ADMIN_USER_ID,))
 
     # Active Session: ensure it has user_id as primary key
     active_cols = [c[1] for c in cursor.execute("PRAGMA table_info(active_session)").fetchall()]
@@ -486,10 +561,13 @@ def get_platform_stats() -> dict:
     cursor.execute("SELECT COUNT(*) as cnt FROM users")
     total_users = cursor.fetchone()["cnt"]
     
-    cursor.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM quiz_sessions_log WHERE session_date = date('now')")
+    today_iso = get_riyadh_today_iso()
+    seven_days_ago = (date.fromisoformat(today_iso) - timedelta(days=7)).isoformat()
+
+    cursor.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM quiz_sessions_log WHERE session_date = ?", (today_iso,))
     active_today = cursor.fetchone()["cnt"]
 
-    cursor.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM quiz_sessions_log WHERE session_date >= date('now', '-7 days')")
+    cursor.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM quiz_sessions_log WHERE session_date >= ?", (seven_days_ago,))
     active_7days = cursor.fetchone()["cnt"]
 
     # Sessions and questions
@@ -688,6 +766,8 @@ def save_quiz_without_review(name: str, questions: list, category_id: int = None
     )
     quiz_id = cursor.lastrowid
     for q in questions:
+        p_img = ensure_image_saved_on_disk(q.get("passage_image"), f"passage_{quiz_id}")
+        q_img = ensure_image_saved_on_disk(q.get("image") or q.get("question_image"), f"qimg_{quiz_id}")
         cursor.execute(
             """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image, image)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -697,8 +777,8 @@ def save_quiz_without_review(name: str, questions: list, category_id: int = None
                 json.dumps(q["options"], ensure_ascii=False),
                 q["answer"],
                 q.get("explanation", ""),
-                q.get("passage_image"),
-                q.get("image") or q.get("question_image"),
+                p_img,
+                q_img,
             ),
         )
     conn.commit()
@@ -723,6 +803,8 @@ def update_quiz_questions(quiz_id: int, questions: list, new_name: str = None) -
 
     # Insert new questions
     for q in questions:
+        p_img = ensure_image_saved_on_disk(q.get("passage_image"), f"passage_{quiz_id}")
+        q_img = ensure_image_saved_on_disk(q.get("image") or q.get("question_image"), f"qimg_{quiz_id}")
         cursor.execute(
             """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image, image)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -732,8 +814,8 @@ def update_quiz_questions(quiz_id: int, questions: list, new_name: str = None) -
                 json.dumps(q["options"], ensure_ascii=False),
                 q["answer"],
                 q.get("explanation", ""),
-                q.get("passage_image"),
-                q.get("image") or q.get("question_image"),
+                p_img,
+                q_img,
             ),
         )
     conn.commit()
@@ -785,7 +867,9 @@ def get_all_public_quizzes() -> list:
     return rows
 
 
-def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
+def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = None, is_public: int = 0) -> int:
+    if not user_id:
+        raise ValueError('user_id is required for save_quiz_url')
     """Save a URL-only quiz (like Google Forms)."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -799,7 +883,9 @@ def save_quiz_url(name: str, url: str, category_id: int = None, user_id: int = 6
     return quiz_id
 
 
-def save_quiz(name: str, questions: list, category_id: int = None, user_id: int = 6099429826, is_public: int = 0) -> int:
+def save_quiz(name: str, questions: list, category_id: int = None, user_id: int = None, is_public: int = 0) -> int:
+    if not user_id:
+        raise ValueError('user_id is required for save_quiz')
     """Save quiz without auto-scheduling until first study solve."""
     quiz_id = save_quiz_without_review(name, questions, category_id, owner_id=user_id, is_public=is_public)
     return quiz_id
@@ -1009,7 +1095,9 @@ def update_question_explanation(question_id: int, new_exp: str) -> bool:
 
 # ─── Quiz Reviews ─────────────────────────────────────────────────────────────
 
-def schedule_first_review(quiz_id: int, user_id: int = 6099429826, start_today: bool = True):
+def schedule_first_review(quiz_id: int, user_id: int = None, start_today: bool = True):
+    if not user_id:
+        raise ValueError('user_id is required for schedule_first_review')
     """Schedule the first review for a user in Riyadh timezone."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -1156,7 +1244,9 @@ def advance_quiz_review(review_id: int, user_id: int = None):
     conn.close()
 
 
-def advance_quiz_review_for_quiz(quiz_id: int, user_id: int = 6099429826) -> bool:
+def advance_quiz_review_for_quiz(quiz_id: int, user_id: int = None) -> bool:
+    if not user_id:
+        raise ValueError('user_id is required for advance_quiz_review_for_quiz')
     """
     Finds the active review for this quiz and user (if any) and advances it to next stage.
     """
@@ -1173,7 +1263,9 @@ def advance_quiz_review_for_quiz(quiz_id: int, user_id: int = 6099429826) -> boo
 
 # ─── Weak Questions ───────────────────────────────────────────────────────────
 
-def add_or_reset_weak_question(quiz_id: int, question_id: int, user_id: int = 6099429826):
+def add_or_reset_weak_question(quiz_id: int, question_id: int, user_id: int = None):
+    if not user_id:
+        raise ValueError('user_id is required for add_or_reset_weak_question')
     """Add a wrong question to weak list for a specific user — always due today for immediate review."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -1183,16 +1275,18 @@ def add_or_reset_weak_question(quiz_id: int, question_id: int, user_id: int = 60
     )
     existing = cursor.fetchone()
     if existing:
+        today_iso = get_riyadh_today_iso()
         cursor.execute(
-            """UPDATE weak_questions SET stage = 0, next_review_date = date('now')
+            """UPDATE weak_questions SET stage = 0, next_review_date = ?
                WHERE id = ?""",
-            (existing["id"],),
+            (today_iso, existing["id"]),
         )
     else:
+        today_iso = get_riyadh_today_iso()
         cursor.execute(
             """INSERT INTO weak_questions (user_id, quiz_id, question_id, stage, next_review_date)
-               VALUES (?, ?, ?, 0, date('now'))""",
-            (user_id, quiz_id, question_id),
+               VALUES (?, ?, ?, 0, ?)""",
+            (user_id, quiz_id, question_id, today_iso),
         )
     conn.commit()
     conn.close()
@@ -1382,7 +1476,9 @@ def remove_weak_question(weak_id: int):
 def save_session(session_type: str, quiz_id: int, review_id: int | None,
                  question_ids: list, current_index: int = 0,
                  correct_count: int = 0, wrong_ids: list = None, poll_id: str = None,
-                 session_message_ids: list = None, user_id: int = 6099429826):
+                 session_message_ids: list = None, user_id: int = None):
+    if not user_id:
+        raise ValueError('user_id is required for save_session')
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -1417,17 +1513,14 @@ def save_session(session_type: str, quiz_id: int, review_id: int | None,
 
 
 def get_session(user_id: int = None, poll_id: str = None) -> dict | None:
-    conn = get_connection()
-    cursor = conn.cursor()
-    if user_id is not None:
-        cursor.execute("SELECT * FROM active_session WHERE user_id = ?", (user_id,))
-    elif poll_id is not None:
-        cursor.execute("SELECT * FROM active_session WHERE poll_id = ?", (poll_id,))
-    else:
-        # Fallback to first session if neither is given
-        cursor.execute("SELECT * FROM active_session LIMIT 1")
-    row = cursor.fetchone()
-    conn.close()
+    """Safely retrieves active session for a specific user_id or poll_id (never leaks across users)."""
+    if user_id is None and poll_id is None:
+        return None
+    with get_db_connection() as conn:
+        if user_id is not None:
+            row = conn.execute("SELECT * FROM active_session WHERE user_id = ?", (user_id,)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM active_session WHERE poll_id = ?", (poll_id,)).fetchone()
     if row:
         row = dict(row)
         row["question_ids"] = json.loads(row["question_ids"])
@@ -1441,7 +1534,9 @@ def get_session(user_id: int = None, poll_id: str = None) -> dict | None:
 
 
 def update_session(current_index: int, correct_count: int, wrong_ids: list, poll_id: str = None,
-                   session_message_ids: list = None, user_id: int = 6099429826):
+                   session_message_ids: list = None, user_id: int = None):
+    if not user_id:
+        raise ValueError('user_id is required for update_session')
     conn = get_connection()
     cursor = conn.cursor()
     if session_message_ids is None:
@@ -1475,116 +1570,117 @@ def clear_session(user_id: int = None):
 
 # ─── Sessions Log & Stats ─────────────────────────────────────────────────────
 
-def log_session(quiz_id, session_type: str, total: int, correct: int, wrong: int, user_id: int = 6099429826):
-    """Log a completed session for stats."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """INSERT INTO quiz_sessions_log (user_id, quiz_id, session_type, total, correct, wrong)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (user_id, quiz_id, session_type, total, correct, wrong),
-    )
-    conn.commit()
-    conn.close()
+def log_session(quiz_id, session_type: str, total: int, correct: int, wrong: int, user_id: int):
+    """Log a completed session for stats in Riyadh timezone date."""
+    if not user_id:
+        raise ValueError("user_id is required for log_session")
+    today_iso = get_riyadh_today_iso()
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO quiz_sessions_log (user_id, quiz_id, session_type, total, correct, wrong, session_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, quiz_id, session_type, total, correct, wrong, today_iso),
+        )
 
 
 def get_my_stats(user_id: int = None) -> dict:
     """Returns comprehensive stats scoped to a user (or all if None)."""
-    conn = get_connection()
-    cursor = conn.cursor()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
 
-    user_clause = "AND user_id = ?" if user_id is not None else ""
-    params = (user_id,) if user_id is not None else ()
+        user_clause = "AND user_id = ?" if user_id is not None else ""
+        params = (user_id,) if user_id is not None else ()
 
-    # All-time totals
-    cursor.execute(
-        f"""SELECT COUNT(*) as sessions, COALESCE(SUM(total), 0) as total, 
-                  COALESCE(SUM(correct), 0) as correct, COALESCE(SUM(wrong), 0) as wrong
-           FROM quiz_sessions_log
-           WHERE session_type NOT IN ('practice') {user_clause}""",
-        params,
-    )
-    alltime = dict(cursor.fetchone())
-    total_q = alltime["total"] or 0
-    correct_q = alltime["correct"] or 0
-    accuracy = int((correct_q / total_q) * 100) if total_q > 0 else 0
+        # All-time totals
+        cursor.execute(
+            f"""SELECT COUNT(*) as sessions, COALESCE(SUM(total), 0) as total, 
+                      COALESCE(SUM(correct), 0) as correct, COALESCE(SUM(wrong), 0) as wrong
+               FROM quiz_sessions_log
+               WHERE session_type NOT IN ('practice') {user_clause}""",
+            params,
+        )
+        alltime = dict(cursor.fetchone())
+        total_q = alltime["total"] or 0
+        correct_q = alltime["correct"] or 0
+        accuracy = int((correct_q / total_q) * 100) if total_q > 0 else 0
 
-    # Last 7 days breakdown
-    cursor.execute(
-        f"""SELECT session_date, 
-                  COALESCE(SUM(total), 0) as day_total, 
-                  COALESCE(SUM(correct), 0) as day_correct
-           FROM quiz_sessions_log
-           WHERE session_date >= date('now', '-6 days') {user_clause}
-           GROUP BY session_date
-           ORDER BY session_date ASC""",
-        params,
-    )
-    daily_rows = {r["session_date"]: dict(r) for r in cursor.fetchall()}
-    
-    weekly = []
-    # Build continuous 7 days list ending today
-    today = date.today()
-    arabic_days = ["الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
-    for i in range(6, -1, -1):
-        d = today - timedelta(days=i)
-        d_str = d.isoformat()
-        day_info = daily_rows.get(d_str, {"day_total": 0, "day_correct": 0})
-        d_tot = day_info["day_total"]
-        d_cor = day_info["day_correct"]
-        d_pct = int((d_cor / d_tot) * 100) if d_tot > 0 else 0
-        day_name = arabic_days[d.weekday()]
-        weekly.append({
-            "date": d_str,
-            "day_name": day_name,
-            "total": d_tot,
-            "correct": d_cor,
-            "accuracy": d_pct
-        })
+        # Last 7 days breakdown (strictly Riyadh timezone)
+        riyadh_today_iso = get_riyadh_today_iso()
+        riyadh_today = date.fromisoformat(riyadh_today_iso)
+        six_days_ago_iso = (riyadh_today - timedelta(days=6)).isoformat()
 
-    # Weak questions count
-    if user_id is not None:
-        cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE user_id = ?", (user_id,))
-        total_weak = cursor.fetchone()["cnt"]
-        cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE user_id = ? AND next_review_date <= date('now')", (user_id,))
-        due_weak = cursor.fetchone()["cnt"]
-    else:
-        cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions")
-        total_weak = cursor.fetchone()["cnt"]
-        cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE next_review_date <= date('now')")
-        due_weak = cursor.fetchone()["cnt"]
+        cursor.execute(
+            f"""SELECT session_date, 
+                      COALESCE(SUM(total), 0) as day_total, 
+                      COALESCE(SUM(correct), 0) as day_correct
+               FROM quiz_sessions_log
+               WHERE session_date >= ? {user_clause}
+               GROUP BY session_date
+               ORDER BY session_date ASC""",
+            (six_days_ago_iso,) + params,
+        )
+        daily_rows = {r["session_date"]: dict(r) for r in cursor.fetchall()}
+        
+        weekly = []
+        # Build continuous 7 days list ending today
+        arabic_days = ["الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+        for i in range(6, -1, -1):
+            d = riyadh_today - timedelta(days=i)
+            d_str = d.isoformat()
+            day_info = daily_rows.get(d_str, {"day_total": 0, "day_correct": 0})
+            d_tot = day_info["day_total"]
+            d_cor = day_info["day_correct"]
+            d_pct = int((d_cor / d_tot) * 100) if d_tot > 0 else 0
+            day_name = arabic_days[d.weekday()]
+            weekly.append({
+                "date": d_str,
+                "day_name": day_name,
+                "total": d_tot,
+                "correct": d_cor,
+                "accuracy": d_pct
+            })
 
-    # Spaced Repetition reviews count & stage breakdown
-    stage_breakdown = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-    if user_id is not None:
-        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ?", (user_id,))
-        active_reviews = cursor.fetchone()["cnt"]
-        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ? AND next_review_date <= date('now')", (user_id,))
-        due_reviews = cursor.fetchone()["cnt"]
-        cursor.execute("SELECT stage, COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ? GROUP BY stage", (user_id,))
-        for r in cursor.fetchall():
-            stage_breakdown[r["stage"]] = r["cnt"]
-    else:
-        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews")
-        active_reviews = cursor.fetchone()["cnt"]
-        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE next_review_date <= date('now')")
-        due_reviews = cursor.fetchone()["cnt"]
-        cursor.execute("SELECT stage, COUNT(*) as cnt FROM quiz_reviews GROUP BY stage")
-        for r in cursor.fetchall():
-            stage_breakdown[r["stage"]] = r["cnt"]
+        # Weak questions count
+        if user_id is not None:
+            cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE user_id = ?", (user_id,))
+            total_weak = cursor.fetchone()["cnt"]
+            cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE user_id = ? AND next_review_date <= ?", (user_id, riyadh_today_iso))
+            due_weak = cursor.fetchone()["cnt"]
+        else:
+            cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions")
+            total_weak = cursor.fetchone()["cnt"]
+            cursor.execute("SELECT COUNT(*) as cnt FROM weak_questions WHERE next_review_date <= ?", (riyadh_today_iso,))
+            due_weak = cursor.fetchone()["cnt"]
 
-    # Mastered quizzes count
-    if user_id is not None:
-        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_weak_mastery WHERE user_id = ? AND is_mastered = 1", (user_id,))
-    else:
-        cursor.execute("SELECT COUNT(*) as cnt FROM quiz_weak_mastery WHERE is_mastered = 1")
-    mastered_count = cursor.fetchone()["cnt"]
+        # Spaced Repetition reviews count & stage breakdown
+        stage_breakdown = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        if user_id is not None:
+            cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ?", (user_id,))
+            active_reviews = cursor.fetchone()["cnt"]
+            cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ? AND next_review_date <= ?", (user_id, riyadh_today_iso))
+            due_reviews = cursor.fetchone()["cnt"]
+            cursor.execute("SELECT stage, COUNT(*) as cnt FROM quiz_reviews WHERE user_id = ? GROUP BY stage", (user_id,))
+            for r in cursor.fetchall():
+                stage_breakdown[r["stage"]] = r["cnt"]
+        else:
+            cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews")
+            active_reviews = cursor.fetchone()["cnt"]
+            cursor.execute("SELECT COUNT(*) as cnt FROM quiz_reviews WHERE next_review_date <= ?", (riyadh_today_iso,))
+            due_reviews = cursor.fetchone()["cnt"]
+            cursor.execute("SELECT stage, COUNT(*) as cnt FROM quiz_reviews GROUP BY stage")
+            for r in cursor.fetchall():
+                stage_breakdown[r["stage"]] = r["cnt"]
 
-    # Total public quizzes count
-    cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE is_public = 1")
-    total_quizzes = cursor.fetchone()["cnt"]
+        # Mastered quizzes count
+        if user_id is not None:
+            cursor.execute("SELECT COUNT(*) as cnt FROM quiz_weak_mastery WHERE user_id = ? AND is_mastered = 1", (user_id,))
+        else:
+            cursor.execute("SELECT COUNT(*) as cnt FROM quiz_weak_mastery WHERE is_mastered = 1")
+        mastered_count = cursor.fetchone()["cnt"]
 
-    conn.close()
+        # Total public quizzes count
+        cursor.execute("SELECT COUNT(*) as cnt FROM quizzes WHERE is_public = 1")
+        total_quizzes = cursor.fetchone()["cnt"]
 
     return {
         "sessions": alltime["sessions"] or 0,
@@ -1704,7 +1800,9 @@ def clear_chat_history(chat_id: int):
 
 # ─── Quiz Weak Mastery (5 Consecutive Perfect Scores) ─────────────────────────
 
-def record_quiz_mastery_run(quiz_id: int, user_id: int = 6099429826, is_perfect: bool = False) -> tuple[int, bool]:
+def record_quiz_mastery_run(quiz_id: int, user_id: int = None, is_perfect: bool = False) -> tuple[int, bool]:
+    if not user_id:
+        raise ValueError('user_id is required for record_quiz_mastery_run')
     """
     Updates consecutive perfect runs for a quiz.
     If is_perfect is True, increments streak. If streak >= 5, sets is_mastered = 1.
@@ -1748,7 +1846,9 @@ def record_quiz_mastery_run(quiz_id: int, user_id: int = 6099429826, is_perfect:
     return streak, bool(mastered)
 
 
-def get_mastered_weak_quiz_ids(user_id: int = 6099429826) -> set[int]:
+def get_mastered_weak_quiz_ids(user_id: int = None) -> set[int]:
+    if not user_id:
+        return set()
     """Returns set of quiz_ids that are mastered (5 consecutive 100% scores)."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -1761,7 +1861,9 @@ def get_mastered_weak_quiz_ids(user_id: int = 6099429826) -> set[int]:
     return {r["quiz_id"] for r in rows}
 
 
-def get_quiz_mastery_info(quiz_id: int, user_id: int = 6099429826) -> dict:
+def get_quiz_mastery_info(quiz_id: int, user_id: int = None) -> dict:
+    if not user_id:
+        return {'streak': 0, 'is_mastered': False}
     """Returns mastery streak and status for a quiz."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -1776,3 +1878,52 @@ def get_quiz_mastery_info(quiz_id: int, user_id: int = 6099429826) -> dict:
     return {"streak": 0, "is_mastered": False}
 
 
+
+
+# ─── High-Level Helpers to Eliminate Raw SQL in Handlers ───────────────────────
+
+def clear_last_message_id(chat_id: int):
+    """Clears last_msg tracker for a chat."""
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM bot_state WHERE key = ?", (f"last_msg_{chat_id}",))
+
+
+def set_quiz_review_stage(quiz_id: int, user_id: int, stage: int) -> bool:
+    """Safely updates the stage for a user's quiz review."""
+    if not user_id:
+        raise ValueError("user_id is required for set_quiz_review_stage")
+    with get_db_connection() as conn:
+        cur = conn.execute("UPDATE quiz_reviews SET stage = ? WHERE quiz_id = ? AND user_id = ?", (stage, quiz_id, user_id))
+        return cur.rowcount > 0
+
+
+def set_quiz_review_next_date(quiz_id: int, user_id: int, next_date: str) -> bool:
+    """Safely updates next_review_date for a user's quiz review."""
+    if not user_id:
+        raise ValueError("user_id is required for set_quiz_review_next_date")
+    with get_db_connection() as conn:
+        cur = conn.execute("UPDATE quiz_reviews SET next_review_date = ? WHERE quiz_id = ? AND user_id = ?", (next_date, quiz_id, user_id))
+        return cur.rowcount > 0
+
+
+def upgrade_url_quiz_to_questions(quiz_id: int, questions: list) -> bool:
+    """Replaces URL in a URL-quiz with interactive questions."""
+    with get_db_connection() as conn:
+        conn.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_id,))
+        for q in questions:
+            p_img = ensure_image_saved_on_disk(q.get("passage_image"), f"passage_{quiz_id}")
+            q_img = ensure_image_saved_on_disk(q.get("image") or q.get("question_image"), f"qimg_{quiz_id}")
+            conn.execute(
+                """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image, image)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    quiz_id,
+                    q["question"],
+                    json.dumps(q["options"], ensure_ascii=False),
+                    q["answer"],
+                    q.get("explanation", ""),
+                    p_img,
+                    q_img,
+                ),
+            )
+    return True

@@ -91,31 +91,14 @@ async def clean_entire_chat(
 
     all_to_del = {int(mid) for mid in tracked if mid and int(mid) > 0 and mid != keep_message_id}
 
-    # 4. Optional sweep range (only used when explicitly requested)
-    if sweep_range and sweep_range > 0:
-        known_ids = list(all_to_del)
-        if keep_message_id:
-            known_ids.append(int(keep_message_id))
-        if last_id:
-            known_ids.append(int(last_id))
-        if known_ids:
-            max_ref = max(known_ids)
-            for mid in range(max(1, max_ref - sweep_range), max_ref + 2):
-                if mid != keep_message_id:
-                    all_to_del.add(mid)
-
-    # 5. Reset or update last_message_id in DB
+    # 4. Reset or update last_message_id in DB
     if keep_message_id:
         db.set_last_message_id(chat_id, keep_message_id)
         db.track_chat_message(chat_id, keep_message_id)
     else:
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM bot_state WHERE key = ?", (f"last_msg_{chat_id}",))
-        conn.commit()
-        conn.close()
+        db.clear_last_message_id(chat_id)
 
-    # 6. Fast batch delete verified message IDs
+    # 5. Fast batch delete verified message IDs
     if all_to_del:
         await delete_messages_bulk(context, chat_id, list(all_to_del))
 

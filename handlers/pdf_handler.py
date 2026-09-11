@@ -327,8 +327,10 @@ async def process_json_quiz_data(
     quiz_upgrade_id: int = None,
     quiz_update_id: int = None
 ):
-    """Processes parsed JSON data for either updating an existing quiz, upgrading an existing URL quiz, or saving a new quiz."""
-    u_id = user.id if user else 6099429826
+    u_id = user.id if user else (update.effective_chat.id if update and update.effective_chat else chat_id)
+    if not u_id:
+        logger.error("process_json_quiz_data: Could not identify user_id.")
+        return
 
     # Decode and save any base64 passage/question images to disk
     q_tag = str(quiz_update_id or quiz_upgrade_id or "new")
@@ -396,24 +398,7 @@ async def process_json_quiz_data(
 
     # 2. Upgrade URL to JSON quiz
     elif quiz_upgrade_id:
-        conn = db.get_connection()
-        conn.execute("UPDATE quizzes SET url = NULL WHERE id = ?", (quiz_upgrade_id,))
-        for q in data["questions"]:
-            conn.execute(
-                """INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, passage_image, image)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    quiz_upgrade_id,
-                    q["question"],
-                    json.dumps(q["options"], ensure_ascii=False),
-                    q["answer"],
-                    q.get("explanation", ""),
-                    q.get("passage_image"),
-                    q.get("image") or q.get("question_image"),
-                ),
-            )
-        conn.commit()
-        conn.close()
+        db.upgrade_url_quiz_to_questions(quiz_upgrade_id, data["questions"])
 
         # Process wrong field in upgrade path too
         wrong_indices = data.get("wrong", [])

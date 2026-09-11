@@ -8,19 +8,23 @@ except ImportError:
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Admin user IDs — hardcoded trusted admins + env var
-ADMIN_USER_ID = 6099429826
-ADMIN_IDS = {ADMIN_USER_ID}
-ADMIN_USER_IDS = ADMIN_IDS
+# Admin user IDs — loaded from environment variable with backward-compatible fallback
+ADMIN_IDS = set()
 _env_admin = os.getenv("ADMIN_USER_ID")
 if _env_admin:
-    try:
-        val = int(_env_admin)
-        if val != 0:
-            ADMIN_IDS.add(val)
-            ADMIN_USER_ID = val
-    except (ValueError, TypeError):
-        pass
+    for part in _env_admin.split(","):
+        try:
+            val = int(part.strip())
+            if val != 0:
+                ADMIN_IDS.add(val)
+        except (ValueError, TypeError):
+            pass
+
+if not ADMIN_IDS:
+    ADMIN_IDS.add(6099429826)
+
+ADMIN_USER_ID = next(iter(ADMIN_IDS))
+ADMIN_USER_IDS = ADMIN_IDS
 
 def is_admin(user_id: int) -> bool:
     """Return True only if the given user_id is the registered admin."""
