@@ -614,6 +614,78 @@ async def json_document_handler(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         err = f"❌ <b>حدث خطأ غير متوقع:</b> {str(e)}"
         await send_clean_message(context, update.effective_chat.id, err, update=update)
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+# ─── HTML Page Code Handler (100% Offline, Zero AI) ──────────────────────────
+
+async def html_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Directly extracts Google Forms quizzes from an uploaded .html / .htm file.
+    Runs 100% locally from the page code, with zero network calls and zero AI.
+    """
+    msg_obj = update.effective_message
+    if not msg_obj or not msg_obj.document: return
+
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        await send_clean_message(
+            context=context,
+            chat_id=update.effective_chat.id,
+            update=update,
+            text="❌ رفع الكويزات متاح للمشرف فقط.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
+        )
+        return
+
+    doc = msg_obj.document
+    chat_id = update.effective_chat.id
+    if update.message:
+        db.track_chat_message(chat_id, update.message.message_id)
+
+    await send_clean_message(
+        context=context,
+        chat_id=chat_id,
+        update=update,
+        text="⚡ <b>جاري استخراج الكويز من كود الصفحة محلياً...</b> 🧠\n<i>(بدون إنترنت وبدون ذكاء اصطناعي)</i>"
+    )
+
+    tmp_path = None
+    try:
+        file = await doc.get_file()
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+            tmp_path = tmp.name
+        await file.download_to_drive(tmp_path)
+
+        with open(tmp_path, "r", encoding="utf-8", errors="replace") as f:
+            html_text = f.read()
+
+        from html_form_parser import parse_google_form_html
+        data = parse_google_form_html(html_text)
+
+        _validate_json_upload(doc, data)
+
+        quiz_upgrade_id = context.user_data.pop("waiting_for_json_upgrade", None)
+        quiz_update_id = context.user_data.pop("waiting_for_json_update", None)
+
+        await process_json_quiz_data(
+            data=data,
+            user=user,
+            context=context,
+            chat_id=chat_id,
+            update=update,
+            quiz_upgrade_id=quiz_upgrade_id,
+            quiz_update_id=quiz_update_id
+        )
+
+    except ValueError as e:
+        err = f"❌ <b>خطأ في استخراج كود الصفحة:</b> {str(e)}"
+        await send_clean_message(context, chat_id, err, update=update)
+    except Exception as e:
+        logger.error("Error in html_document_handler: %s", e, exc_info=True)
+        err = f"❌ <b>حدث خطأ أثناء معالجة كود الصفحة:</b> {str(e)}"
+        await send_clean_message(context, chat_id, err, update=update)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)

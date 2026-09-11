@@ -16,7 +16,7 @@ from telegram.ext import (
 import database as db
 from config import TELEGRAM_BOT_TOKEN
 from handlers.main_menu import main_menu_handler, button_handler, url_text_handler, fixstage_command
-from handlers.pdf_handler import json_document_handler, template_command, pdf_document_handler, excel_document_handler
+from handlers.pdf_handler import json_document_handler, template_command, pdf_document_handler, excel_document_handler, html_document_handler
 from utils import send_clean_message
 
 logging.basicConfig(
@@ -330,6 +330,10 @@ def main():
     app.add_handler(MessageHandler(
         filters.Document.MimeType("application/json") | filters.Document.FileExtension("json"),
         json_document_handler
+    ))
+    app.add_handler(MessageHandler(
+        filters.Document.FileExtension("html") | filters.Document.FileExtension("htm") | filters.Document.MimeType("text/html"),
+        html_document_handler
     ))
     app.add_handler(MessageHandler(
         filters.Document.PDF | filters.Document.FileExtension("pdf"),
