@@ -31,22 +31,25 @@ def build_create_upload_menu() -> tuple[str, InlineKeyboardMarkup]:
     text = (
         "➕ <b>إنشاء ورفع كويز / مادة تدريبية</b> 🧠\n\n"
         "اختر الطريقة التي تفضلها لإضافة كويز أو مادة للمراجعة في التكرار المتباعد:\n\n"
-        "🎯 <b>1- تحويل كويزات تيليجرام (الأسهل والأدق 100%):</b>\n"
-        "حوّل أي أسئلة كويز من أي قناة مباشرة للبوت وسيحفظها فوراً بأجوبتها الرسمية والشرح دون أي أخطاء أو تدخل للذكاء الاصطناعي!\n\n"
-        "✍️ <b>2- إنشاء كويز يدوياً:</b> كتابة الأسئلة والخيارات مباشرة ✍️\n"
-        "📋 <b>3- استيراد ملف:</b> رفع ملف (HTML / JSON / Excel) 📋\n"
-        "🔗 <b>4- إضافة رابط اختبار:</b> إدراج رابط Google Forms أو منصة أخرى 🔗\n"
-        "📁 <b>5- إدراج صورة / مذكرة:</b> تكرار ملخصات وقوانين 📁\n"
+        "🎲 <b>1- كويزات @QuizBot (الأسرع بنقرة واحدة):</b>\n"
+        "حوّل بطاقة أي كويز من @QuizBot أو أرسل رابطه وسيتعرف عليه البوت فوراً ويجدوله في التكرار المتباعد!\n\n"
+        "🎯 <b>2- تحويل أسئلة تيليجرام (دقة 100%):</b>\n"
+        "حوّل أي أسئلة كويز من أي قناة وسيحفظها البوت بأجوبتها الرسمية وشروحاتها للحل الداخلي!\n\n"
+        "✍️ <b>3- إنشاء كويز يدوياً:</b> كتابة الأسئلة والخيارات مباشرة ✍️\n"
+        "📊 <b>4- استيراد ملف (Excel / CSV):</b> عبر القالب المعتمد 📊\n"
+        "🔗 <b>5- إضافة كويز كرابط:</b> إدراج أي رابط كويز خارجي 🔗"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎯 1- تحويل كويزات تيليجرام (شرح الطريقة)", callback_data="explain_poll_forward")],
-        [InlineKeyboardButton("✍️ 2- إنشاء كويز يدوياً", callback_data="create_manual_quiz")],
-        [InlineKeyboardButton("📋 3- استيراد ملف (HTML / JSON / Excel)", callback_data="upload_json")],
-        [InlineKeyboardButton("🔗 4- إضافة رابط اختبار (Forms)", callback_data="upload_url")],
-        [InlineKeyboardButton("📁 5- إدراج صورة / مذكرة للتكرار", callback_data="upload_media_note")],
+        [InlineKeyboardButton("🎲 1- كويزات @QuizBot (شرح الطريقة)", callback_data="explain_quizbot")],
+        [InlineKeyboardButton("🎯 2- تحويل أسئلة تيليجرام (شرح الطريقة)", callback_data="explain_poll_forward")],
+        [InlineKeyboardButton("✍️ 3- إنشاء كويز يدوياً", callback_data="create_manual_quiz")],
+        [InlineKeyboardButton("📊 4- رفع ملف Excel / CSV", callback_data="upload_excel")],
+        [InlineKeyboardButton("🔗 5- إضافة كويز كرابط", callback_data="upload_url")],
+        [InlineKeyboardButton("📁 إدارة المجلدات", callback_data="admin_cat_0")],
         [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")],
     ])
     return text, kb
+
 
 
 # ─── 1. Manual Quiz Creation via Native Telegram Poll ─────────────────────────
@@ -97,7 +100,27 @@ async def handle_manual_quiz_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     data = query.data
 
-    if data == "explain_poll_forward":
+    if data == "explain_quizbot":
+        text = (
+            "🎲 <b>طريقة إضافة كويزات @QuizBot بنقرة واحدة</b> ⚡\n\n"
+            "يمكنك إضافة أي كويز من بوت تيليجرام الشهير @QuizBot في ثانية واحدة وبدون أي تعقيد:\n\n"
+            "1️⃣ <b>افتح أي قناة أو محادثة</b> فيها كويز من @QuizBot (الرسالة التي تحتوي على زر <i>Start this quiz</i>).\n"
+            "2️⃣ <b>اضغط تحويل (Forward)</b> للرسالة وأرسلها مباشرة لهذا البوت.\n"
+            "3️⃣ <i>أو انسخ رابط الكويز</i> (مثال: <code>https://t.me/QuizBot?start=...</code>) والصقه هنا.\n\n"
+            "🎉 <b>سيتعرف البوت فوراً على:</b>\n"
+            "• اسم الكويز\n"
+            "• عدد الأسئلة والوقت\n"
+            "• ويجدوله تلقائياً في التكرار المتباعد لتصلك مراجعته غداً ثم بعد 3، 7، 14، 30 يوماً!\n\n"
+            "👇 <b>جرب الآن:</b> حوّل أي كويز من @QuizBot إلى هنا مباشرة!"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع لقائمة الإضافة", callback_data="create_upload_menu")],
+            [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
+        ])
+        await safe_edit(query, text, kb)
+        return
+
+    elif data == "explain_poll_forward":
         text = (
             "🎯 <b>طريقة تحويل كويزات تيليجرام بدقة 100% وبدون AI</b>\n\n"
             "هذه أسرع طريقة لمذاكرة القدرات بدون أي تعقيد وبدون أي إضافات:\n\n"
@@ -274,11 +297,20 @@ async def handle_incoming_poll(update: Update, context: ContextTypes.DEFAULT_TYP
         db.track_chat_message(chat_id, update.message.message_id)
         asyncio.create_task(update.message.delete())
 
-    # Detect channel title if forwarded
+    # Detect channel or bot title if forwarded
     channel_title = None
     fwd_chat = getattr(update.message, "forward_from_chat", None)
+    fwd_user = getattr(update.message, "forward_from", None)
+    via_bot = getattr(update.message, "via_bot", None)
+
     if fwd_chat and hasattr(fwd_chat, "title") and fwd_chat.title:
         channel_title = fwd_chat.title
+    elif fwd_user and getattr(fwd_user, "username", "").lower() == "quizbot":
+        channel_title = "QuizBot"
+    elif fwd_user and getattr(fwd_user, "first_name", None):
+        channel_title = fwd_user.first_name
+    elif via_bot and getattr(via_bot, "username", "").lower() == "quizbot":
+        channel_title = "QuizBot"
     elif getattr(update.message, "forward_sender_name", None):
         channel_title = update.message.forward_sender_name
 

@@ -76,8 +76,16 @@ def _build_due_reviews(user_id, category_filter=None, page=1):
             name = name[:25] + "..."
         lbl = stage_label(r.get("stage", 0))
         is_topic = (r.get("item_type") == "topic")
-        icon = "📖" if is_topic else "📝"
-        callback = f"view_topic_review_{r['quiz_id']}_{r['id']}" if is_topic else f"start_review_{r['quiz_id']}_{r['id']}"
+        is_quizbot = (r.get("item_type") == "quiz_bot" or ("t.me/QuizBot" in str(r.get("url") or "")))
+        if is_topic:
+            icon = "📖"
+            callback = f"view_topic_review_{r['quiz_id']}_{r['id']}"
+        elif is_quizbot:
+            icon = "🎲"
+            callback = f"view_quizbot_review_{r['quiz_id']}_{r['id']}"
+        else:
+            icon = "📝"
+            callback = f"start_review_{r['quiz_id']}_{r['id']}"
         kb.append([InlineKeyboardButton(f"{icon} {name} ({lbl})", callback_data=callback)])
 
     nav = []
@@ -152,8 +160,16 @@ def _build_review_schedule(user_id, category_filter=None, page=1):
         lbl = stage_label(r.get("stage", 0))
         timing = "🔴 مستحق" if d <= 0 else "🟡 غداً" if d == 1 else f"⏳ بعد {d} يوم"
         is_topic = (r.get("item_type") == "topic")
-        icon = "📖" if is_topic else "📝"
-        callback = f"view_topic_review_{r['quiz_id']}_{r['id']}" if is_topic else f"quiz_detail_{r['quiz_id']}"
+        is_quizbot = (r.get("item_type") == "quiz_bot" or ("t.me/QuizBot" in str(r.get("url") or "")))
+        if is_topic:
+            icon = "📖"
+            callback = f"view_topic_review_{r['quiz_id']}_{r['id']}"
+        elif is_quizbot:
+            icon = "🎲"
+            callback = f"view_quizbot_review_{r['quiz_id']}_{r['id']}"
+        else:
+            icon = "📝"
+            callback = f"quiz_detail_{r['quiz_id']}"
         kb.append([InlineKeyboardButton(f"{timing} | {icon} {name} ({lbl})", callback_data=callback)])
 
     nav = []
@@ -198,6 +214,12 @@ async def handle_review_callback(update: Update, context: ContextTypes.DEFAULT_T
         parts = data.split("_")
         quiz_id = int(parts[2])
         review_id = int(parts[3])
+        quiz = db.get_quiz(quiz_id)
+        if quiz and (quiz.get("item_type") == "quiz_bot" or (quiz.get("url") and not db.get_questions(quiz_id))):
+            from handlers.quizbot_handler import handle_quizbot_callback
+            query.data = f"view_quizbot_review_{quiz_id}_{review_id}"
+            await handle_quizbot_callback(update, context)
+            return True
         from handlers.quiz_handler import start_quiz_session
         await start_quiz_session(update, context, quiz_id, session_type="review", review_id=review_id)
         return True

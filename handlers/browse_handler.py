@@ -81,25 +81,31 @@ def _build_quiz_detail(quiz_id, user_id, back_cb="browse_root"):
     else:
         sched_line = "📅 غير مضاف لجدول مراجعاتك"
 
+    quiz_url = quiz.get("url")
+    is_quizbot = (quiz.get("item_type") == "quiz_bot" or ("t.me/QuizBot" in str(quiz_url or "")))
+    details_line = f"📝 <b>المحتوى:</b> {html.escape(quiz['notes'])}\n" if quiz.get("notes") else f"📝 عدد الأسئلة: <b>{q_count}</b>\n"
+
     text = (f"📋 <b>{html.escape(quiz['name'])}</b>\n\n"
-            f"📝 عدد الأسئلة: <b>{q_count}</b>\n"
+            f"{details_line}"
             f"{sched_line}\n\nاختر ما تريد:")
 
     kb = []
+    if quiz_url:
+        btn_label = "🚀 ابدأ الكويز في @QuizBot ↗" if is_quizbot else "🔗 فتح رابط الكويز ↗"
+        kb.append([InlineKeyboardButton(btn_label, url=quiz_url)])
+
     if q_count > 0:
         kb.append([
-            InlineKeyboardButton("▶️ ابدأ الكويز", callback_data=f"start_quiz_{quiz_id}"),
+            InlineKeyboardButton("▶️ ابدأ الكويز داخل البوت", callback_data=f"start_quiz_{quiz_id}"),
             InlineKeyboardButton("👁️ معاينة الأسئلة", callback_data=f"preview_quiz_{quiz_id}_0"),
         ])
 
     if user_review:
         if days_until(user_review.get("next_review_date")) <= 0:
-            kb.append([InlineKeyboardButton("🔁 ابدأ المراجعة المجدولة",
-                                            callback_data=f"start_review_{quiz_id}_{user_review['id']}")])
+            rev_cb = f"view_quizbot_review_{quiz_id}_{user_review['id']}" if (is_quizbot or (quiz_url and q_count == 0)) else f"start_review_{quiz_id}_{user_review['id']}"
+            kb.append([InlineKeyboardButton("🔁 ابدأ المراجعة المجدولة", callback_data=rev_cb)])
     else:
-        if q_count > 0:
-            kb.append([InlineKeyboardButton("➕ أضف لجدول مراجعاتي",
-                                            callback_data=f"add_to_schedule_{quiz_id}")])
+        kb.append([InlineKeyboardButton("➕ أضف لجدول مراجعاتي", callback_data=f"add_to_schedule_{quiz_id}")])
 
     quiz_weak = [w for w in db.get_due_weak_questions(user_id=user_id) if w["quiz_id"] == quiz_id]
     if quiz_weak:

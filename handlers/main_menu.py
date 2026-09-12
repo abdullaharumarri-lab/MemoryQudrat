@@ -375,6 +375,11 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_study_text_input(update, context):
         return
 
+    # ── Handle QuizBot Forwarded / Shared Quiz & Direct Links ──
+    from handlers.quizbot_handler import handle_quizbot_input
+    if await handle_quizbot_input(update, context):
+        return
+
     if is_adm and context.user_data.get("waiting_for_json_update"):
         quiz_update_id = context.user_data.pop("waiting_for_json_update")
         try:
@@ -576,6 +581,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_study_tracker_callback(update, context):
         return
 
+    # ── 0.1 QuizBot Callbacks ──
+    from handlers.quizbot_handler import handle_quizbot_callback
+    if await handle_quizbot_callback(update, context):
+        return
+
     # ── 1. Settings & General Menus ──
     if data == "settings_menu":
         text, kb = _build_settings(user_id)
@@ -728,7 +738,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── 2. Creation Handler Callbacks ──
-    if data in ("create_manual_quiz", "manual_cancel", "manual_save_quiz", "manual_dashboard", "explain_poll_forward", "manual_save_and_start", "manual_rename_quiz") or data.startswith("manual_set_correct_"):
+    if data in ("create_manual_quiz", "manual_cancel", "manual_save_quiz", "manual_dashboard", "explain_poll_forward", "explain_quizbot", "manual_save_and_start", "manual_rename_quiz") or data.startswith("manual_set_correct_"):
         from handlers.creation_handler import handle_manual_quiz_callback
         await handle_manual_quiz_callback(update, context)
         return

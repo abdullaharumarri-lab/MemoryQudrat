@@ -773,13 +773,13 @@ def move_quiz_to_category(quiz_id: int, new_category_id: int):
 
 # ─── Quizzes ──────────────────────────────────────────────────────────────────
 
-def save_quiz_without_review(name: str, questions: list, category_id: int = None, owner_id: int = None, is_public: int = 1, url: str = None) -> int:
+def save_quiz_without_review(name: str, questions: list, category_id: int = None, owner_id: int = None, is_public: int = 1, url: str = None, item_type: str = "quiz", notes: str = None) -> int:
     """Save quiz and questions only — no review scheduled yet."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO quizzes (name, url, category_id, owner_id, is_public) VALUES (?, ?, ?, ?, ?)",
-        (name, url, category_id, owner_id, is_public),
+        "INSERT INTO quizzes (name, url, category_id, owner_id, is_public, item_type, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (name, url, category_id, owner_id, is_public, item_type, notes),
     )
     quiz_id = cursor.lastrowid
     for q in questions:
