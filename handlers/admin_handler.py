@@ -6,7 +6,7 @@ import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from telegram.error import Forbidden, BadRequest, TelegramError
+from telegram.error import Forbidden
 
 import database as db
 from config import is_admin
@@ -66,7 +66,8 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.answer("❌ غير مصرح.", show_alert=True)
         return
 
-    text, kb = build_admin_dashboard()
+    from handlers.admin_panel import build_admin_dashboard
+    text, kb = build_admin_dashboard(user.id)
     chat_id = update.effective_chat.id
     if update.message:
         await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)

@@ -505,6 +505,21 @@ async def send_next_question(update, context, session):
     msg_ids.append(poll_msg.message_id)
     db.track_chat_message(chat_id, poll_msg.message_id)
 
+    # Companion control message for question reporting & exit
+    try:
+        ctrl_text = f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>"
+        ctrl_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🚩 إبلاغ عن خطأ في هذا السؤال", callback_data=f"report_q_{q_id}"),
+                InlineKeyboardButton("⏹️ إنهاء الكويز", callback_data="exit_quiz_session")
+            ]
+        ])
+        ctrl_msg = await context.bot.send_message(chat_id=chat_id, text=ctrl_text, reply_markup=ctrl_kb, parse_mode="HTML")
+        msg_ids.append(ctrl_msg.message_id)
+        db.track_chat_message(chat_id, ctrl_msg.message_id)
+    except Exception as ce:
+        logger.debug("Could not send companion control message: %s", ce)
+
     db.update_session(
         session["current_index"], 
         session["correct_count"], 
@@ -869,3 +884,97 @@ async def cleanup_quiz_messages(chat_id, context):
         return
     from utils import delete_messages_bulk
     await delete_messages_bulk(context, chat_id, msg_ids)
+
+
+async def handle_question_report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Handles reporting question errors and companion controls."""
+    query = update.callback_query
+    if not query:
+        return False
+    data = query.data
+    user = update.effective_user
+    user_id = user.id if user else None
+
+    if data == "exit_quiz_session":
+        session = db.get_session(user_id=user_id)
+        if session:
+            await finish_session(update, context, session)
+        else:
+            await query.answer("انتهت الجلسة.", show_alert=True)
+        return True
+
+    if data.startswith("report_q_") and not data.startswith("report_q_submit_") and not data.startswith("report_q_cancel_"):
+        q_id = int(data.split("_")[2])
+        rep_text = (
+            "🚩 <b>إبلاغ عن خطأ في هذا السؤال</b> 🛠\n\n"
+            "شكراً لحرصك على دقة وجودة الأسئلة 🌟\n"
+            "اختر نوع المشكلة لإشعار إدارة المنصة فوراً:"
+        )
+        rep_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ الإجابة الصحيحة المحددة خاطئة", callback_data=f"report_q_submit_{q_id}_wrong_answer")],
+            [InlineKeyboardButton("✏️ خطأ إملائي أو صياغة غير واضحة", callback_data=f"report_q_submit_{q_id}_typo")],
+            [InlineKeyboardButton("❓ السؤال ناقص أو الخيارات غير مكتملة", callback_data=f"report_q_submit_{q_id}_missing_options")],
+            [InlineKeyboardButton("🔙 عودة واستكمال الكويز", callback_data=f"report_q_cancel_{q_id}")],
+        ])
+        await safe_edit_html(query, rep_text, rep_kb, context=context)
+        return True
+
+    if data.startswith("report_q_submit_"):
+        parts = data.split("_")
+        q_id = int(parts[3])
+        reason_code = "_".join(parts[4:])
+        reasons_map = {
+            "wrong_answer": "الإجابة الصحيحة المحددة خاطئة",
+            "typo": "خطأ إملائي أو صياغة غير واضحة",
+            "missing_options": "السؤال ناقص أو الخيارات غير مكتملة",
+        }
+        reason_label = reasons_map.get(reason_code, "ملاحظة عامة")
+
+        session = db.get_session(user_id=user_id)
+        quiz_id = session.get("quiz_id", 0) if session else 0
+
+        rep_id = db.add_question_report(quiz_id=quiz_id, question_id=q_id, user_id=user_id, reason=reason_label)
+
+        # Notify Admin
+        question = db.get_question_by_id(q_id)
+        quiz = db.get_quiz(quiz_id) if quiz_id else None
+        q_title = quiz["name"] if quiz else "كويز"
+
+        admin_alert = (
+            f"🚨 <b>تنبيه فوري: بلاغ جديد عن سؤال من طالب!</b>\n\n"
+            f"📚 <b>الكويز:</b> {html.escape(q_title)}\n"
+            f"❓ <b>السؤال #{q_id}:</b> {html.escape(question.get('question_text', '')[:120] if question else '')}\n"
+            f"⚠️ <b>المشكلة المبلغ عنها:</b> <b>{reason_label}</b>\n"
+            f"👤 <b>الطالب:</b> @{html.escape(user.username or 'طالب')} (ID: <code>{user_id}</code>)"
+        )
+        admin_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("👁️ فحص البلاغ في لوحة المشرف", callback_data=f"admin_rep_detail_{rep_id}")]
+        ])
+        from config import ADMIN_IDS
+        for aid in ADMIN_IDS:
+            try:
+                await context.bot.send_message(chat_id=aid, text=admin_alert, reply_markup=admin_kb, parse_mode="HTML")
+            except Exception:
+                pass
+
+        ack_text = "✅ <b>شكراً لك يا بطل!</b> 🌟\nتم إرسال بلاغك للمشرف لمراجعة وتصحيح السؤال فوراً.\nيمكنك استكمال الكويز الآن 👇"
+        await safe_edit_html(query, ack_text, None, context=context)
+        return True
+
+    if data.startswith("report_q_cancel_"):
+        session = db.get_session(user_id=user_id)
+        if session:
+            ctrl_text = f"📝 <b>السؤال {session['current_index'] + 1} من {len(session['question_ids'])}</b>"
+            ctrl_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🚩 إبلاغ عن خطأ في هذا السؤال", callback_data=f"report_q_{data.split('_')[3]}"),
+                    InlineKeyboardButton("⏹️ إنهاء", callback_data="exit_quiz_session")
+                ]
+            ])
+            await safe_edit_html(query, ctrl_text, ctrl_kb, context=context)
+        else:
+            await query.answer("انتهت الجلسة.", show_alert=True)
+        return True
+
+    return False
+

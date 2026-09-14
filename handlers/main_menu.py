@@ -3,11 +3,8 @@ handlers/main_menu.py — ذاكرة القدرات (Router المعماري ا�
 مبسط | معياري | عالي الأداء
 """
 import html
-import json
 import logging
 import re
-import asyncio
-import httpx
 from datetime import date, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -41,11 +38,6 @@ from handlers.browse_handler import (
     _build_quiz_preview,
     handle_browse_callback,
 )
-from handlers.fixstage_handler import (
-    fixstage_command,
-    _build_admin_cat_panel,
-    handle_fixstage_callback,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +47,12 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════
 
 def main_menu_keyboard(user_id: int = None) -> InlineKeyboardMarkup:
-    kb = [
+    kb = []
+    if user_id and is_admin(user_id):
+        kb.append([InlineKeyboardButton("👑 لوحة تحكم المشرف (إضافة وإدارة الكويزات)", callback_data="admin_panel")])
+    kb.extend([
+        [InlineKeyboardButton("📚 تصفح الكويزات (كمي / لفظي)", callback_data="browse_root")],
         [InlineKeyboardButton("📖 سجلت مذاكرة جديدة (تكرار متباعد)", callback_data="log_study_new")],
-        [InlineKeyboardButton("📚 الكويزات", callback_data="browse_root")],
         [
             InlineKeyboardButton("🔔 مراجعات اليوم", callback_data="due_reviews"),
             InlineKeyboardButton("📅 جدول المراجعة", callback_data="review_schedule"),
@@ -67,11 +62,9 @@ def main_menu_keyboard(user_id: int = None) -> InlineKeyboardMarkup:
             InlineKeyboardButton("📊 إحصائياتي", callback_data="my_stats"),
         ],
         [
-            InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings_menu"),
+            InlineKeyboardButton("⚙️ إعدادات التنبيه اليومي", callback_data="settings_menu"),
         ],
-    ]
-    if user_id and is_admin(user_id):
-        kb.append([InlineKeyboardButton("➕ إنشاء / رفع كويز", callback_data="create_upload_menu")])
+    ])
     return InlineKeyboardMarkup(kb)
 
 
@@ -263,98 +256,7 @@ async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=kb)
 
 
-# ═══════════════════════════════════════════════════════════════
-#  الفكرة الملكية 👑: سحب كود صفحة الاختبار مباشرة من جوجل
-# ═══════════════════════════════════════════════════════════════
 
-async def fetch_and_process_google_form_url(
-    form_url: str,
-    user,
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-    update: Update
-):
-    """
-    Directly fetches a Google Forms URL (viewscore or viewform) from Google servers,
-    extracts all questions, choices, passages, and verified answers via html_form_parser
-    (100% deterministic, 0% AI, zero extension, zero bookmarklet), and saves the quiz.
-    """
-    await send_clean_message(
-        context,
-        chat_id,
-        "⏳ <b>جاري سحب واستخراج كود الاختبار مباشرة من جوجل...</b> ⚡\n"
-        "<i>(تحليل محلي قطعي 100% بدون أي ذكاء اصطناعي وبدون أي إضافات)</i>",
-        update=update
-    )
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
-    }
-
-    html_content = None
-    import urllib.request
-    import ssl
-
-    try:
-        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=25.0) as client:
-            resp = await client.get(form_url)
-            if resp.status_code == 200:
-                html_content = resp.text
-            else:
-                raise ValueError(f"رمز استجابة سيرفر جوجل: {resp.status_code}")
-    except Exception as fetch_err:
-        logger.warning("HTTPX direct fetch error: %s, trying urllib fallback...", fetch_err)
-        try:
-            def _fetch_sync():
-                req = urllib.request.Request(form_url, headers=headers)
-                ctx = ssl.create_default_context()
-                with urllib.request.urlopen(req, timeout=25, context=ctx) as r:
-                    return r.read().decode("utf-8", errors="replace")
-            html_content = await asyncio.to_thread(_fetch_sync)
-        except Exception as fallback_err:
-            logger.error("Direct fetch failed completely: %s", fallback_err)
-            err_text = (
-                f"❌ <b>تعذر جلب صفحة النموذج مباشرة من سيرفر جوجل:</b>\n"
-                f"<code>{html.escape(str(fallback_err))}</code>\n\n"
-                "💡 <i>تأكد أن الرابط يعمل ومتاح للعامة بدون تسجيل دخول مقفل.</i>"
-            )
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
-            await send_clean_message(context, chat_id, err_text, reply_markup=kb)
-            return
-
-    if not html_content:
-        await send_clean_message(
-            context,
-            chat_id,
-            "❌ صفحة النموذج فارغة أو تعذر قراءتها.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
-        )
-        return
-
-    try:
-        from html_form_parser import parse_google_form_html
-        from handlers.pdf_handler import process_json_quiz_data
-        quiz_data = parse_google_form_html(html_content)
-        quiz_data["url"] = form_url
-
-        await process_json_quiz_data(
-            data=quiz_data,
-            user=user,
-            context=context,
-            chat_id=chat_id,
-            update=update
-        )
-    except Exception as parse_err:
-        logger.exception("Error parsing Google Forms HTML from URL: %s", parse_err)
-        err_text = (
-            f"❌ <b>حدث خطأ أثناء قراءة بيانات النموذج:</b>\n"
-            f"<code>{html.escape(str(parse_err))}</code>\n\n"
-            "💡 <i>إذا كان النموذج يتطلب تسجيل دخول بحساب مؤسسي أو مقفل، يمكنك حفظ الصفحة في المتصفح (Ctrl+S) وإرسال ملف .html وسيعمل فوراً بدقة 100%.</i>"
-        )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
-        await send_clean_message(context, chat_id, err_text, reply_markup=kb)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -375,84 +277,13 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_study_text_input(update, context):
         return
 
-    # ── Handle QuizBot Forwarded / Shared Quiz & Direct Links ──
-    from handlers.quizbot_handler import handle_quizbot_input
-    if await handle_quizbot_input(update, context):
-        return
-
-    if is_adm and context.user_data.get("waiting_for_json_update"):
-        quiz_update_id = context.user_data.pop("waiting_for_json_update")
-        try:
-            data = json.loads(msg)
-            from handlers.pdf_handler import _validate_json_upload, process_json_quiz_data
-            _validate_json_upload(None, data)
-            await process_json_quiz_data(data, user, context, chat_id, update, quiz_update_id=quiz_update_id)
-        except Exception as e:
-            await send_clean_message(context, chat_id, f"❌ خطأ: {html.escape(str(e))}", update=update,
-                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
-        return
-
-    if is_adm and context.user_data.get("waiting_for_json_new"):
-        context.user_data.pop("waiting_for_json_new", None)
-        try:
-            data = json.loads(msg)
-            from handlers.pdf_handler import _validate_json_upload, process_json_quiz_data
-            _validate_json_upload(None, data)
-            await process_json_quiz_data(data, user, context, chat_id, update)
-        except Exception as e:
-            await send_clean_message(context, chat_id, f"❌ خطأ: {html.escape(str(e))}", update=update,
-                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
-        return
-
-    # ── Handle Raw HTML Page Code pasted in chat (100% Offline, Zero AI) ──
-    if is_adm and ("FB_PUBLIC_LOAD_DATA_" in msg or ("<html" in msg and "role=\"listitem\"" in msg)):
-        try:
-            from html_form_parser import parse_google_form_html
-            from handlers.pdf_handler import process_json_quiz_data
-            quiz_data = parse_google_form_html(msg)
-            await process_json_quiz_data(quiz_data, user, context, chat_id, update)
-            return
-        except Exception as e:
-            await send_clean_message(context, chat_id, f"❌ خطأ في استخراج كود الصفحة: {html.escape(str(e))}", update=update)
+    # ── Handle Admin Interactive Creation Text ──
+    if is_adm:
+        from handlers.admin_panel import handle_admin_creation_text
+        if await handle_admin_creation_text(update, context):
             return
 
-    # ── Google Forms Direct URL Fetch (The Royal Method 👑) ──
-    if "docs.google.com/forms/" in msg or context.user_data.get("waiting_for_url_quiz"):
-        context.user_data.pop("waiting_for_url_quiz", None)
-        import re
-        m = re.search(r'https?://docs\.google\.com/forms/[^\s]+', msg)
-        form_url = m.group(0) if m else msg.strip()
 
-        if "docs.google.com/forms/" in form_url:
-            await fetch_and_process_google_form_url(form_url, user, context, chat_id, update)
-            return
-        elif msg.startswith("http"):
-            quiz_id = db.save_quiz_without_review("كويز رابط", [], owner_id=user_id, is_public=1 if is_adm else 0, url=msg)
-            db.schedule_first_review(quiz_id, user_id=user_id, start_today=False)
-            categories = db.get_categories(is_public=1)
-            kb = []
-            if categories:
-                cat_row = []
-                for c in categories:
-                    icon = c.get("icon", "📁")
-                    cat_row.append(InlineKeyboardButton(f"{icon} {c['name']}", callback_data=f"set_quiz_cat_{quiz_id}_{c['id']}"))
-                    if len(cat_row) == 2:
-                        kb.append(cat_row)
-                        cat_row = []
-                if cat_row:
-                    kb.append(cat_row)
-            kb.append([InlineKeyboardButton("📂 البقاء في الرئيسية (بدون مجلد)", callback_data=f"quiz_detail_{quiz_id}")])
-            kb.append([InlineKeyboardButton("📋 تفاصيل الكويز", callback_data=f"quiz_detail_{quiz_id}"),
-                       InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")])
-            await send_clean_message(context, chat_id,
-                                     f"✅ <b>تم حفظ رابط الكويز بنجاح!</b>\n🔗 <code>{html.escape(msg)}</code>\n\n"
-                                     f"📁 <b>اختر المجلد الذي ترغب بإضافة الكويز إليه:</b>",
-                                     update=update, reply_markup=InlineKeyboardMarkup(kb))
-            return
-        else:
-            await send_clean_message(context, chat_id, "❌ الرابط غير صالح. يرجى إرسال رابط صحيح يبدأ بـ http أو https.",
-                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="create_upload_menu")]]))
-            return
 
     if is_adm and context.user_data.get("waiting_for_quiz_rename"):
         quiz_id = context.user_data.pop("waiting_for_quiz_rename")
@@ -542,10 +373,6 @@ async def url_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                  update=update, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عرض وتدقيق السؤال", callback_data=f"fixstage_qedit_{quiz_id}_{q_id}")]]))
         return
 
-    from handlers.creation_handler import handle_creation_text_input
-    if await handle_creation_text_input(update, context):
-        return
-
     from handlers.admin_handler import handle_broadcast_input
     await handle_broadcast_input(update, context)
 
@@ -581,10 +408,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_study_tracker_callback(update, context):
         return
 
-    # ── 0.1 QuizBot Callbacks ──
-    from handlers.quizbot_handler import handle_quizbot_callback
-    if await handle_quizbot_callback(update, context):
-        return
+    # ── 0.1 Admin Panel Callbacks ──
+    if data == "admin_panel" or data.startswith("admin_"):
+        from handlers.admin_panel import handle_admin_callback
+        if await handle_admin_callback(update, context):
+            return
+
+    # ── 0.2 Question Error Reporting Callbacks ──
+    if data.startswith("report_q_") or data == "exit_quiz_session":
+        from handlers.quiz_handler import handle_question_report_callback
+        if await handle_question_report_callback(update, context):
+            return
 
     # ── 1. Settings & General Menus ──
     if data == "settings_menu":
@@ -661,38 +495,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "create_upload_menu":
-        if not is_adm:
-            await query.answer("❌ للمشرف فقط.", show_alert=True)
-            return
-        from handlers.creation_handler import build_create_upload_menu
-        text, kb = build_create_upload_menu()
-        await safe_edit(query, text, kb)
-        return
-
-    if data == "upload_excel":
-        if not is_adm:
-            await query.answer("❌", show_alert=True)
-            return
-        await safe_edit(query,
-                        "📊 <b>رفع كويز عبر ملف Excel</b>\n\nأرسل الآن ملف <code>.xlsx</code> أو <code>.csv</code> مباشرة في المحادثة:",
-                        InlineKeyboardMarkup([
-                            [InlineKeyboardButton("📥 تحميل قالب Excel", callback_data="download_excel_template")],
-                            [InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]
-                        ]))
-        return
-
-    if data == "download_excel_template":
-        from handlers.pdf_handler import template_command
-        await template_command(update, context)
-        return
-
-    if data == "upload_json":
-        if not is_adm:
-            await query.answer("❌", show_alert=True)
-            return
-        context.user_data["waiting_for_json_new"] = True
-        await safe_edit(query, "📋 أرسل ملف <code>.html</code> لصفحة الاختبار أو ملف <code>.json</code> أو الصق الكود مباشرة:",
-                        InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]]))
+        if is_adm:
+            from handlers.admin_panel import build_admin_dashboard
+            text, kb = build_admin_dashboard(user_id)
+            await safe_edit(query, text, kb)
+        else:
+            await query.answer("❌ هذه الميزة متاحة للمشرف فقط.", show_alert=True)
         return
 
 
@@ -711,36 +519,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                                InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]]))
         return
 
-    if data == "upload_url":
-        context.user_data["waiting_for_url_quiz"] = True
-        text = (
-            "🔗 <b>الفكرة الملكية: إرسال رابط Forms مباشرة 👑</b>\n\n"
-            "أرسل الآن رابط الاختبار أو رابط النتيجة (View Score):\n"
-            "<code>https://docs.google.com/forms/...</code>\n\n"
-            "⚡ <b>سيتولى السيرفر سحب الأسئلة والخيارات والإجابات الصحيحة وأخطائك فوراً بـ 0% ذكاء اصطناعي وبدقة 100%!</b>"
-        )
-        await safe_edit(query, text, InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]]))
-        return
-
-    if data == "upload_media_note":
-        if not is_adm:
-            await query.answer("❌ للمشرف فقط.", show_alert=True)
-            return
-        context.user_data["waiting_for_media_note"] = True
-        await safe_edit(query,
-                        "📁 <b>إدراج مادة للمراجعة في التكرار المتباعد</b> 🧠\n\n"
-                        "أرسل الآن:\n"
-                        "• 📸 <b>صورة</b> (مثل ملخص أو قوانين)\n"
-                        "• 📄 <b>ملف</b> (PDF أو مستند)\n"
-                        "• ✍️ أو <b>نص ملاحظة مباشرة</b>\n\n"
-                        "سيتم إدراجها وجدولتها تلقائياً لتصلك مراجعاتها الدورية 💪.",
-                        InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="create_upload_menu")]]))
-        return
-
-    # ── 2. Creation Handler Callbacks ──
-    if data in ("create_manual_quiz", "manual_cancel", "manual_save_quiz", "manual_dashboard", "explain_poll_forward", "explain_quizbot", "manual_save_and_start", "manual_rename_quiz") or data.startswith("manual_set_correct_"):
-        from handlers.creation_handler import handle_manual_quiz_callback
-        await handle_manual_quiz_callback(update, context)
+    if data == "create_upload_menu":
+        if is_adm:
+            from handlers.admin_panel import build_admin_dashboard
+            text, kb = build_admin_dashboard(user_id)
+            await safe_edit(query, text, kb)
+        else:
+            await query.answer("❌ هذه الميزة متاحة للمشرف فقط.", show_alert=True)
         return
 
     # ── 3. Review Handler Callbacks ──
@@ -761,15 +546,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── 7. Admin Handler Callbacks ──
     if data.startswith("admin_"):
-        # Could be an admin category callback handled by fixstage, check fixstage first
-        if await handle_fixstage_callback(update, context, data, user_id, is_adm):
+        from handlers.admin_panel import handle_admin_callback
+        if await handle_admin_callback(update, context):
             return
         from handlers.admin_handler import admin_button_handler
         await admin_button_handler(update, context)
-        return
-
-    # ── 8. Fixstage & Question Audit Callbacks ──
-    if await handle_fixstage_callback(update, context, data, user_id, is_adm):
         return
 
     logger.warning("Unhandled callback: %s from user %s", data, user_id)

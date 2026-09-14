@@ -15,8 +15,7 @@ from telegram.ext import (
 
 import database as db
 from config import TELEGRAM_BOT_TOKEN
-from handlers.main_menu import main_menu_handler, button_handler, url_text_handler, fixstage_command
-from handlers.pdf_handler import json_document_handler, template_command, pdf_document_handler, excel_document_handler, html_document_handler
+from handlers.main_menu import main_menu_handler, button_handler, url_text_handler
 from utils import send_clean_message
 
 logging.basicConfig(
@@ -231,8 +230,8 @@ async def post_init(application):
 
         admin_commands = public_commands + [
             BotCommand("admin", "👑 لوحة تحكم المشرف"),
-            BotCommand("fixstage", "🛠 ضبط مراحل الكويزات"),
             BotCommand("broadcast", "📢 إرسال إذاعة جماعية"),
+            BotCommand("update", "🔄 تحديث البوت من GitHub"),
         ]
 
         # 1. Default commands for all regular users (WITHOUT /admin)
@@ -315,43 +314,13 @@ def main():
     app.add_handler(CommandHandler("search", find_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("template", template_command))
-    app.add_handler(CommandHandler("fixstage", fixstage_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("broadcast", admin_broadcast_command))
     app.add_handler(CommandHandler("update", admin_update_command))
 
-    app.add_handler(MessageHandler(
-        filters.Document.FileExtension("xlsx") | filters.Document.FileExtension("xls") | filters.Document.FileExtension("csv") |
-        filters.Document.MimeType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") |
-        filters.Document.MimeType("application/vnd.ms-excel") | filters.Document.MimeType("text/csv"),
-        excel_document_handler
-    ))
-    app.add_handler(MessageHandler(
-        filters.Document.MimeType("application/json") | filters.Document.FileExtension("json"),
-        json_document_handler
-    ))
-    app.add_handler(MessageHandler(
-        filters.Document.FileExtension("html") | filters.Document.FileExtension("htm") | filters.Document.MimeType("text/html"),
-        html_document_handler
-    ))
-    app.add_handler(MessageHandler(
-        filters.Document.PDF | filters.Document.FileExtension("pdf"),
-        pdf_document_handler
-    ))
-
-    from handlers.creation_handler import handle_media_upload, handle_incoming_poll
-    app.add_handler(MessageHandler(
-        filters.PHOTO, handle_media_upload
-    ))
-    app.add_handler(MessageHandler(
-        filters.Document.ALL & ~filters.Document.MimeType("application/json") & ~filters.Document.FileExtension("json") & ~filters.Document.PDF & ~filters.Document.FileExtension("pdf"), handle_media_upload
-    ))
-    
-    # ── Native Telegram Poll / Quiz Handler ──────────────────────────────────
-    app.add_handler(MessageHandler(
-        filters.POLL, handle_incoming_poll
-    ))
+    # ── Admin Native Telegram Poll / Quiz Handler ──
+    from handlers.admin_panel import handle_admin_creation_poll
+    app.add_handler(MessageHandler(filters.POLL, handle_admin_creation_poll))
 
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, url_text_handler

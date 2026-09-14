@@ -277,6 +277,24 @@ def init_db():
         )
     """)
 
+    # ── 11. Question Reports (Student Error Reporting) ──
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS question_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quiz_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            details TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE,
+            FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reports_status ON question_reports(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reports_quiz ON question_reports(quiz_id)")
+
     # ── AUTO-MIGRATIONS FOR EXISTING PRODUCTION DATABASES ──
 
     # Quizzes: add owner_id, is_public, url, category_id if missing
@@ -2034,3 +2052,150 @@ def upgrade_url_quiz_to_questions(quiz_id: int, questions: list) -> bool:
                 ),
             )
     return True
+
+
+# ─── Question Reports (Student Error Reporting) ───────────────────────────────
+
+def add_question_report(quiz_id: int, question_id: int, user_id: int, reason: str, details: str = None) -> int:
+    """Records an issue reported by a student on a specific question."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO question_reports (quiz_id, question_id, user_id, reason, details, status)
+               VALUES (?, ?, ?, ?, ?, 'pending')""",
+            (quiz_id, question_id, user_id, reason, details),
+        )
+        return cursor.lastrowid
+
+
+def get_pending_reports(limit: int = 50) -> list[dict]:
+    """Retrieves all pending error reports with question and quiz details."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT r.*, q.name as quiz_name, qu.question_text, qu.options as question_options, 
+                      qu.correct_answer, qu.explanation, u.username, u.full_name
+               FROM question_reports r
+               LEFT JOIN quizzes q ON r.quiz_id = q.id
+               LEFT JOIN questions qu ON r.question_id = qu.id
+               LEFT JOIN users u ON r.user_id = u.user_id
+               WHERE r.status = 'pending'
+               ORDER BY r.created_at DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_report_by_id(report_id: int) -> dict | None:
+    """Fetches a single report by ID."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT r.*, q.name as quiz_name, qu.question_text, qu.options as question_options, 
+                      qu.correct_answer, qu.explanation, u.username, u.full_name
+               FROM question_reports r
+               LEFT JOIN quizzes q ON r.quiz_id = q.id
+               LEFT JOIN questions qu ON r.question_id = qu.id
+               LEFT JOIN users u ON r.user_id = u.user_id
+               WHERE r.id = ?""",
+            (report_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def update_report_status(report_id: int, status: str) -> bool:
+    """Updates status of a question report ('pending', 'resolved', 'dismissed')."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE question_reports SET status = ? WHERE id = ?", (status, report_id))
+        return cursor.rowcount > 0
+
+
+def get_question_by_id(question_id: int) -> dict | None:
+    """Fetches a question by its primary key with parsed options."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM questions WHERE id = ?", (question_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        if isinstance(d.get("options"), str):
+            try:
+                d["options"] = json.loads(d["options"])
+            except Exception:
+                d["options"] = []
+        return d
+
+
+def update_question_content(question_id: int, question_text: str = None, options: list = None, correct_answer: str = None, explanation: str = None) -> bool:
+    """Updates question fields."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        fields = []
+        params = []
+        if question_text is not None:
+            fields.append("question_text = ?")
+            params.append(question_text)
+        if options is not None:
+            fields.append("options = ?")
+            params.append(json.dumps(options, ensure_ascii=False))
+        if correct_answer is not None:
+            fields.append("correct_answer = ?")
+            params.append(correct_answer)
+        if explanation is not None:
+            fields.append("explanation = ?")
+            params.append(explanation)
+        if not fields:
+            return False
+        params.append(question_id)
+        cursor.execute(f"UPDATE questions SET {', '.join(fields)} WHERE id = ?", tuple(params))
+        return cursor.rowcount > 0
+
+
+def delete_question_by_id(question_id: int) -> bool:
+    """Deletes a question from the database."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM questions WHERE id = ?", (question_id,))
+        return cursor.rowcount > 0
+
+
+# ─── Format & Database Clean Wipe ─────────────────────────────────────────────
+
+def format_database_clean(keep_users: bool = True):
+    """
+    Wipes all quizzes, questions, reviews, weak questions, and logs.
+    Re-seeds default standard categories. Preserves users and settings by default.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = OFF;")
+        cursor.execute("DELETE FROM active_session;")
+        cursor.execute("DELETE FROM quiz_sessions_log;")
+        cursor.execute("DELETE FROM weak_questions;")
+        cursor.execute("DELETE FROM quiz_reviews;")
+        cursor.execute("DELETE FROM question_reports;")
+        cursor.execute("DELETE FROM quiz_weak_mastery;")
+        cursor.execute("DELETE FROM questions;")
+        cursor.execute("DELETE FROM quizzes;")
+        cursor.execute("DELETE FROM categories;")
+        if not keep_users:
+            cursor.execute("DELETE FROM users;")
+        cursor.execute("DELETE FROM bot_state WHERE key LIKE 'last_msg_%';")
+        
+        # Reset autoincrement counters
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('quizzes', 'questions', 'categories', 'quiz_reviews', 'weak_questions', 'question_reports', 'quiz_sessions_log');")
+        
+        # Seed standard verified categories
+        cursor.execute("""
+            INSERT INTO categories (name, icon, intervals_json, is_public, sort_order) VALUES
+            ('قدرات كمي', '📐', '[1, 3, 7, 14, 30]', 1, 1),
+            ('قدرات لفظي', '📖', '[1, 3, 7, 14, 30]', 1, 2),
+            ('نماذج حديثة وتجميعات', '🎯', '[1, 3, 7, 14, 30]', 1, 3)
+        """)
+        cursor.execute("PRAGMA foreign_keys = ON;")
+    logger.info("Database cleanly formatted and reseeded with default categories (keep_users=%s)", keep_users)
+
