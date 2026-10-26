@@ -1,129 +1,117 @@
-"""
-handlers/stats_handler.py — إحصائيات الطالب ولوحة الأداء الشخصية
-"""
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
-from config import ADMIN_USER_ID
-from utils import safe_edit, send_clean_message
+from utils import safe_edit
 
 logger = logging.getLogger(__name__)
 
 
-def _build_my_stats(user_id: int):
-    stats = db.get_my_stats(user_id)
-    total_q = stats["total"]
-    correct_q = stats["correct"]
-    acc = stats["accuracy"]
-    sessions = stats["sessions"]
+def build_stats_view() -> tuple[str, InlineKeyboardMarkup]:
+    """Generates the personal analytics dashboard and activity report."""
+    stats = db.get_dashboard_stats()
+    total = stats["total_items"]
+    active = stats["active_count"]
     mastered = stats["mastered_count"]
-    active_rev = stats["active_reviews"]
-    due_rev = stats["due_reviews"]
-    total_weak = stats["total_weak"]
-    due_weak = stats["due_weak"]
-    weekly = stats.get("weekly", [])
-    stages = stats.get("stage_breakdown", {})
+    due = stats["due_count"]
+    by_stage = stats["by_stage"]
+    by_type = stats["by_type"]
+    recent_daily = stats["recent_daily"]
 
-    if total_q == 0:
-        badge = "🌱 بداية موفقة"
-        advice = "لم تبدأ حل الكويزات بعد! اختر كويزاً من بنك الكويزات وابدأ أولى خطواتك 🚀."
-    elif acc >= 90:
-        badge = "🏆 مستوى أسطوري"
-        advice = "أداؤك استثنائي وثابت! حافظ على المراجعات المجدولة لضمان ترسيخ الذاكرة 🌟."
-    elif acc >= 80:
-        badge = "🌟 أداء ممتاز"
-        advice = "دقتك عالية جداً! ركز على الأسئلة الضعيفة لتصل إلى 100% بإذن الله 💪."
-    elif acc >= 65:
-        badge = "👍 أداء جيد"
-        advice = "أنت في مسار تصاعدي سليم، واظب على حل الكويزات وسيرتفع مستواك بسرعة 🎯."
-    else:
-        badge = "💪 يحتاج تركيز ومثابرة"
-        advice = "التدريب المستمر هو سر النجاح، راجع أخطاءك في بنك الأسئلة الضعيفة أولاً بأول ✨."
+    # Calculate overall retention rate
+    total_rev_all = sum(d["total_reviewed"] for d in recent_daily)
+    easy_good_all = sum(d["easy_count"] + d["good_count"] for d in recent_daily)
+    retention_pct = int((easy_good_all / total_rev_all) * 100) if total_rev_all > 0 else 100
 
-    text_parts = [
-        "📊 <b>لوحة إحصائياتك وأدائك الشخصي</b>\n",
-        f"🎖️ <b>المستوى الحالي:</b> {badge}",
-        f"🎯 <b>نسبة الصحة الإجمالية:</b> <b>{acc}%</b>",
-        f"📝 <b>الأسئلة المحلولة:</b> <b>{total_q}</b> سؤال (عبر <b>{sessions}</b> جلسة)",
-        f"✅ <b>الإجابات الصحيحة:</b> <b>{correct_q}</b> | ❌ <b>الخاطئة:</b> <b>{stats['wrong']}</b>",
-        f"🏆 <b>الكويزات المتقنة:</b> <b>{mastered}</b> كويز (علامة كاملة 5 مرات متتالية)\n",
-        "🧠 <b>التكرار المتباعد وجدولة الذاكرة:</b>",
-        f"• 🔁 كويزات قيد المراجعة: <b>{active_rev}</b> (🔴 مستحق اليوم: <b>{due_rev}</b>)",
-        f"• ❓ أسئلة ضعيفة تحت التدريب: <b>{total_weak}</b> (🔴 مستحق اليوم: <b>{due_weak}</b>)",
+    badge = "🏆 مستوى أسطوري" if retention_pct >= 90 else ("🌟 أداء متميز" if retention_pct >= 75 else "💪 في طور البناء")
+
+    # Reminder time
+    r_h = int(db.get_setting("reminder_hour", "5"))
+    r_m = int(db.get_setting("reminder_minute", "0"))
+    period = "ص" if r_h < 12 else "م"
+    dh = r_h if 1 <= r_h <= 12 else (r_h - 12 if r_h > 12 else 12)
+
+    text_lines = [
+        "📊 <b>تقريرك الإحصائي ونبض الذاكرة</b> 🧠\n",
+        f"🎖️ <b>المستوى التقييمي:</b> {badge}",
+        f"🎯 <b>نسبة ثبات الذاكرة (Retention):</b> <b>{retention_pct}%</b>",
+        f"📚 <b>إجمالي بنك المذاكرة:</b> <b>{total}</b> مادة دراسية",
+        f"• 🔄 قيد التكرار المرحلي: <b>{active}</b> | 🔴 مستحق اليوم: <b>{due}</b>",
+        f"• 🏆 مثبت في الذاكرة الدائمة: <b>{mastered}</b> مادة\n",
+        "🧠 <b>توزيع المواد على مراحل التكرار (منحنى النسيان):</b>",
     ]
 
-    if active_rev > 0:
-        stage_strs = []
-        labels = ["م1", "م2", "م3", "م4", "م5"]
-        for stg_idx in range(5):
-            c = stages.get(stg_idx, 0)
-            if c > 0:
-                stage_strs.append(f"{labels[stg_idx]}: {c}")
-        if stage_strs:
-            text_parts.append("• مراحل الحفظ: " + " | ".join(stage_strs))
+    labels = ["م1 (غداً)", "م2 (3 أيام)", "م3 (أسبوع)", "م4 (أسبوعين)", "م5 (شهر)"]
+    stage_strs = []
+    for s_idx in range(5):
+        cnt = by_stage.get(s_idx, 0)
+        stage_strs.append(f"{labels[s_idx]}: <b>{cnt}</b>")
+    text_lines.append(" • " + " | ".join(stage_strs[:3]))
+    text_lines.append(" • " + " | ".join(stage_strs[3:]))
 
-    chart_lines = ["\n📈 <b>نشاطك في آخر 7 أيام:</b>"]
-    any_weekly_activity = False
-    for day in weekly:
-        d_tot = day["total"]
-        d_acc = day["accuracy"]
-        d_name = day["day_name"]
-        if d_tot > 0:
-            any_weekly_activity = True
-            filled = min(10, max(1, int(d_acc / 10)))
-            empty = 10 - filled
-            bar = "█" * filled + "░" * empty
-            chart_lines.append(f"• {d_name:<7}: <code>{bar}</code> {d_acc}% ({d_tot} سؤال)")
-        else:
-            chart_lines.append(f"• {d_name:<7}: <i>استراحة</i> ☕")
+    # Types breakdown
+    types_arabic = {"photo": "📸 صور", "text": "✍️ نصوص", "link": "🔗 فورمز", "pdf": "📑 مستندات"}
+    t_parts = [f"{types_arabic.get(k, k)}: <b>{v}</b>" for k, v in by_type.items()]
+    if t_parts:
+        text_lines.append("\n📁 <b>تصنيف الوسائط:</b> " + " | ".join(t_parts))
 
-    if any_weekly_activity:
-        text_parts.extend(chart_lines)
-
-    text_parts.append(f"\n💡 <i>{advice}</i>")
+    # Reminder info
+    text_lines.append(f"\n⏰ <b>موعد التنبيه اليومي:</b> <b>{dh}:{r_m:02d} {period}</b> (بتوقيت مكة)")
 
     kb = [
         [
-            InlineKeyboardButton("🔔 مراجعات اليوم", callback_data="due_reviews"),
-            InlineKeyboardButton("❓ الأسئلة الضعيفة", callback_data="weak_questions"),
+            InlineKeyboardButton("🌅 05:00 ص", callback_data="set_rem_5_0"),
+            InlineKeyboardButton("☀️ 07:00 ص", callback_data="set_rem_7_0"),
+            InlineKeyboardButton("🌇 05:00 م", callback_data="set_rem_17_0"),
+            InlineKeyboardButton("🌙 08:00 م", callback_data="set_rem_20_0"),
         ],
-        [
-            InlineKeyboardButton("🔄 تحديث الإحصائيات", callback_data="my_stats"),
-            InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu"),
-        ]
+        [InlineKeyboardButton("🔔 تجربة إرسال التنبيه الآن", callback_data="test_nudge_now")],
+        [InlineKeyboardButton("📁 استعراض المجلدات", callback_data="folders_menu")],
+        [InlineKeyboardButton("🏠 العودة للقائمة الرئيسية", callback_data="main_menu")],
     ]
 
-    return "\n".join(text_parts), InlineKeyboardMarkup(kb)
+    return "\n".join(text_lines), InlineKeyboardMarkup(kb)
 
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id if user else ADMIN_USER_ID
-    all_reviews = db.get_all_quiz_reviews(user_id=user_id)
-    all_weak = db.get_all_weak_questions(user_id=user_id)
-    due_reviews = db.get_due_quiz_reviews(user_id=user_id)
-    due_weak = db.get_due_weak_questions(user_id=user_id)
-    text = (f"📊 <b>إحصائياتك</b>\n\n"
-            f"📅 الكويزات المجدولة: <b>{len(all_reviews)}</b>\n"
-            f"🔔 مراجعات مستحقة اليوم: <b>{len(due_reviews)}</b>\n"
-            f"❓ أسئلة ضعيفة (الإجمالي): <b>{len(all_weak)}</b>\n"
-            f"⚠️ أسئلة ضعيفة مستحقة: <b>{len(due_weak)}</b>\n")
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 الرئيسية", callback_data="main_menu")]])
-    await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=kb)
+# ─── Stats Callbacks Router ───────────────────────────────────────────────────
 
-
-async def handle_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str, user_id: int) -> bool:
-    """
-    Handles callbacks related to student statistics.
-    Returns True if handled, False otherwise.
-    """
+async def handle_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     query = update.callback_query
+    if not query:
+        return False
+    data = query.data
 
-    if data == "my_stats":
-        text, kb = _build_my_stats(user_id)
+    if data == "stats_menu":
+        text, kb = build_stats_view()
         await safe_edit(query, text, kb)
+        return True
+
+    if data.startswith("set_rem_"):
+        parts = data.split("_")
+        h = int(parts[2])
+        m = int(parts[3])
+        db.set_setting("reminder_hour", str(h))
+        db.set_setting("reminder_minute", str(m))
+
+        # Re-schedule job
+        try:
+            from bot import schedule_daily_reminder
+            schedule_daily_reminder(context.application.job_queue, update.effective_chat.id, h, m)
+        except Exception:
+            pass
+
+        period = "ص" if h < 12 else "م"
+        dh = h if 1 <= h <= 12 else (h - 12 if h > 12 else 12)
+        await query.answer(f"✅ تم ضبط موعد التنبيه اليومي: {dh}:{m:02d} {period}", show_alert=True)
+        text, kb = build_stats_view()
+        await safe_edit(query, text, kb)
+        return True
+
+    if data == "test_nudge_now":
+        await query.answer("🔔 تم إرسال التنبيه التجريبي!")
+        from bot import send_daily_reminder_to_chat
+        await send_daily_reminder_to_chat(context, update.effective_chat.id)
         return True
 
     return False
