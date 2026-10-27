@@ -91,7 +91,7 @@ async def send_clean_message(
     parse_mode="HTML"
 ) -> int:
     """
-    Sends a message and cleans up prior user input and bot message for instant UI.
+    Sends a message and cleans up prior user input and tracked bot messages for an ultra-clean UI.
     """
     if update:
         msg_to_del = update.message or update.effective_message
@@ -99,6 +99,9 @@ async def send_clean_message(
             user_msg_id = msg_to_del.message_id
             db.track_chat_message(chat_id, user_msg_id)
             asyncio.create_task(_safe_delete_message(context, chat_id, user_msg_id))
+
+    # Clean old bot messages so only the new message remains in the chat
+    await clean_entire_chat(context, chat_id)
 
     text_to_send = truncate_text(text, 3800)
     try:
@@ -122,7 +125,7 @@ async def send_clean_message(
 
 
 async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", context=None):
-    """Safely edit message text in place. Falls back gracefully if message is uneditable."""
+    """Safely edit message text in place. If current message is media, cleanly replaces it."""
     if not query:
         return
     text = truncate_text(text, 3800)
@@ -134,33 +137,63 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
     elif getattr(query, "from_user", None):
         chat_id = query.from_user.id
 
-    if chat_id and msg and hasattr(msg, "message_id") and msg.message_id:
+    if not chat_id:
+        return
+
+    bot = context.bot if context and hasattr(context, "bot") else query.get_bot()
+
+    # If the message currently has media (photo or document), Telegram cannot edit text in-place.
+    # We must delete the media message and send a single text message in its place.
+    if msg and (getattr(msg, "photo", None) or getattr(msg, "document", None)):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        try:
+            new_msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
+            db.track_chat_message(chat_id, new_msg.message_id)
+            return
+        except Exception:
+            clean_text = strip_html_tags(text)
+            new_msg = await bot.send_message(chat_id=chat_id, text=clean_text, reply_markup=reply_markup)
+            db.track_chat_message(chat_id, new_msg.message_id)
+            return
+
+    if msg and hasattr(msg, "message_id") and msg.message_id:
         db.track_chat_message(chat_id, msg.message_id)
 
     # 1. Try HTML edit
     try:
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
         return
     except Exception as e:
         if "Message is not modified" in str(e):
             return
         logger.debug("safe_edit HTML failed: %s", e)
 
-    # 2. Plain text fallback
+    # 2. Plain text fallback edit
     clean_text = strip_html_tags(text)
     try:
-        await query.edit_message_text(clean_text, reply_markup=reply_markup)
+        await query.edit_message_text(text=clean_text, reply_markup=reply_markup)
         return
     except Exception as e:
         if "Message is not modified" in str(e):
             return
 
-    # 3. Fresh message fallback
+    # 3. Fresh message fallback (delete old message first to prevent clutter)
     try:
-        bot = context.bot if context and hasattr(context, "bot") else query.get_bot()
-        if bot and chat_id:
-            sent = await bot.send_message(chat_id=chat_id, text=clean_text, reply_markup=reply_markup)
-            db.track_chat_message(chat_id, sent.message_id)
+        if msg:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        sent = await bot.send_message(chat_id=chat_id, text=clean_text, reply_markup=reply_markup)
+        db.track_chat_message(chat_id, sent.message_id)
     except Exception as e2:
         logger.error("safe_edit fallback send failed: %s", e2)
 

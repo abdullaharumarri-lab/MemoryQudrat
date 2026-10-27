@@ -17,6 +17,7 @@ def build_main_dashboard() -> tuple[str, InlineKeyboardMarkup]:
     """Builds the single, clutter-free primary dashboard."""
     stats = db.get_dashboard_stats()
     due_cnt = stats["due_count"]
+    total_cnt = stats["total_items"]
     folders_info = stats["folders_breakdown"]
 
     now = get_riyadh_now()
@@ -25,8 +26,12 @@ def build_main_dashboard() -> tuple[str, InlineKeyboardMarkup]:
     date_str = now.strftime("%Y-%m-%d")
 
     active_fid = db.get_active_folder_id()
-    active_folder = db.get_folder(active_fid)
-    f_title = f"{active_folder['icon']} {active_folder['name']}" if active_folder else "📁 عام"
+    active_folder = db.get_folder(active_fid) if active_fid else None
+    if active_folder:
+        path_str = db.get_folder_path_string(active_fid)
+        f_title = path_str or f"{active_folder['icon']} {active_folder['name']}"
+    else:
+        f_title = None
 
     text_lines = [
         "🧠 <b>ذاكرة القدرات — رفيق المذاكرة الشخصي</b>\n",
@@ -36,27 +41,27 @@ def build_main_dashboard() -> tuple[str, InlineKeyboardMarkup]:
     if due_cnt > 0:
         text_lines.append(f"🔔 <b>المستحق للمراجعة اليوم:</b> <b>{due_cnt}</b> مادة دراسية:")
         for f in folders_info:
-            if f["due_items"] > 0:
+            if f.get("due_items", 0) > 0:
                 text_lines.append(f"  • {f['icon']} {html.escape(f['name'])}: <b>{f['due_items']}</b> مستحق")
-    else:
+    elif total_cnt > 0:
         text_lines.append("✅ <b>جدولك نظيف اليوم!</b> أنهيت مراجعاتك بامتياز 🌟")
+    else:
+        text_lines.append("💡 <b>ابدأ المذاكرة:</b> أرسل صورة سؤال أو ملخص لإدراجه في التكرار المتباعد.")
 
-    text_lines.append(f"\n📁 <b>المجلد النشط للإيداع التلقائي:</b> [ <b>{html.escape(f_title)}</b> ]")
-    text_lines.append("<i>(أي صورة، نص، أو رابط ترسلها الآن تُحفظ في هذا المجلد فوراً)</i>")
+    if f_title:
+        text_lines.append(f"\n📁 <b>المجلد النشط للإيداع:</b> [ <b>{html.escape(f_title)}</b> ]")
+    else:
+        text_lines.append("\n📁 <b>المجلدات:</b> لا توجد مجلدات بعد (اضغط مجلداتي للبدء).")
 
     kb = []
+    # 1. Primary Action: Start due reviews if available
     if due_cnt > 0:
         kb.append([InlineKeyboardButton(f"▶️ ابدأ مراجعات اليوم ({due_cnt})", callback_data="start_review_all")])
-    else:
-        kb.append([InlineKeyboardButton("▶️ مراجعة حرة وتدريب", callback_data="folders_menu")])
 
+    # 2. Distinct, non-redundant controls
     kb.append([
         InlineKeyboardButton("📁 مجلداتي ومسائلي", callback_data="folders_menu"),
-        InlineKeyboardButton("📊 تقريري وإحصائياتي", callback_data="stats_menu"),
-    ])
-    kb.append([
-        InlineKeyboardButton("🎯 تغيير المجلد النشط للإيداع", callback_data="folders_menu"),
-        InlineKeyboardButton("⚙️ إعداد التنبيه", callback_data="stats_menu"),
+        InlineKeyboardButton("📊 إحصائياتي والتنبيه", callback_data="stats_menu"),
     ])
 
     return "\n".join(text_lines), InlineKeyboardMarkup(kb)

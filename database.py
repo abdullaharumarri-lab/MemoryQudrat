@@ -31,26 +31,36 @@ def get_db_connection():
 
 
 def init_db():
-    """Initializes clean database schema and seeds initial folders if empty."""
+    """Initializes clean database schema without pre-made seed folders."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
-        # 1. Folders table
+        # 1. Folders table (with parent_id support for nested subfolders)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS folders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 icon TEXT DEFAULT '📁',
+                parent_id INTEGER DEFAULT NULL,
                 sort_order INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
             )
         """)
+
+        # Migration: ensure parent_id exists in folders table
+        cursor.execute("PRAGMA table_info(folders)")
+        cols = [row["name"] for row in cursor.fetchall()]
+        if "parent_id" not in cols:
+            cursor.execute("ALTER TABLE folders ADD COLUMN parent_id INTEGER DEFAULT NULL REFERENCES folders(id) ON DELETE CASCADE")
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id)")
 
         # 2. Items / Flashcards table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                folder_id INTEGER,
+                folder_id INTEGER DEFAULT NULL,
                 item_type TEXT NOT NULL,
                 review_mode TEXT DEFAULT 'qa',
                 title TEXT,
@@ -114,24 +124,14 @@ def init_db():
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_hist ON chat_history_ids(chat_id)")
 
-        # ── Seed Default Recommended Folders if empty ──
-        cursor.execute("SELECT count(*) as cnt FROM folders")
-        if cursor.fetchone()["cnt"] == 0:
-            default_folders = [
-                ("📐 قدرات كمي", "📐", 1),
-                ("📖 قدرات لفظي", "📖", 2),
-                ("💡 قوانين وقواعد", "💡", 3),
-                ("🎯 تجميعات 1446", "🎯", 4),
-            ]
-            for name, icon, order in default_folders:
-                cursor.execute(
-                    "INSERT INTO folders (name, icon, sort_order) VALUES (?, ?, ?)",
-                    (name, icon, order),
-                )
-            logger.info("Seeded default study folders.")
+        # Clean up legacy unedited empty seed folders if any exist
+        cursor.execute("""
+            DELETE FROM folders 
+            WHERE name IN ('📐 قدرات كمي', '📖 قدرات لفظي', '💡 قوانين وقواعد', '🎯 تجميعات 1446')
+            AND id NOT IN (SELECT DISTINCT folder_id FROM items WHERE folder_id IS NOT NULL)
+        """)
 
-        # Seed default settings
-        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('active_folder_id', '1')")
+        # Seed default settings (without forcing active_folder_id to 1)
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('reminder_hour', '5')")
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('reminder_minute', '0')")
 
@@ -155,21 +155,50 @@ def set_setting(key: str, value: str):
         )
 
 
-def get_active_folder_id() -> int:
-    val = get_setting("active_folder_id", "1")
-    try:
-        return int(val)
-    except Exception:
-        return 1
+def get_active_folder_id() -> int | None:
+    val = get_setting("active_folder_id")
+    if val:
+        try:
+            fid = int(val)
+            if get_folder(fid):
+                return fid
+        except Exception:
+            pass
+    # Fallback to first existing folder, or None
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM folders ORDER BY sort_order ASC, id ASC LIMIT 1")
+        row = c.fetchone()
+        if row:
+            set_setting("active_folder_id", str(row["id"]))
+            return row["id"]
+    return None
 
 
 def set_active_folder_id(folder_id: int):
-    set_setting("active_folder_id", str(folder_id))
+    set_setting("active_folder_id", str(folder_id) if folder_id else "")
 
 
 # ─── Folders Management ───────────────────────────────────────────────────────
 
-def get_folders() -> list[dict]:
+def get_folders(parent_id: int = None) -> list[dict]:
+    """Retrieves folders at given hierarchy level (root if parent_id is None, or subfolders of parent_id)."""
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        if parent_id is None:
+            c.execute("SELECT * FROM folders WHERE parent_id IS NULL ORDER BY sort_order ASC, id ASC")
+        else:
+            c.execute("SELECT * FROM folders WHERE parent_id = ? ORDER BY sort_order ASC, id ASC", (parent_id,))
+        return [dict(r) for r in c.fetchall()]
+
+
+def get_subfolders(parent_id: int) -> list[dict]:
+    """Retrieves direct children subfolders of a given parent folder."""
+    return get_folders(parent_id=parent_id)
+
+
+def get_all_folders() -> list[dict]:
+    """Retrieves all folders in the database regardless of hierarchy."""
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute("SELECT * FROM folders ORDER BY sort_order ASC, id ASC")
@@ -186,14 +215,65 @@ def get_folder(folder_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-def create_folder(name: str, icon: str = "📁") -> int:
+def get_all_descendant_folder_ids(folder_id: int) -> list[int]:
+    """Returns folder_id and all of its recursive descendant subfolder IDs."""
+    if not folder_id:
+        return []
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            WITH RECURSIVE subfolders AS (
+                SELECT id FROM folders WHERE id = ?
+                UNION ALL
+                SELECT f.id FROM folders f
+                JOIN subfolders s ON f.parent_id = s.id
+            )
+            SELECT id FROM subfolders
+        """, (folder_id,))
+        return [row["id"] for row in c.fetchall()]
+
+
+def get_folder_path(folder_id: int) -> list[dict]:
+    """Returns ancestor folders path from root down to folder_id for breadcrumbs."""
+    if not folder_id:
+        return []
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            WITH RECURSIVE folder_path AS (
+                SELECT id, name, icon, parent_id, 0 as depth FROM folders WHERE id = ?
+                UNION ALL
+                SELECT f.id, f.name, f.icon, f.parent_id, fp.depth + 1
+                FROM folders f
+                JOIN folder_path fp ON f.id = fp.parent_id
+            )
+            SELECT id, name, icon, parent_id FROM folder_path ORDER BY depth DESC
+        """, (folder_id,))
+        return [dict(r) for r in c.fetchall()]
+
+
+def get_folder_path_string(folder_id: int) -> str:
+    path = get_folder_path(folder_id)
+    if not path:
+        return ""
+    return " ❯ ".join(f"{f['icon']} {f['name']}" for f in path)
+
+
+def create_folder(name: str, icon: str = "📁", parent_id: int = None) -> int:
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute(
-            "INSERT INTO folders (name, icon, sort_order) VALUES (?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM folders))",
-            (name.strip(), icon.strip() if icon else "📁"),
+            """INSERT INTO folders (name, icon, parent_id, sort_order) 
+               VALUES (?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM folders WHERE (parent_id = ? OR (parent_id IS NULL AND ? IS NULL))))""",
+            (name.strip(), icon.strip() if icon else "📁", parent_id, parent_id, parent_id),
         )
-        return c.lastrowid
+        fid = c.lastrowid
+        # If no active folder was set, set this newly created folder as active
+        c.execute("SELECT value FROM settings WHERE key = 'active_folder_id'")
+        curr_act = c.fetchone()
+        if not curr_act or not curr_act["value"]:
+            c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('active_folder_id', ?)", (str(fid),))
+        return fid
 
 
 def rename_folder(folder_id: int, new_name: str) -> bool:
@@ -204,17 +284,51 @@ def rename_folder(folder_id: int, new_name: str) -> bool:
 
 
 def delete_folder(folder_id: int) -> bool:
+    """Deletes a folder and safely moves its items to parent folder, cascading subfolders."""
     with get_db_connection() as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
-        # If deleted folder was active, fallback to first available folder
-        c.execute("SELECT id FROM folders ORDER BY id ASC LIMIT 1")
-        first = c.fetchone()
-        if first:
-            c.execute(
-                "INSERT INTO settings (key, value) VALUES ('active_folder_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (str(first["id"]),),
+        c.execute("SELECT parent_id FROM folders WHERE id = ?", (folder_id,))
+        f_row = c.fetchone()
+        parent_id = f_row["parent_id"] if f_row else None
+
+        # Fetch descendant IDs
+        c.execute("""
+            WITH RECURSIVE subfolders AS (
+                SELECT id FROM folders WHERE id = ?
+                UNION ALL
+                SELECT f.id FROM folders f
+                JOIN subfolders s ON f.parent_id = s.id
             )
+            SELECT id FROM subfolders
+        """, (folder_id,))
+        descendants = [row["id"] for row in c.fetchall()]
+
+        if descendants:
+            placeholders = ",".join("?" for _ in descendants)
+            # Move items in this folder and its descendants to parent_id
+            c.execute(f"UPDATE items SET folder_id = ? WHERE folder_id IN ({placeholders})", [parent_id] + descendants)
+
+        # Delete folder (subfolders cascade delete via foreign key)
+        c.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+
+        # Update active folder if it was deleted
+        c.execute("SELECT value FROM settings WHERE key = 'active_folder_id'")
+        act_row = c.fetchone()
+        if act_row and act_row["value"]:
+            try:
+                curr_act_id = int(act_row["value"])
+                if curr_act_id == folder_id or curr_act_id in descendants:
+                    fallback_id = parent_id
+                    if not fallback_id:
+                        c.execute("SELECT id FROM folders ORDER BY sort_order ASC, id ASC LIMIT 1")
+                        first = c.fetchone()
+                        fallback_id = first["id"] if first else None
+                    c.execute(
+                        "INSERT INTO settings (key, value) VALUES ('active_folder_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (str(fallback_id) if fallback_id else "",),
+                    )
+            except Exception:
+                pass
         return True
 
 
@@ -281,20 +395,36 @@ def update_item_folder(item_id: int, folder_id: int) -> bool:
         return c.rowcount > 0
 
 
-def get_due_items(folder_id: int = None) -> list[dict]:
+def get_due_items(folder_id: int = None, include_subfolders: bool = True) -> list[dict]:
     """Retrieves all items whose review is due today or overdue in Riyadh timezone."""
     today_iso = get_riyadh_today_iso()
     with get_db_connection() as conn:
         c = conn.cursor()
         if folder_id:
-            c.execute(
-                """SELECT i.*, f.name as folder_name, f.icon as folder_icon 
-                   FROM items i 
-                   LEFT JOIN folders f ON i.folder_id = f.id 
-                   WHERE i.next_review_date <= ? AND i.folder_id = ? AND i.is_mastered = 0
-                   ORDER BY i.next_review_date ASC, i.id ASC""",
-                (today_iso, folder_id),
-            )
+            if include_subfolders:
+                descendants = get_all_descendant_folder_ids(folder_id)
+                if not descendants:
+                    return []
+                placeholders = ",".join("?" for _ in descendants)
+                query = f"""
+                    SELECT i.*, f.name as folder_name, f.icon as folder_icon 
+                    FROM items i 
+                    LEFT JOIN folders f ON i.folder_id = f.id 
+                    WHERE i.folder_id IN ({placeholders})
+                      AND i.next_review_date <= ? 
+                      AND i.is_mastered = 0
+                    ORDER BY i.next_review_date ASC, i.id ASC
+                """
+                c.execute(query, descendants + [today_iso])
+            else:
+                c.execute(
+                    """SELECT i.*, f.name as folder_name, f.icon as folder_icon 
+                       FROM items i 
+                       LEFT JOIN folders f ON i.folder_id = f.id 
+                       WHERE i.next_review_date <= ? AND i.folder_id = ? AND i.is_mastered = 0
+                       ORDER BY i.next_review_date ASC, i.id ASC""",
+                    (today_iso, folder_id),
+                )
         else:
             c.execute(
                 """SELECT i.*, f.name as folder_name, f.icon as folder_icon 
@@ -307,17 +437,31 @@ def get_due_items(folder_id: int = None) -> list[dict]:
         return [dict(r) for r in c.fetchall()]
 
 
-def get_items_by_folder(folder_id: int, limit: int = 100) -> list[dict]:
+def get_items_by_folder(folder_id: int, include_subfolders: bool = False, limit: int = 100) -> list[dict]:
     with get_db_connection() as conn:
         c = conn.cursor()
-        c.execute(
-            """SELECT i.*, f.name as folder_name, f.icon as folder_icon 
-               FROM items i 
-               LEFT JOIN folders f ON i.folder_id = f.id 
-               WHERE i.folder_id = ?
-               ORDER BY i.id DESC LIMIT ?""",
-            (folder_id, limit),
-        )
+        if include_subfolders:
+            descendants = get_all_descendant_folder_ids(folder_id)
+            if not descendants:
+                return []
+            placeholders = ",".join("?" for _ in descendants)
+            c.execute(
+                f"""SELECT i.*, f.name as folder_name, f.icon as folder_icon 
+                   FROM items i 
+                   LEFT JOIN folders f ON i.folder_id = f.id 
+                   WHERE i.folder_id IN ({placeholders})
+                   ORDER BY i.id DESC LIMIT ?""",
+                descendants + [limit],
+            )
+        else:
+            c.execute(
+                """SELECT i.*, f.name as folder_name, f.icon as folder_icon 
+                   FROM items i 
+                   LEFT JOIN folders f ON i.folder_id = f.id 
+                   WHERE i.folder_id = ?
+                   ORDER BY i.id DESC LIMIT ?""",
+                (folder_id, limit),
+            )
         return [dict(r) for r in c.fetchall()]
 
 
@@ -406,9 +550,10 @@ def get_dashboard_stats() -> dict:
 
         # Due by folder
         c.execute("""
-            SELECT f.id, f.name, f.icon, 
+            SELECT f.id, f.name, f.icon, f.parent_id,
                    COUNT(i.id) as total_items,
-                   SUM(CASE WHEN i.next_review_date <= ? AND i.is_mastered = 0 THEN 1 ELSE 0 END) as due_items
+                   SUM(CASE WHEN i.next_review_date <= ? AND i.is_mastered = 0 THEN 1 ELSE 0 END) as due_items,
+                   (SELECT count(*) FROM folders sub WHERE sub.parent_id = f.id) as subfolders_count
             FROM folders f
             LEFT JOIN items i ON f.id = i.folder_id
             GROUP BY f.id

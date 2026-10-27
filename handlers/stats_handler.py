@@ -67,7 +67,6 @@ def build_stats_view() -> tuple[str, InlineKeyboardMarkup]:
             InlineKeyboardButton("🌙 08:00 م", callback_data="set_rem_20_0"),
         ],
         [InlineKeyboardButton("🔔 تجربة إرسال التنبيه الآن", callback_data="test_nudge_now")],
-        [InlineKeyboardButton("📁 استعراض المجلدات", callback_data="folders_menu")],
         [InlineKeyboardButton("🏠 العودة للقائمة الرئيسية", callback_data="main_menu")],
     ]
 

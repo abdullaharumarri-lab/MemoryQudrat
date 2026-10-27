@@ -33,13 +33,43 @@ class TestPersonalMemoryQudrat(unittest.TestCase):
         self.assertFalse(config.is_authorized(999999999))
         self.assertFalse(config.is_authorized(None))
 
-    def test_default_folders_seeded(self):
-        """Verify default folders are created properly on init."""
+    def test_zero_default_folders(self):
+        """Verify the system starts clean with 0 default folders (no hardcoded pre-made folders)."""
         folders = self.db.get_folders()
-        self.assertGreaterEqual(len(folders), 4)
-        names = [f["name"] for f in folders]
-        self.assertTrue(any("كمي" in n for n in names))
-        self.assertTrue(any("لفظي" in n for n in names))
+        self.assertEqual(len(folders), 0)
+        self.assertIsNone(self.db.get_active_folder_id())
+
+    def test_nested_subfolders_and_breadcrumbs(self):
+        """Verify creating nested folders inside folders, breadcrumb paths, and descendants."""
+        root_fid = self.db.create_folder("قدرات كمي", icon="📐")
+        self.assertIsNotNone(root_fid)
+        self.assertEqual(self.db.get_active_folder_id(), root_fid)
+
+        sub_fid = self.db.create_folder("هندسة", icon="🔺", parent_id=root_fid)
+        sub_sub_fid = self.db.create_folder("دوائر ومثلثات", icon="⭕", parent_id=sub_fid)
+
+        # Verify parent-child relationships
+        subfolders = self.db.get_subfolders(root_fid)
+        self.assertEqual(len(subfolders), 1)
+        self.assertEqual(subfolders[0]["id"], sub_fid)
+
+        sub_subfolders = self.db.get_subfolders(sub_fid)
+        self.assertEqual(len(sub_subfolders), 1)
+        self.assertEqual(sub_subfolders[0]["id"], sub_sub_fid)
+
+        # Verify breadcrumb path string
+        path_str = self.db.get_folder_path_string(sub_sub_fid)
+        self.assertIn("قدرات كمي", path_str)
+        self.assertIn("هندسة", path_str)
+        self.assertIn("دوائر ومثلثات", path_str)
+        self.assertEqual(path_str, "📐 قدرات كمي ❯ 🔺 هندسة ❯ ⭕ دوائر ومثلثات")
+
+        # Verify all descendants
+        descendants = self.db.get_all_descendant_folder_ids(root_fid)
+        self.assertIn(root_fid, descendants)
+        self.assertIn(sub_fid, descendants)
+        self.assertIn(sub_sub_fid, descendants)
+        self.assertEqual(len(descendants), 3)
 
     def test_folder_crud(self):
         """Verify creating, setting active, renaming, and deleting folders."""
@@ -61,7 +91,7 @@ class TestPersonalMemoryQudrat(unittest.TestCase):
 
     def test_item_ingestion_multi_modal(self):
         """Verify adding all 4 types of media items (photo, text, link, pdf)."""
-        fid = self.db.get_active_folder_id()
+        fid = self.db.create_folder("مجلد الاختبار")
 
         # 1. Photo in QA mode (reveal solution)
         p_id = self.db.add_item(
@@ -132,10 +162,12 @@ class TestPersonalMemoryQudrat(unittest.TestCase):
 
     def test_record_item_review_and_stats(self):
         """Verify recording review updates database item, logs, and daily stats."""
+        fid = self.db.create_folder("مجلد عام")
         item_id = self.db.add_item(
             item_type="photo",
             content="data/photos/q1.jpg",
             title="مسألة هندسة",
+            folder_id=fid,
             review_mode="qa",
         )
 
@@ -152,33 +184,37 @@ class TestPersonalMemoryQudrat(unittest.TestCase):
         self.assertGreaterEqual(len(stats["recent_daily"]), 1)
         self.assertEqual(stats["recent_daily"][0]["good_count"], 1)
 
-    def test_due_items_by_folder_filtering(self):
-        """Verify filtering due items across folders."""
-        f1 = self.db.create_folder("مجلد 1")
-        f2 = self.db.create_folder("مجلد 2")
+    def test_due_items_subfolder_recursive_filtering(self):
+        """Verify filtering due items across parent folders and subfolders."""
+        root_f = self.db.create_folder("كمي رئيسي")
+        child_f = self.db.create_folder("هندسة فرعي", parent_id=root_f)
+        other_f = self.db.create_folder("لفظي")
 
-        # Add item in f1 and f2
-        id1 = self.db.add_item("text", "سؤال مجلد 1", folder_id=f1)
-        id2 = self.db.add_item("text", "سؤال مجلد 2", folder_id=f2)
+        # Add item in root, child, and other
+        id1 = self.db.add_item("text", "سؤال كمي عام", folder_id=root_f)
+        id2 = self.db.add_item("text", "سؤال هندسة فرعي", folder_id=child_f)
+        id3 = self.db.add_item("text", "سؤال لفظي", folder_id=other_f)
 
         # Force next_review_date to today so they appear due
         today = sr.get_riyadh_today_iso()
         with self.db.get_db_connection() as conn:
-            conn.execute("UPDATE items SET next_review_date = ? WHERE id IN (?, ?)", (today, id1, id2))
+            conn.execute("UPDATE items SET next_review_date = ? WHERE id IN (?, ?, ?)", (today, id1, id2, id3))
 
         # Check due in all
         due_all = self.db.get_due_items()
-        self.assertEqual(len(due_all), 2)
+        self.assertEqual(len(due_all), 3)
 
-        # Check due in f1 only
-        due_f1 = self.db.get_due_items(folder_id=f1)
-        self.assertEqual(len(due_f1), 1)
-        self.assertEqual(due_f1[0]["id"], id1)
+        # Check due in root_f WITH subfolders (should return id1 and id2)
+        due_root_with_subs = self.db.get_due_items(folder_id=root_f, include_subfolders=True)
+        self.assertEqual(len(due_root_with_subs), 2)
+        item_ids = [it["id"] for it in due_root_with_subs]
+        self.assertIn(id1, item_ids)
+        self.assertIn(id2, item_ids)
 
-        # Check due in f2 only
-        due_f2 = self.db.get_due_items(folder_id=f2)
-        self.assertEqual(len(due_f2), 1)
-        self.assertEqual(due_f2[0]["id"], id2)
+        # Check due in child_f only
+        due_child = self.db.get_due_items(folder_id=child_f)
+        self.assertEqual(len(due_child), 1)
+        self.assertEqual(due_child[0]["id"], id2)
 
     def test_move_item_between_folders(self):
         """Verify updating an item's folder."""

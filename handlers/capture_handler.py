@@ -35,8 +35,6 @@ async def handle_photo_capture(update: Update, context: ContextTypes.DEFAULT_TYP
 
     caption = (message.caption or "").strip()
     active_folder_id = db.get_active_folder_id()
-    active_folder = db.get_folder(active_folder_id)
-    folder_name = active_folder["name"] if active_folder else "عام"
 
     # Smart auto-detection via hashtag
     detected_mode = None
@@ -48,6 +46,31 @@ async def handle_photo_capture(update: Update, context: ContextTypes.DEFAULT_TYP
     elif any(tag in caption for tag in ["#سؤال", "#مسألة", "#تجميع", "#تدريب"]):
         detected_mode = "qa"
         clean_caption = re.sub(r'#(?:سؤال|مسألة|تجميع|تدريب)\b', '', clean_caption).strip()
+
+    # If no folders exist yet, prompt to create first folder immediately
+    if active_folder_id is None:
+        context.user_data["pending_capture"] = {
+            "item_type": "photo",
+            "content": rel_path,
+            "title": clean_caption[:40] if clean_caption else "مسألة مصورة",
+            "solution": clean_caption,
+            "review_mode": detected_mode or "qa",
+        }
+        context.user_data["input_state"] = "awaiting_folder_name"
+        context.user_data["folder_parent_id"] = None
+        prompt = (
+            "📸 <b>تم استلام الصورة بنجاح!</b>\n\n"
+            "⚠️ <i>لا يوجد لديك أي مجلد حالياً لحفظ وترتيب مسائلك.</i>\n\n"
+            "👇 <b>أرسل اسم أول مجلد في رسالة نصية الآن لحفظ الصورة بداخله فوراً:</b>\n"
+            "<i>(مثال: قدرات كمي، أو تجميعات 1447)</i>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")]])
+        sent_id = await send_clean_message(context, chat_id, prompt, update=update, reply_markup=kb)
+        context.user_data["prompt_msg_id"] = sent_id
+        return
+
+    active_folder = db.get_folder(active_folder_id)
+    folder_name = active_folder["name"] if active_folder else "عام"
 
     # If auto-detected via hashtag, save immediately with 0 extra clicks!
     if detected_mode:
@@ -90,7 +113,7 @@ async def handle_photo_capture(update: Update, context: ContextTypes.DEFAULT_TYP
     kb = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("❓ مسألة (إخفاء الحل أولاً)", callback_data="confirm_cap_mode_qa"),
-            InlineKeyboardButton("📖 مراجعة مباشرة (بدون كشف الحل)", callback_data="confirm_cap_mode_direct"),
+            InlineKeyboardButton("📖 مراجعة مباشرة (تثبيت)", callback_data="confirm_cap_mode_direct"),
         ],
         [InlineKeyboardButton("📁 حفظ في مجلد آخر", callback_data="capture_pick_other_folder")],
     ])
@@ -100,7 +123,7 @@ async def handle_photo_capture(update: Update, context: ContextTypes.DEFAULT_TYP
 # ─── Text & URL Capture Handler ──────────────────────────────────────────────
 
 async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles text messages (questions, notes, formulas, or forms URLs)."""
+    """Handles text messages (folder inputs, questions, notes, formulas, or forms URLs)."""
     user = update.effective_user
     if not user or not is_authorized(user.id):
         return
@@ -112,34 +135,114 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
 
     # Check if waiting for specific state input
     state = context.user_data.get("input_state")
-    if state == "awaiting_new_folder_name":
+
+    # 1. State: Awaiting folder name (New Root or Subfolder)
+    if state == "awaiting_folder_name":
+        parent_id = context.user_data.pop("folder_parent_id", None)
+        prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
         context.user_data.pop("input_state", None)
-        new_fid = db.create_folder(raw_text, icon="📁")
+
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception:
+                pass
+
+        new_fid = db.create_folder(raw_text, icon="📁", parent_id=parent_id)
         db.set_active_folder_id(new_fid)
-        await send_clean_message(
-            context,
-            chat_id,
-            f"✅ تم إنشاء مجلد <b>«{html.escape(raw_text)}»</b> وتم تعيينه كمجلدك النشط الحالي!",
-            update=update,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📁 استعراض المجلدات", callback_data="folders_menu")]]),
-        )
+
+        # If a pending capture was waiting for folder creation:
+        pending = context.user_data.pop("pending_capture", None)
+        if pending:
+            pending["folder_id"] = new_fid
+            mode = pending.get("review_mode", "qa")
+            item_id = db.add_item(
+                item_type=pending.get("item_type", "photo"),
+                content=pending.get("content", ""),
+                title=pending.get("title", ""),
+                solution=pending.get("solution", ""),
+                folder_id=new_fid,
+                review_mode=mode,
+            )
+            mode_lbl = "📖 مراجعة مباشرة" if mode == "direct" else "❓ مسألة تفاعلية"
+            ack = (
+                f"✅ <b>تم إنشاء المجلد وحفظ المادة بنجاح! 🧠</b>\n\n"
+                f"📁 <b>المجلد:</b> {html.escape(raw_text)}\n"
+                f"🏷️ <b>النمط:</b> {mode_lbl}\n"
+                f"📅 <b>أول مراجعة:</b> غداً (المرحلة 1)"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📁 استعراض المجلد", callback_data=f"folder_view_{new_fid}")],
+                [InlineKeyboardButton("🏠 الرئيسية", callback_data="main_menu")],
+            ])
+            if prompt_msg_id:
+                try:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_msg_id, text=ack, reply_markup=kb, parse_mode="HTML")
+                    return
+                except Exception:
+                    pass
+            await send_clean_message(context, chat_id, ack, reply_markup=kb)
+            return
+
+        from handlers.folders_handler import build_folder_detail_view
+        text, kb = build_folder_detail_view(new_fid)
+        if prompt_msg_id:
+            try:
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_msg_id, text=text, reply_markup=kb, parse_mode="HTML")
+                return
+            except Exception:
+                pass
+        await send_clean_message(context, chat_id, text, reply_markup=kb)
         return
 
+    # 2. State: Awaiting folder rename
     if state == "awaiting_folder_rename":
         target_fid = context.user_data.pop("rename_folder_id", None)
+        prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
         context.user_data.pop("input_state", None)
+
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception:
+                pass
+
         if target_fid:
             db.rename_folder(target_fid, raw_text)
-            await send_clean_message(
-                context,
-                chat_id,
-                f"✅ تم تعديل اسم المجلد إلى <b>«{html.escape(raw_text)}»</b>!",
-                update=update,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📁 استعراض المجلدات", callback_data="folders_menu")]]),
-            )
+            from handlers.folders_handler import build_folder_detail_view
+            text, kb = build_folder_detail_view(target_fid)
+            if prompt_msg_id:
+                try:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_msg_id, text=text, reply_markup=kb, parse_mode="HTML")
+                    return
+                except Exception:
+                    pass
+            await send_clean_message(context, chat_id, text, reply_markup=kb)
             return
 
     active_folder_id = db.get_active_folder_id()
+
+    # If no folders exist yet, prompt to create first folder
+    if active_folder_id is None:
+        context.user_data["pending_capture"] = {
+            "item_type": "text",
+            "content": raw_text,
+            "title": raw_text[:40],
+            "solution": "",
+            "review_mode": "qa",
+        }
+        context.user_data["input_state"] = "awaiting_folder_name"
+        context.user_data["folder_parent_id"] = None
+        prompt = (
+            "✍️ <b>تم استلام الملاحظة بنجاح!</b>\n\n"
+            "⚠️ <i>لا يوجد لديك أي مجلد حالياً لحفظ مسائلك.</i>\n\n"
+            "👇 <b>أرسل اسم أول مجلد في رسالة نصية الآن لإنشائه وحفظ هذه المسألة بداخله:</b>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")]])
+        sent_id = await send_clean_message(context, chat_id, prompt, update=update, reply_markup=kb)
+        context.user_data["prompt_msg_id"] = sent_id
+        return
+
     active_folder = db.get_folder(active_folder_id)
     folder_name = active_folder["name"] if active_folder else "عام"
 
@@ -170,7 +273,6 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
         return
 
     # 2. Text Question or Note Capture
-    # Check for question vs note
     is_direct_note = any(tag in raw_text for tag in ["#ملخص", "#قانون", "#ملاحظة", "#قاعدة"])
     review_mode = "direct" if is_direct_note else "qa"
     mode_lbl = "📖 مراجعة مباشرة" if is_direct_note else "❓ مسألة / سؤال"
@@ -218,6 +320,26 @@ async def handle_document_capture(update: Update, context: ContextTypes.DEFAULT_
     rel_path, orig_name = await download_telegram_document(context.bot, doc)
 
     active_folder_id = db.get_active_folder_id()
+    if active_folder_id is None:
+        context.user_data["pending_capture"] = {
+            "item_type": "pdf",
+            "content": rel_path,
+            "title": orig_name[:40],
+            "solution": "",
+            "review_mode": "direct",
+        }
+        context.user_data["input_state"] = "awaiting_folder_name"
+        context.user_data["folder_parent_id"] = None
+        prompt = (
+            "📑 <b>تم استلام المستند بنجاح!</b>\n\n"
+            "⚠️ <i>لا يوجد لديك أي مجلد حالياً لحفظ مسائلك.</i>\n\n"
+            "👇 <b>أرسل اسم أول مجلد في رسالة نصية الآن لحفظ هذا الملف بداخله:</b>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")]])
+        sent_id = await send_clean_message(context, chat_id, prompt, update=update, reply_markup=kb)
+        context.user_data["prompt_msg_id"] = sent_id
+        return
+
     active_folder = db.get_folder(active_folder_id)
     folder_name = active_folder["name"] if active_folder else "عام"
 
@@ -286,13 +408,50 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
         await safe_edit(query, ack, kb)
         return True
 
+    # Pick other folder during capture
+    if data == "capture_pick_other_folder":
+        pending = context.user_data.get("pending_capture")
+        if not pending:
+            await query.answer("انتهت صلاحية الطلب.")
+            return True
+        all_folders = db.get_all_folders()
+        kb = []
+        for f in all_folders:
+            path_str = db.get_folder_path_string(f["id"]) or f"{f['icon']} {f['name']}"
+            kb.append([InlineKeyboardButton(path_str, callback_data=f"set_cap_folder_{f['id']}")])
+        kb.append([InlineKeyboardButton("❌ إلغاء", callback_data="main_menu")])
+        await safe_edit(query, "📁 <b>اختر المجلد لحفظ هذه المسألة:</b>", InlineKeyboardMarkup(kb))
+        return True
+
+    if data.startswith("set_cap_folder_"):
+        new_fid = int(data.split("_")[-1])
+        pending = context.user_data.get("pending_capture")
+        if pending:
+            pending["folder_id"] = new_fid
+            db.set_active_folder_id(new_fid)
+            f = db.get_folder(new_fid)
+            f_name = f["name"] if f else ""
+            prompt = (
+                f"📸 <b>تم تحديد المجلد: {html.escape(f_name)}</b>\n\n"
+                f"👇 <b>حدد نمط مراجعة هذه الصورة بنقرة واحدة:</b>"
+            )
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("❓ مسألة (إخفاء الحل أولاً)", callback_data="confirm_cap_mode_qa"),
+                    InlineKeyboardButton("📖 مراجعة مباشرة (تثبيت)", callback_data="confirm_cap_mode_direct"),
+                ]
+            ])
+            await safe_edit(query, prompt, kb)
+        return True
+
     # Folder changing after saving an item
     if data.startswith("item_change_folder_"):
         item_id = int(data.split("_")[-1])
-        folders = db.get_folders()
+        all_folders = db.get_all_folders()
         kb = []
-        for f in folders:
-            kb.append([InlineKeyboardButton(f"{f['icon']} {f['name']}", callback_data=f"do_move_item_{item_id}_{f['id']}")])
+        for f in all_folders:
+            path_str = db.get_folder_path_string(f["id"]) or f"{f['icon']} {f['name']}"
+            kb.append([InlineKeyboardButton(path_str, callback_data=f"do_move_item_{item_id}_{f['id']}")])
         kb.append([InlineKeyboardButton("🔙 إلغاء", callback_data="main_menu")])
         await safe_edit(query, "📁 <b>اختر المجلد الذي تريد نقل المسألة إليه:</b>", InlineKeyboardMarkup(kb))
         return True
