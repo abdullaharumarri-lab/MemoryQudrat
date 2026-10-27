@@ -1,0 +1,22 @@
+[Unit]
+Description=MemoryQudrat - Personal Active Recall OS Bot
+After=network.target
+
+[Service]
+Type=simple
+# عدّل المسار واسم المستخدم ليطابق مجلد المشروع على سيرفرك (مثال: /root/MemoryQudrat أو /home/ubuntu/MemoryQudrat)
+User=root
+WorkingDirectory=/root/MemoryQudrat
+ExecStart=/root/MemoryQudrat/venv/bin/python bot.py
+
+# إعادة التشغيل التلقائي عند أي خطأ أو إعادة تشغيل السيرفر
+Restart=always
+RestartSec=5
+
+# حفظ السجلات في journalctl
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

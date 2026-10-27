@@ -55,6 +55,24 @@ python bot.py
 python -m unittest discover -s tests
 ```
 
+### 5. تشغيل البوت 24/7 على سيرفر VPS (Systemd)
+لضمان عمل البوت بشكل دائم وإعادة تشغيله تلقائياً عند إعادة تشغيل السيرفر أو انقطاع الاتصال:
+```bash
+# 1. نسخ ملف الخدمة
+sudo cp memoryqudrat.service /etc/systemd/system/
+
+# 2. تعديل المسار واسم المستخدم ليطابق سيرفرك إن لزم الأمر
+sudo nano /etc/systemd/system/memoryqudrat.service
+
+# 3. تفعيل وتشغيل الخدمة
+sudo systemctl daemon-reload
+sudo systemctl enable memoryqudrat
+sudo systemctl start memoryqudrat
+
+# 4. متابعة السجلات الحية
+sudo journalctl -u memoryqudrat -f
+```
+
 ---
 
 ## 📁 هيكلية المشروع النظيفة
