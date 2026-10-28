@@ -240,3 +240,31 @@ async def download_telegram_document(bot, doc_obj) -> tuple[str, str]:
 
     rel_path = os.path.relpath(target_path, os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
     return rel_path, orig_name
+
+
+def resolve_media_path(content: str) -> str:
+    """
+    Robustly resolves a stored media path into a valid existing absolute path.
+    Checks relative paths, absolute paths, and standard media directories.
+    """
+    if not content:
+        return ""
+
+    if os.path.exists(content):
+        return os.path.abspath(content)
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate1 = os.path.join(base_dir, content)
+    if os.path.exists(candidate1):
+        return candidate1
+
+    filename = os.path.basename(content)
+    candidate_photo = os.path.join(PHOTOS_DIR, filename)
+    if os.path.exists(candidate_photo):
+        return candidate_photo
+
+    candidate_doc = os.path.join(DOCUMENTS_DIR, filename)
+    if os.path.exists(candidate_doc):
+        return candidate_doc
+
+    return ""

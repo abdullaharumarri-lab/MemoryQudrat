@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 import database as db
 from config import is_authorized
 from spaced_repetition import stage_label
-from utils import safe_edit, send_clean_message
+from utils import safe_edit, send_clean_message, resolve_media_path
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +114,8 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
 
     # ── 1. Photo Item ──
     if item_type == "photo":
-        full_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), content)
-        if not os.path.exists(full_path) and os.path.exists(content):
+        full_path = resolve_media_path(content)
+        if not full_path or not os.path.exists(full_path):
             full_path = content
 
         if review_mode == "direct":
@@ -206,22 +206,44 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
 
     # ── 4. Document / PDF Item ──
     if item_type == "pdf":
-        text = (
+        full_path = resolve_media_path(content)
+        caption = (
             f"{header}\n"
-            f"📑 <b>مستند: {html.escape(item.get('title') or 'ملف PDF')}</b>\n"
-            f"مسار التخزين: <code>{html.escape(content)}</code>\n\n"
-            f"👇 <i>راجع المستند ثم قيّم إنجازك للمراجعة:</i>"
+            f"📑 <b>مستند: {html.escape(item.get('title') or 'ملف PDF')}</b>\n\n"
+            f"👇 <i>افتح المستند أعلاه وراجعه، ثم قيّم مدى استيعابك للمحتوى:</i>"
         )
         kb = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("🔴 لم أراجعه / صعب", callback_data=f"rev_rate_{item_id}_hard"),
                 InlineKeyboardButton("🟢 أتممت مراجعته بنجاح", callback_data=f"rev_rate_{item_id}_good"),
             ],
-            [InlineKeyboardButton("⏹️ إنهاء", callback_data="exit_review_session")],
+            [InlineKeyboardButton("⏹️ إنهاء الجلسة مؤقتاً", callback_data="exit_review_session")],
         ])
-        msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=kb)
-        session["session_message_ids"].append(msg.message_id)
-        db.track_chat_message(chat_id, msg.message_id)
+
+        if full_path and os.path.exists(full_path):
+            with open(full_path, "rb") as df:
+                msg = await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=df,
+                    filename=os.path.basename(full_path),
+                    caption=caption[:1024],
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            session["session_message_ids"].append(msg.message_id)
+            db.track_chat_message(chat_id, msg.message_id)
+            return
+        else:
+            text = (
+                f"{header}\n"
+                f"📑 <b>مستند: {html.escape(item.get('title') or 'ملف PDF')}</b>\n"
+                f"⚠️ <i>تعذر العثور على الملف على القرص.</i>\n\n"
+                f"👇 <i>قيّم إنجازك للمراجعة:</i>"
+            )
+            msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=kb)
+            session["session_message_ids"].append(msg.message_id)
+            db.track_chat_message(chat_id, msg.message_id)
+            return
 
 
 async def finish_review_session(update: Update, context: ContextTypes.DEFAULT_TYPE):

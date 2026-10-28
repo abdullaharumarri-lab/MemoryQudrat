@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 
 import database as db
 from spaced_repetition import stage_label
-from utils import safe_edit
+from utils import safe_edit, resolve_media_path
 
 logger = logging.getLogger(__name__)
 
@@ -204,26 +204,52 @@ async def handle_folders_callback(update: Update, context: ContextTypes.DEFAULT_
         kb.append([InlineKeyboardButton("🗑️ حذف هذه المسألة", callback_data=f"folder_del_item_{item['id']}_{fid}_{idx}")])
         kb.append([InlineKeyboardButton("🔙 تفاصيل المجلد", callback_data=f"folder_view_{fid}")])
 
-        # If it's a photo, send photo and delete previous message
-        if item.get("item_type") == "photo" and os.path.exists(item.get("content", "")):
-            try:
-                with open(item["content"], "rb") as pf:
-                    new_photo_msg = await context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        photo=pf,
-                        caption=text[:1024],
-                        parse_mode="HTML",
-                        reply_markup=InlineKeyboardMarkup(kb),
-                    )
-                db.track_chat_message(update.effective_chat.id, new_photo_msg.message_id)
-                if query.message:
-                    try:
-                        await query.message.delete()
-                    except Exception:
-                        pass
-                return True
-            except Exception:
-                pass
+        # 1. Photo Item: send actual photo directly in chat
+        if item.get("item_type") == "photo":
+            full_path = resolve_media_path(item.get("content", ""))
+            if full_path and os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as pf:
+                        new_photo_msg = await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=pf,
+                            caption=text[:1024],
+                            parse_mode="HTML",
+                            reply_markup=InlineKeyboardMarkup(kb),
+                        )
+                    db.track_chat_message(update.effective_chat.id, new_photo_msg.message_id)
+                    if query.message:
+                        try:
+                            await query.message.delete()
+                        except Exception:
+                            pass
+                    return True
+                except Exception as e:
+                    logger.warning("Failed to send photo in browser: %s", e)
+
+        # 2. PDF / Document Item: send actual document file directly in chat
+        if item.get("item_type") == "pdf":
+            full_path = resolve_media_path(item.get("content", ""))
+            if full_path and os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as df:
+                        new_doc_msg = await context.bot.send_document(
+                            chat_id=update.effective_chat.id,
+                            document=df,
+                            filename=os.path.basename(full_path),
+                            caption=text[:1024],
+                            parse_mode="HTML",
+                            reply_markup=InlineKeyboardMarkup(kb),
+                        )
+                    db.track_chat_message(update.effective_chat.id, new_doc_msg.message_id)
+                    if query.message:
+                        try:
+                            await query.message.delete()
+                        except Exception:
+                            pass
+                    return True
+                except Exception as e:
+                    logger.warning("Failed to send document in browser: %s", e)
 
         await safe_edit(query, text, InlineKeyboardMarkup(kb))
         return True

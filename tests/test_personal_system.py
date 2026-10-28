@@ -243,5 +243,21 @@ class TestPersonalMemoryQudrat(unittest.TestCase):
         self.assertEqual(remaining, [103])
 
 
+    def test_resolve_media_path(self):
+        """Verify robust media path resolution across different folder contexts."""
+        from utils import resolve_media_path
+        # Test non-existent path
+        self.assertEqual(resolve_media_path(""), "")
+        self.assertEqual(resolve_media_path("does_not_exist_file.xyz"), "")
+
+        # Test real existing file
+        test_file = os.path.join(self.test_dir, "sample.pdf")
+        with open(test_file, "w") as f:
+            f.write("dummy pdf")
+        resolved = resolve_media_path(test_file)
+        self.assertTrue(os.path.exists(resolved))
+        self.assertEqual(resolved, os.path.abspath(test_file))
+
+
 if __name__ == "__main__":
     unittest.main()
