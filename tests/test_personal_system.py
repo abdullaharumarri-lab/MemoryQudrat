@@ -13,6 +13,7 @@ if BASE_DIR not in sys.path:
 import config
 import spaced_repetition as sr
 from handlers.subscription_handler import can_user_capture
+from utils import resolve_media_path
 
 
 class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
@@ -69,7 +70,7 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
         """Verify extending subscription upon successful Stars payment."""
         self.db.get_or_create_user(self.student_1)
 
-        # Student purchases 30 days for 250 Stars
+        # Student purchases 30 days
         ext = self.db.extend_user_subscription(
             user_id=self.student_1,
             days=30,
@@ -89,6 +90,31 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
         self.assertEqual(stats["total_stars"], config.STARS_MONTHLY_PRICE)
         self.assertEqual(stats["active_subscribers"], 2)  # admin + student_1
 
+    def test_payment_replay_protection(self):
+        """Verify duplicate charge_id replay attack is detected and ignored."""
+        self.db.get_or_create_user(self.student_1)
+
+        # First legitimate payment
+        ext1 = self.db.extend_user_subscription(
+            user_id=self.student_1,
+            days=30,
+            stars_paid=70,
+            charge_id="unique_charge_12345",
+            payload="sub_month_11111111",
+        )
+        self.assertEqual(ext1["days_added"], 30)
+
+        # Replay attempt with same charge_id
+        ext2 = self.db.extend_user_subscription(
+            user_id=self.student_1,
+            days=30,
+            stars_paid=70,
+            charge_id="unique_charge_12345",
+            payload="sub_month_11111111",
+        )
+        self.assertEqual(ext2["days_added"], 0)
+        self.assertTrue(ext2.get("already_processed"))
+
     def test_paywall_guard_and_graceful_expiry(self):
         """Verify paywall blocks new item capture when expired, but allows review."""
         self.db.get_or_create_user(self.student_1)
@@ -106,7 +132,7 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
         # But student should still be able to read existing items and review
         fid = self.db.create_folder(self.student_1, "مجلدي القديم")
         p_id = self.db.add_item(self.student_1, "text", "سؤال سابق", folder_id=fid)
-        item = self.db.get_item(p_id)
+        item = self.db.get_item(p_id, self.student_1)
         self.assertIsNotNone(item)
         self.assertEqual(item["content"], "سؤال سابق")
 
@@ -133,13 +159,22 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
         self.assertEqual(len(s2_folders), 1)
         self.assertEqual(s2_folders[0]["id"], f2)
 
-        # Student 1 cannot get Student 2's folder
+        # Cross-access attempts must fail safely
         self.assertIsNone(self.db.get_folder(f2, self.student_1))
-        # Student 2 cannot get Student 1's folder
         self.assertIsNone(self.db.get_folder(f1, self.student_2))
 
-        # Student 1 cannot delete Student 2's folder
         self.assertFalse(self.db.delete_folder(f2, self.student_1))
+        self.assertFalse(self.db.rename_folder(f2, self.student_1, "هاك"))
+
+        self.assertIsNone(self.db.get_item(item2, self.student_1))
+        self.assertIsNone(self.db.get_item(item1, self.student_2))
+
+        self.assertFalse(self.db.delete_item(item2, self.student_1))
+        self.assertFalse(self.db.update_item_folder(item2, self.student_1, f1))
+
+        # Cross review attempt must be rejected
+        cross_rev = self.db.record_item_review(item2, self.student_1, "good")
+        self.assertEqual(cross_rev, {})
 
         # Student 1 items in folder
         s1_items = self.db.get_items_by_folder(f1, self.student_1)
@@ -149,6 +184,29 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
         # Student 2 querying Student 1's folder gets 0 items
         s2_query_s1 = self.db.get_items_by_folder(f1, self.student_2)
         self.assertEqual(len(s2_query_s1), 0)
+
+    def test_sql_injection_defense_in_reviews(self):
+        """Verify arbitrary malicious rating strings cannot execute SQL injection."""
+        self.db.get_or_create_user(self.student_1)
+        fid = self.db.create_folder(self.student_1, "مجلد أمان")
+        item_id = self.db.add_item(self.student_1, "text", "مسألة فحص أمان", folder_id=fid)
+
+        # Attempt SQL injection through rating parameter
+        malicious_ratings = [
+            "easy; DROP TABLE users; --",
+            "' OR 1=1 --",
+            "good_count = good_count + 100",
+            "unknown_mode",
+            "",
+            None,
+        ]
+        for bad_rate in malicious_ratings:
+            res = self.db.record_item_review(item_id, self.student_1, str(bad_rate))
+            self.assertEqual(res, {})
+
+        # Ensure users table is intact
+        users_count = self.db.get_admin_platform_stats()["total_users"]
+        self.assertGreaterEqual(users_count, 1)
 
     def test_nested_subfolders_and_breadcrumbs(self):
         """Verify creating nested folders inside folders, breadcrumb paths, and descendants."""
@@ -196,7 +254,7 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
             folder_id=fid,
             review_mode="qa",
         )
-        item1 = self.db.get_item(p_id)
+        item1 = self.db.get_item(p_id, self.student_1)
         self.assertEqual(item1["user_id"], self.student_1)
         self.assertEqual(item1["item_type"], "photo")
         self.assertEqual(item1["review_mode"], "qa")
@@ -211,7 +269,7 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
             folder_id=fid,
             review_mode="direct",
         )
-        item2 = self.db.get_item(d_id)
+        item2 = self.db.get_item(d_id, self.student_1)
         self.assertEqual(item2["review_mode"], "direct")
 
         # 3. Forms Link
@@ -222,7 +280,7 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
             title="كويز تجميع 1446",
             folder_id=fid,
         )
-        item3 = self.db.get_item(l_id)
+        item3 = self.db.get_item(l_id, self.student_1)
         self.assertEqual(item3["item_type"], "link")
 
         # 4. PDF Document
@@ -233,7 +291,7 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
             title="مذكرة التناظر اللفظي",
             folder_id=fid,
         )
-        item4 = self.db.get_item(doc_id)
+        item4 = self.db.get_item(doc_id, self.student_1)
         self.assertEqual(item4["item_type"], "pdf")
 
     def test_record_item_review_and_stats(self):
@@ -252,7 +310,7 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
         res = self.db.record_item_review(item_id, rating="good", user_id=self.student_1)
         self.assertEqual(res["new_stage"], 1)
 
-        updated_item = self.db.get_item(item_id)
+        updated_item = self.db.get_item(item_id, self.student_1)
         self.assertEqual(updated_item["stage"], 1)
 
         # Verify daily stats updated for student 1
@@ -313,15 +371,14 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
         self.assertEqual(remaining, [103])
 
     def test_resolve_media_path(self):
-        """Verify robust media path resolution across different user contexts."""
-        from utils import resolve_media_path
+        """Verify robust media path resolution with user context prioritization."""
         self.assertEqual(resolve_media_path(""), "")
         self.assertEqual(resolve_media_path("does_not_exist_file.xyz"), "")
 
         test_file = os.path.join(self.test_dir, "sample.pdf")
         with open(test_file, "w") as f:
             f.write("dummy pdf")
-        resolved = resolve_media_path(test_file)
+        resolved = resolve_media_path(test_file, user_id=self.student_1)
         self.assertTrue(os.path.exists(resolved))
         self.assertEqual(resolved, os.path.abspath(test_file))
 

@@ -247,10 +247,10 @@ async def download_telegram_document(bot, doc_obj, user_id: int = None) -> tuple
     return rel_path, orig_name
 
 
-def resolve_media_path(content: str) -> str:
+def resolve_media_path(content: str, user_id: int = None) -> str:
     """
     Robustly resolves a stored media path into a valid existing absolute path.
-    Checks relative paths, absolute paths, and user subdirectories.
+    Prioritizes user_id isolated directory, relative paths, and then fallback search.
     """
     if not content:
         return ""
@@ -264,6 +264,15 @@ def resolve_media_path(content: str) -> str:
         return candidate1
 
     filename = os.path.basename(content)
+
+    # Prioritize user's own isolated folder if user_id is provided
+    if user_id:
+        user_photo = os.path.join(PHOTOS_DIR, str(user_id), filename)
+        if os.path.exists(user_photo):
+            return user_photo
+        user_doc = os.path.join(DOCUMENTS_DIR, str(user_id), filename)
+        if os.path.exists(user_doc):
+            return user_doc
 
     # Search in photos directory
     for root, _, files in os.walk(PHOTOS_DIR):

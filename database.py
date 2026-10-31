@@ -352,25 +352,38 @@ def check_user_subscription(user_id: int) -> dict:
 def extend_user_subscription(
     user_id: int, days: int, stars_paid: int = 0, charge_id: str = None, payload: str = None
 ) -> dict:
-    """Extends user's subscription by specified days, activates account, and records payment."""
+    """Extends user's subscription by specified days, activates account, and records payment with replay protection."""
     user = get_or_create_user(user_id)
     now = get_riyadh_now()
 
-    curr_exp_str = user.get("subscription_expires_at")
-    base_dt = now.replace(tzinfo=None)
-    if curr_exp_str:
-        try:
-            exp_dt = datetime.strptime(curr_exp_str[:19], "%Y-%m-%d %H:%M:%S")
-            if exp_dt > base_dt:
-                base_dt = exp_dt
-        except Exception:
-            pass
-
-    new_exp_dt = base_dt + timedelta(days=days)
-    new_exp_str = new_exp_dt.strftime("%Y-%m-%d %H:%M:%S")
-
     with get_db_connection() as conn:
         c = conn.cursor()
+        # Security: Prevent payment replay attacks (Idempotency)
+        if charge_id:
+            c.execute("SELECT id FROM payments WHERE charge_id = ?", (charge_id,))
+            if c.fetchone():
+                logger.warning("Duplicate charge_id detected: %s for user %s (replay ignored)", charge_id, user_id)
+                curr_exp = user.get("subscription_expires_at") or now.strftime("%Y-%m-%d %H:%M:%S")
+                return {
+                    "user_id": user_id,
+                    "new_expires_at": curr_exp[:10],
+                    "days_added": 0,
+                    "already_processed": True,
+                }
+
+        curr_exp_str = user.get("subscription_expires_at")
+        base_dt = now.replace(tzinfo=None)
+        if curr_exp_str:
+            try:
+                exp_dt = datetime.strptime(curr_exp_str[:19], "%Y-%m-%d %H:%M:%S")
+                if exp_dt > base_dt:
+                    base_dt = exp_dt
+            except Exception:
+                pass
+
+        new_exp_dt = base_dt + timedelta(days=days)
+        new_exp_str = new_exp_dt.strftime("%Y-%m-%d %H:%M:%S")
+
         c.execute("""
             UPDATE users 
             SET status = 'active', subscription_expires_at = ?
@@ -489,53 +502,50 @@ def get_all_folders(user_id: int) -> list[dict]:
         return [dict(r) for r in c.fetchall()]
 
 
-def get_folder(folder_id: int, user_id: int = None) -> dict | None:
-    if not folder_id:
+def get_folder(folder_id: int, user_id: int) -> dict | None:
+    if not folder_id or not user_id:
         return None
     with get_db_connection() as conn:
         c = conn.cursor()
-        if user_id:
-            c.execute("SELECT * FROM folders WHERE id = ? AND user_id = ?", (folder_id, user_id))
-        else:
-            c.execute("SELECT * FROM folders WHERE id = ?", (folder_id,))
+        c.execute("SELECT * FROM folders WHERE id = ? AND user_id = ?", (folder_id, user_id))
         row = c.fetchone()
         return dict(row) if row else None
 
 
-def get_all_descendant_folder_ids(folder_id: int, user_id: int = None) -> list[int]:
-    if not folder_id:
+def get_all_descendant_folder_ids(folder_id: int, user_id: int) -> list[int]:
+    if not folder_id or not user_id:
         return []
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute("""
             WITH RECURSIVE subfolders AS (
-                SELECT id, user_id FROM folders WHERE id = ?
+                SELECT id, user_id FROM folders WHERE id = ? AND user_id = ?
                 UNION ALL
                 SELECT f.id, f.user_id FROM folders f
-                JOIN subfolders s ON f.parent_id = s.id
+                JOIN subfolders s ON f.parent_id = s.id AND f.user_id = ?
             )
-            SELECT id FROM subfolders WHERE (? IS NULL OR user_id = ?)
-        """, (folder_id, user_id, user_id))
+            SELECT id FROM subfolders WHERE user_id = ?
+        """, (folder_id, user_id, user_id, user_id))
         return [row["id"] for row in c.fetchall()]
 
 
-def get_folder_path(folder_id: int, user_id: int = None) -> list[dict]:
-    if not folder_id:
+def get_folder_path(folder_id: int, user_id: int) -> list[dict]:
+    if not folder_id or not user_id:
         return []
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute("""
             WITH RECURSIVE folder_path AS (
-                SELECT id, name, icon, parent_id, user_id, 0 as depth FROM folders WHERE id = ?
+                SELECT id, name, icon, parent_id, user_id, 0 as depth FROM folders WHERE id = ? AND user_id = ?
                 UNION ALL
                 SELECT f.id, f.name, f.icon, f.parent_id, f.user_id, fp.depth + 1
                 FROM folders f
-                JOIN folder_path fp ON f.id = fp.parent_id
+                JOIN folder_path fp ON f.id = fp.parent_id AND f.user_id = ?
             )
             SELECT id, name, icon, parent_id FROM folder_path 
-            WHERE (? IS NULL OR user_id = ?)
+            WHERE user_id = ?
             ORDER BY depth DESC
-        """, (folder_id, user_id, user_id))
+        """, (folder_id, user_id, user_id, user_id))
         return [dict(r) for r in c.fetchall()]
 
 
@@ -633,36 +643,29 @@ def add_item(
         return c.lastrowid
 
 
-def get_item(item_id: int, user_id: int = None) -> dict | None:
+def get_item(item_id: int, user_id: int) -> dict | None:
+    if not item_id or not user_id:
+        return None
     with get_db_connection() as conn:
         c = conn.cursor()
-        if user_id:
-            c.execute(
-                """SELECT i.*, f.name as folder_name, f.icon as folder_icon 
-                   FROM items i 
-                   LEFT JOIN folders f ON i.folder_id = f.id 
-                   WHERE i.id = ? AND i.user_id = ?""",
-                (item_id, user_id),
-            )
-        else:
-            c.execute(
-                """SELECT i.*, f.name as folder_name, f.icon as folder_icon 
-                   FROM items i 
-                   LEFT JOIN folders f ON i.folder_id = f.id 
-                   WHERE i.id = ?""",
-                (item_id,),
-            )
+        c.execute(
+            """SELECT i.*, f.name as folder_name, f.icon as folder_icon 
+               FROM items i 
+               LEFT JOIN folders f ON i.folder_id = f.id 
+               WHERE i.id = ? AND i.user_id = ?""",
+            (item_id, user_id),
+        )
         row = c.fetchone()
         return dict(row) if row else None
 
 
-def delete_item(item_id: int, user_id: int = None) -> bool:
+def delete_item(item_id: int, user_id: int) -> bool:
+    if not item_id or not user_id:
+        return False
     with get_db_connection() as conn:
         c = conn.cursor()
-        if user_id:
-            c.execute("DELETE FROM items WHERE id = ? AND user_id = ?", (item_id, user_id))
-        else:
-            c.execute("DELETE FROM items WHERE id = ?", (item_id,))
+        c.execute("DELETE FROM items WHERE id = ? AND user_id = ?", (item_id, user_id))
+        return c.rowcount > 0
         return c.rowcount > 0
 
 
@@ -773,8 +776,17 @@ def record_item_review(item_id: int, user_id: int, rating: str) -> dict:
             VALUES (?, ?, ?, ?, ?)
         """, (user_id, item_id, rating, item["stage"], sched["new_stage"]))
 
-        # 3. Update daily stats per user
-        col = f"{rating}_count"
+        # 3. Update daily stats per user with strict column whitelist
+        col_map = {
+            "easy": "easy_count",
+            "good": "good_count",
+            "hard": "hard_count",
+        }
+        col = col_map.get(rating)
+        if not col:
+            logger.warning("Attempted review with invalid rating: %s by user %s", rating, user_id)
+            return {}
+
         c.execute(f"""
             INSERT INTO daily_stats (user_id, stat_date, total_reviewed, {col})
             VALUES (?, ?, 1, 1)

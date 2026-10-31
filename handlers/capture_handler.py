@@ -417,6 +417,11 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
 
     # Mode confirmation for photo capture
     if data in ("confirm_cap_mode_qa", "confirm_cap_mode_direct"):
+        can_add, paywall_msg = can_user_capture(uid)
+        if not can_add:
+            await query.answer("انتهت فترة اشتراكك، يرجى التجديد بالنجوم.", show_alert=True)
+            return True
+
         pending = context.user_data.pop("pending_capture", None)
         if not pending:
             await query.answer("انتهت صلاحية الطلب أو تم الحفظ مسبقاً.")
