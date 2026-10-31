@@ -124,7 +124,9 @@ async def post_init(application):
     # Schedule reminders for all users with their preferred time
     users = db.get_all_users_for_reminders()
     for u in users:
-        u_id = u["user_id"]
+        u_id = u.get("id") or u.get("user_id")
+        if not u_id:
+            continue
         r_h = u.get("reminder_hour", 5)
         r_m = u.get("reminder_minute", 0)
         schedule_daily_reminder(application.job_queue, u_id, r_h, r_m)

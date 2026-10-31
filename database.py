@@ -44,8 +44,8 @@ def init_db():
                 username TEXT,
                 full_name TEXT,
                 status TEXT DEFAULT 'trial',
-                trial_started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                subscription_expires_at TIMESTAMP,
+                trial_started_at TIMESTAMP DEFAULT NULL,
+                subscription_expires_at TIMESTAMP DEFAULT NULL,
                 is_admin INTEGER DEFAULT 0,
                 active_folder_id INTEGER DEFAULT NULL,
                 reminder_hour INTEGER DEFAULT 5,
@@ -57,12 +57,26 @@ def init_db():
         # Migration: Ensure all columns exist in users
         cursor.execute("PRAGMA table_info(users)")
         u_cols = [row["name"] for row in cursor.fetchall()]
-        if "active_folder_id" not in u_cols:
-            cursor.execute("ALTER TABLE users ADD COLUMN active_folder_id INTEGER DEFAULT NULL")
-        if "reminder_hour" not in u_cols:
-            cursor.execute("ALTER TABLE users ADD COLUMN reminder_hour INTEGER DEFAULT 5")
-        if "reminder_minute" not in u_cols:
-            cursor.execute("ALTER TABLE users ADD COLUMN reminder_minute INTEGER DEFAULT 0")
+
+        # Rename user_id to id if old schema
+        if "user_id" in u_cols and "id" not in u_cols:
+            cursor.execute("ALTER TABLE users RENAME COLUMN user_id TO id")
+            cursor.execute("PRAGMA table_info(users)")
+            u_cols = [row["name"] for row in cursor.fetchall()]
+
+        user_migrations = [
+            ("status", "TEXT DEFAULT 'trial'"),
+            ("trial_started_at", "TIMESTAMP DEFAULT NULL"),
+            ("subscription_expires_at", "TIMESTAMP DEFAULT NULL"),
+            ("is_admin", "INTEGER DEFAULT 0"),
+            ("active_folder_id", "INTEGER DEFAULT NULL"),
+            ("reminder_hour", "INTEGER DEFAULT 5"),
+            ("reminder_minute", "INTEGER DEFAULT 0"),
+            ("created_at", "TIMESTAMP DEFAULT NULL"),
+        ]
+        for col_name, col_def in user_migrations:
+            if col_name not in u_cols:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}")
 
         # 2. Folders table (with user_id and parent_id for nested subfolders)
         cursor.execute("""
@@ -385,7 +399,7 @@ def update_user_reminder_time(user_id: int, hour: int, minute: int):
 def get_all_users_for_reminders() -> list[dict]:
     with get_db_connection() as conn:
         c = conn.cursor()
-        c.execute("SELECT id, reminder_hour, reminder_minute, status FROM users WHERE status != 'banned'")
+        c.execute("SELECT id, id as user_id, reminder_hour, reminder_minute, status FROM users WHERE status != 'banned'")
         return [dict(r) for r in c.fetchall()]
 
 
