@@ -10,6 +10,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
@@ -27,6 +28,16 @@ from handlers.capture_handler import (
     handle_photo_capture,
     handle_text_and_url_capture,
     handle_document_capture,
+)
+from handlers.subscription_handler import (
+    subscription_command,
+    precheckout_callback,
+    successful_payment_callback,
+)
+from handlers.admin_handler import (
+    admin_command,
+    gift_sub_command,
+    broadcast_command,
 )
 from utils import send_clean_message
 
@@ -67,7 +78,7 @@ async def send_daily_reminder_to_chat(context, chat_id: int):
     """Sends the daily active recall nudge to the user."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-    stats = db.get_dashboard_stats()
+    stats = db.get_dashboard_stats(user_id=chat_id)
     due = stats["due_count"]
     folders_info = stats["folders_breakdown"]
 
@@ -107,13 +118,16 @@ async def daily_reminder_job(context):
 # ─── Post Init Setup ──────────────────────────────────────────────────────────
 
 async def post_init(application):
-    logger.info("Initializing personal MemoryQudrat bot...")
+    logger.info("Initializing commercial MemoryQudrat SaaS bot...")
     db.init_db()
 
-    # Schedule personal reminder
-    r_h = int(db.get_setting("reminder_hour", "5"))
-    r_m = int(db.get_setting("reminder_minute", "0"))
-    schedule_daily_reminder(application.job_queue, ADMIN_USER_ID, r_h, r_m)
+    # Schedule reminders for all users with their preferred time
+    users = db.get_all_users_for_reminders()
+    for u in users:
+        u_id = u["user_id"]
+        r_h = u.get("reminder_hour", 5)
+        r_m = u.get("reminder_minute", 0)
+        schedule_daily_reminder(application.job_queue, u_id, r_h, r_m)
 
     # Set Telegram Menu Commands
     commands = [
@@ -121,12 +135,13 @@ async def post_init(application):
         BotCommand("review", "▶️ ابدأ مراجعات اليوم"),
         BotCommand("folders", "📁 مجلداتي وأرشيف المسائل"),
         BotCommand("stats", "📊 تقريري الإحصائي والنبض"),
+        BotCommand("subscribe", "⭐ باقات الاشتراك والترقية"),
         BotCommand("backup", "💾 نسخة احتياطية للبيانات"),
     ]
     try:
         await application.bot.set_my_commands(commands)
         await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-        logger.info("Personal bot commands and Menu Button configured successfully.")
+        logger.info("Commercial bot commands and Menu Button configured successfully.")
     except Exception as e:
         logger.warning("Could not set bot commands: %s", e)
 
@@ -204,18 +219,27 @@ def main():
     app.add_handler(CommandHandler("folders", folders_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("backup", backup_command))
+    app.add_handler(CommandHandler("subscribe", subscription_command))
+    app.add_handler(CommandHandler("pricing", subscription_command))
+    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("gift_sub", gift_sub_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
 
-    # 2. Media Capture Handlers (Zero-friction)
+    # 2. Telegram Stars In-App Payments
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+
+    # 3. Media Capture Handlers (Zero-friction)
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo_capture))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document_capture))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_and_url_capture))
 
-    # 3. Interactive Callbacks Router
+    # 4. Interactive Callbacks Router
     app.add_handler(CallbackQueryHandler(button_router))
 
     app.add_error_handler(error_handler)
 
-    logger.info("MemoryQudrat Personal Active Recall OS started successfully!")
+    logger.info("MemoryQudrat Commercial SaaS Active Recall OS started successfully!")
 
     port = int(os.environ.get("PORT", 8000))
     app_url = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("APP_URL")

@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 
 # ─── Folders View Builders ───────────────────────────────────────────────────
 
-def build_folders_menu() -> tuple[str, InlineKeyboardMarkup]:
-    """Builds root folders listing view with item and subfolder indicators."""
-    root_folders = db.get_folders(parent_id=None)
-    stats = db.get_dashboard_stats()
+def build_folders_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Builds root folders listing view with item and subfolder indicators for user_id."""
+    root_folders = db.get_folders(user_id, parent_id=None)
+    stats = db.get_dashboard_stats(user_id)
     breakdown_map = {f["id"]: f for f in stats["folders_breakdown"]}
-    active_fid = db.get_active_folder_id()
+    active_fid = db.get_active_folder_id(user_id)
 
     if not root_folders:
         text = (
@@ -58,19 +58,19 @@ def build_folders_menu() -> tuple[str, InlineKeyboardMarkup]:
     return "\n".join(text_lines), InlineKeyboardMarkup(kb)
 
 
-def build_folder_detail_view(folder_id: int) -> tuple[str, InlineKeyboardMarkup]:
+def build_folder_detail_view(folder_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     """Builds the single folder control and action view with nested subfolder navigation."""
-    folder = db.get_folder(folder_id)
+    folder = db.get_folder(folder_id, user_id)
     if not folder:
         return "المجلد غير موجود.", InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="folders_menu")]])
 
-    path_str = db.get_folder_path_string(folder_id)
-    subfolders = db.get_subfolders(folder_id)
-    direct_items = db.get_items_by_folder(folder_id, include_subfolders=False)
-    all_items = db.get_items_by_folder(folder_id, include_subfolders=True)
-    due_items = db.get_due_items(folder_id, include_subfolders=True)
+    path_str = db.get_folder_path_string(folder_id, user_id)
+    subfolders = db.get_subfolders(user_id, folder_id)
+    direct_items = db.get_items_by_folder(folder_id, user_id, include_subfolders=False)
+    all_items = db.get_items_by_folder(folder_id, user_id, include_subfolders=True)
+    due_items = db.get_due_items(user_id, folder_id, include_subfolders=True)
 
-    active_fid = db.get_active_folder_id()
+    active_fid = db.get_active_folder_id(user_id)
     is_active = (folder_id == active_fid)
     active_desc = "نشط ✅ (تُحفظ فيه المواد تلقائياً)" if is_active else "غير نشط"
 
@@ -91,7 +91,7 @@ def build_folder_detail_view(folder_id: int) -> tuple[str, InlineKeyboardMarkup]
         sub_buttons = []
         for sf in subfolders:
             sub_id = sf["id"]
-            sf_items = db.get_items_by_folder(sub_id, include_subfolders=True)
+            sf_items = db.get_items_by_folder(sub_id, user_id, include_subfolders=True)
             sub_buttons.append(InlineKeyboardButton(f"📂 {sf['name']} ({len(sf_items)})", callback_data=f"folder_view_{sub_id}"))
         for i in range(0, len(sub_buttons), 2):
             kb.append(sub_buttons[i:i + 2])
@@ -134,28 +134,32 @@ async def handle_folders_callback(update: Update, context: ContextTypes.DEFAULT_
     if not query:
         return False
     data = query.data
+    user = update.effective_user
+    if not user:
+        return False
+    uid = user.id
 
     # Folders list
     if data == "folders_menu":
-        text, kb = build_folders_menu()
+        text, kb = build_folders_menu(uid)
         await safe_edit(query, text, kb)
         return True
 
     # Folder detail
     if data.startswith("folder_view_"):
         fid = int(data.split("_")[-1])
-        text, kb = build_folder_detail_view(fid)
+        text, kb = build_folder_detail_view(fid, uid)
         await safe_edit(query, text, kb)
         return True
 
     # Set as active folder
     if data.startswith("folder_make_active_"):
         fid = int(data.split("_")[-1])
-        db.set_active_folder_id(fid)
-        f = db.get_folder(fid)
+        db.set_active_folder_id(uid, fid)
+        f = db.get_folder(fid, uid)
         f_name = f["name"] if f else "المجلد"
         await query.answer(f"🎯 تم تعيين «{f_name}» كمجلدك النشط للإيداع!", show_alert=True)
-        text, kb = build_folder_detail_view(fid)
+        text, kb = build_folder_detail_view(fid, uid)
         await safe_edit(query, text, kb)
         return True
 
@@ -172,7 +176,7 @@ async def handle_folders_callback(update: Update, context: ContextTypes.DEFAULT_
         fid = int(parts[2])
         idx = int(parts[3])
 
-        items = db.get_items_by_folder(fid, include_subfolders=True)
+        items = db.get_items_by_folder(fid, uid, include_subfolders=True)
         if not items:
             await query.answer("لا توجد مسائل في هذا المجلد.")
             return True
@@ -260,7 +264,7 @@ async def handle_folders_callback(update: Update, context: ContextTypes.DEFAULT_
         item_id = int(parts[3])
         fid = int(parts[4])
         idx = int(parts[5])
-        db.delete_item(item_id)
+        db.delete_item(item_id, uid)
         await query.answer("🗑️ تم حذف المسألة بنجاح.")
         query.data = f"folder_browse_{fid}_{max(0, idx - 1)}"
         return await handle_folders_callback(update, context)
@@ -285,7 +289,7 @@ async def handle_folders_callback(update: Update, context: ContextTypes.DEFAULT_
         context.user_data["input_state"] = "awaiting_folder_name"
         context.user_data["folder_parent_id"] = parent_fid
         context.user_data["prompt_msg_id"] = query.message.message_id if query.message else None
-        p_folder = db.get_folder(parent_fid)
+        p_folder = db.get_folder(parent_fid, uid)
         p_name = p_folder["name"] if p_folder else "المجلد"
         prompt = (
             f"➕ <b>إضافة مجلد فرعي داخل «{html.escape(p_name)}»</b> 📂\n\n"
@@ -310,8 +314,8 @@ async def handle_folders_callback(update: Update, context: ContextTypes.DEFAULT_
     # Confirm folder delete
     if data.startswith("folder_del_confirm_"):
         fid = int(data.split("_")[-1])
-        f = db.get_folder(fid)
-        sub_cnt = len(db.get_subfolders(fid))
+        f = db.get_folder(fid, uid)
+        sub_cnt = len(db.get_subfolders(uid, fid))
         sub_info = f" ومجلداته الفرعية ({sub_cnt})" if sub_cnt > 0 else ""
         text = (
             f"⚠️ <b>تأكيد حذف المجلد!</b>\n\n"
@@ -328,14 +332,14 @@ async def handle_folders_callback(update: Update, context: ContextTypes.DEFAULT_
     # Execute folder delete
     if data.startswith("folder_do_del_"):
         fid = int(data.split("_")[-1])
-        f = db.get_folder(fid)
+        f = db.get_folder(fid, uid)
         parent_id = f.get("parent_id") if f else None
-        db.delete_folder(fid)
+        db.delete_folder(fid, uid)
         await query.answer("🗑️ تم حذف المجلد بنجاح.")
         if parent_id:
-            text, kb = build_folder_detail_view(parent_id)
+            text, kb = build_folder_detail_view(parent_id, uid)
         else:
-            text, kb = build_folders_menu()
+            text, kb = build_folders_menu(uid)
         await safe_edit(query, text, kb)
         return True
 

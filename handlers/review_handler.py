@@ -5,7 +5,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
-from config import is_authorized
 from spaced_repetition import stage_label
 from utils import safe_edit, send_clean_message, resolve_media_path
 
@@ -17,18 +16,19 @@ logger = logging.getLogger(__name__)
 async def start_review_session(
     update: Update, context: ContextTypes.DEFAULT_TYPE, folder_id: int = None
 ):
-    """Initiates an active recall review session (either global or folder-specific)."""
+    """Initiates an active recall review session scoped to user_id."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         return
+    uid = user.id
 
     chat_id = update.effective_chat.id
     query = update.callback_query
 
-    due_items = db.get_due_items(folder_id)
+    due_items = db.get_due_items(uid, folder_id=folder_id)
     folder_name = "جميع المجلدات"
     if folder_id:
-        f = db.get_folder(folder_id)
+        f = db.get_folder(folder_id, uid)
         if f:
             folder_name = f"{f['icon']} {f['name']}"
 
@@ -73,6 +73,11 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
     if not session:
         return
 
+    user = update.effective_user
+    if not user:
+        return
+    uid = user.id
+
     chat_id = update.effective_chat.id
     idx = session["index"]
     item_ids = session["item_ids"]
@@ -83,7 +88,7 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
         return
 
     item_id = item_ids[idx]
-    item = db.get_item(item_id)
+    item = db.get_item(item_id, uid)
     if not item:
         # Item deleted, advance safely
         session["index"] += 1
@@ -249,6 +254,10 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
 async def finish_review_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finishes the review session, cleans up, and displays a summary."""
     session = context.user_data.pop("active_review_session", None)
+    user = update.effective_user
+    if not user:
+        return
+    uid = user.id
     chat_id = update.effective_chat.id
 
     if session:
@@ -257,7 +266,7 @@ async def finish_review_session(update: Update, context: ContextTypes.DEFAULT_TY
             from utils import delete_messages_bulk
             await delete_messages_bulk(context, chat_id, old_ids)
 
-    stats = db.get_dashboard_stats()
+    stats = db.get_dashboard_stats(uid)
     text = (
         "🎉 <b>اكتملت جلسة المراجعة بنجاح استثنائي!</b> 🌟\n\n"
         "أحسنت العمل يا بطل! تم ترقية وتثبيت استقرار جميع المسائل المنجزة في منحنى الذاكرة طويلة المدى.\n\n"
@@ -281,6 +290,10 @@ async def handle_review_callback(update: Update, context: ContextTypes.DEFAULT_T
     if not query:
         return False
     data = query.data
+    user = update.effective_user
+    if not user:
+        return False
+    uid = user.id
 
     # Exit session
     if data == "exit_review_session":
@@ -291,7 +304,7 @@ async def handle_review_callback(update: Update, context: ContextTypes.DEFAULT_T
     # Reveal Solution in QA mode
     if data.startswith("rev_reveal_"):
         item_id = int(data.split("_")[-1])
-        item = db.get_item(item_id)
+        item = db.get_item(item_id, uid)
         if not item:
             await query.answer("المسألة غير موجودة.")
             return True
@@ -327,8 +340,8 @@ async def handle_review_callback(update: Update, context: ContextTypes.DEFAULT_T
         item_id = int(parts[2])
         rating = parts[3]  # 'easy', 'good', 'hard'
 
-        # Record rating in database
-        _ = db.record_item_review(item_id, rating)
+        # Record rating in database scoped to user
+        _ = db.record_item_review(item_id, uid, rating)
 
         # Immediate feedback toast
         labels = {"easy": "🟢 ممتاز! قفزت مرحلتين للأمام 🌟", "good": "🟡 أحسنت! تقدمت مرحلة ⚡", "hard": "🔴 سيعاد تكرارها غداً للترسيخ 💪"}

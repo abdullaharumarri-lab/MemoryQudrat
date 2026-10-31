@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
-from config import is_authorized
+from handlers.subscription_handler import can_user_capture
 from utils import (
     safe_edit,
     send_clean_message,
@@ -19,22 +19,33 @@ logger = logging.getLogger(__name__)
 # ─── Photo Capture Handler ───────────────────────────────────────────────────
 
 async def handle_photo_capture(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles incoming photos (questions, formula sheets, notes)."""
+    """Handles incoming photos (questions, formula sheets, notes) with subscription check."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         return
+    uid = user.id
 
     chat_id = update.effective_chat.id
     message = update.message
     if not message or not message.photo:
         return
 
-    # Download highest resolution photo
+    # 1. Subscription Check (Paywall Guard)
+    can_add, paywall_msg = can_user_capture(uid)
+    if not can_add:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⭐ تجديد / ترقية الاشتراك بالنجوم", callback_data="subscription_menu")],
+            [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+        ])
+        await send_clean_message(context, chat_id, paywall_msg, update=update, reply_markup=kb)
+        return
+
+    # Download highest resolution photo into user's isolated directory
     photo_obj = message.photo[-1]
-    rel_path = await download_telegram_photo(context.bot, photo_obj)
+    rel_path = await download_telegram_photo(context.bot, photo_obj, user_id=uid)
 
     caption = (message.caption or "").strip()
-    active_folder_id = db.get_active_folder_id()
+    active_folder_id = db.get_active_folder_id(uid)
 
     # Smart auto-detection via hashtag
     detected_mode = None
@@ -47,7 +58,7 @@ async def handle_photo_capture(update: Update, context: ContextTypes.DEFAULT_TYP
         detected_mode = "qa"
         clean_caption = re.sub(r'#(?:سؤال|مسألة|تجميع|تدريب)\b', '', clean_caption).strip()
 
-    # If no folders exist yet, prompt to create first folder immediately
+    # If no folders exist yet for this student, prompt to create first folder immediately
     if active_folder_id is None:
         context.user_data["pending_capture"] = {
             "item_type": "photo",
@@ -69,12 +80,13 @@ async def handle_photo_capture(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["prompt_msg_id"] = sent_id
         return
 
-    active_folder = db.get_folder(active_folder_id)
+    active_folder = db.get_folder(active_folder_id, uid)
     folder_name = active_folder["name"] if active_folder else "عام"
 
     # If auto-detected via hashtag, save immediately with 0 extra clicks!
     if detected_mode:
         item_id = db.add_item(
+            user_id=uid,
             item_type="photo",
             content=rel_path,
             title=clean_caption[:40] if clean_caption else "مسألة مصورة",
@@ -125,15 +137,16 @@ async def handle_photo_capture(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles text messages (folder inputs, questions, notes, formulas, or forms URLs)."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         return
+    uid = user.id
 
     chat_id = update.effective_chat.id
     raw_text = (update.message.text or "").strip()
     if not raw_text:
         return
 
-    # Check if waiting for specific state input
+    # Check if waiting for specific state input (creating/renaming folders)
     state = context.user_data.get("input_state")
 
     # 1. State: Awaiting folder name (New Root or Subfolder)
@@ -148,8 +161,8 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
             except Exception:
                 pass
 
-        new_fid = db.create_folder(raw_text, icon="📁", parent_id=parent_id)
-        db.set_active_folder_id(new_fid)
+        new_fid = db.create_folder(uid, raw_text, icon="📁", parent_id=parent_id)
+        db.set_active_folder_id(uid, new_fid)
 
         # If a pending capture was waiting for folder creation:
         pending = context.user_data.pop("pending_capture", None)
@@ -157,6 +170,7 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
             pending["folder_id"] = new_fid
             mode = pending.get("review_mode", "qa")
             item_id = db.add_item(
+                user_id=uid,
                 item_type=pending.get("item_type", "photo"),
                 content=pending.get("content", ""),
                 title=pending.get("title", ""),
@@ -185,7 +199,7 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
             return
 
         from handlers.folders_handler import build_folder_detail_view
-        text, kb = build_folder_detail_view(new_fid)
+        text, kb = build_folder_detail_view(new_fid, uid)
         if prompt_msg_id:
             try:
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_msg_id, text=text, reply_markup=kb, parse_mode="HTML")
@@ -208,9 +222,9 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
                 pass
 
         if target_fid:
-            db.rename_folder(target_fid, raw_text)
+            db.rename_folder(target_fid, uid, raw_text)
             from handlers.folders_handler import build_folder_detail_view
-            text, kb = build_folder_detail_view(target_fid)
+            text, kb = build_folder_detail_view(target_fid, uid)
             if prompt_msg_id:
                 try:
                     await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_msg_id, text=text, reply_markup=kb, parse_mode="HTML")
@@ -220,7 +234,17 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
             await send_clean_message(context, chat_id, text, reply_markup=kb)
             return
 
-    active_folder_id = db.get_active_folder_id()
+    # 3. Check Subscription before capturing questions/notes
+    can_add, paywall_msg = can_user_capture(uid)
+    if not can_add:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⭐ تجديد / ترقية الاشتراك بالنجوم", callback_data="subscription_menu")],
+            [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+        ])
+        await send_clean_message(context, chat_id, paywall_msg, update=update, reply_markup=kb)
+        return
+
+    active_folder_id = db.get_active_folder_id(uid)
 
     # If no folders exist yet, prompt to create first folder
     if active_folder_id is None:
@@ -243,7 +267,7 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
         context.user_data["prompt_msg_id"] = sent_id
         return
 
-    active_folder = db.get_folder(active_folder_id)
+    active_folder = db.get_folder(active_folder_id, uid)
     folder_name = active_folder["name"] if active_folder else "عام"
 
     # 1. URL Capture (Google Forms, Quiz URLs, Platforms)
@@ -252,6 +276,7 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
         url = url_match.group(0)
         title_text = raw_text.replace(url, "").strip() or "رابط كويز / تدريب"
         item_id = db.add_item(
+            user_id=uid,
             item_type="link",
             content=url,
             title=title_text[:40],
@@ -281,6 +306,7 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
     first_line = lines[0] if lines else "ملاحظة نصية"
 
     item_id = db.add_item(
+        user_id=uid,
         item_type="text",
         content=raw_text,
         title=first_line[:40],
@@ -306,20 +332,31 @@ async def handle_text_and_url_capture(update: Update, context: ContextTypes.DEFA
 # ─── Document / PDF Capture Handler ──────────────────────────────────────────
 
 async def handle_document_capture(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles incoming PDF files, summaries, and documents."""
+    """Handles incoming PDF files, summaries, and documents with subscription guard."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         return
+    uid = user.id
 
     chat_id = update.effective_chat.id
     message = update.message
     if not message or not message.document:
         return
 
-    doc = message.document
-    rel_path, orig_name = await download_telegram_document(context.bot, doc)
+    # Subscription Check
+    can_add, paywall_msg = can_user_capture(uid)
+    if not can_add:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⭐ تجديد / ترقية الاشتراك بالنجوم", callback_data="subscription_menu")],
+            [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+        ])
+        await send_clean_message(context, chat_id, paywall_msg, update=update, reply_markup=kb)
+        return
 
-    active_folder_id = db.get_active_folder_id()
+    doc = message.document
+    rel_path, orig_name = await download_telegram_document(context.bot, doc, user_id=uid)
+
+    active_folder_id = db.get_active_folder_id(uid)
     if active_folder_id is None:
         context.user_data["pending_capture"] = {
             "item_type": "pdf",
@@ -340,10 +377,11 @@ async def handle_document_capture(update: Update, context: ContextTypes.DEFAULT_
         context.user_data["prompt_msg_id"] = sent_id
         return
 
-    active_folder = db.get_folder(active_folder_id)
+    active_folder = db.get_folder(active_folder_id, uid)
     folder_name = active_folder["name"] if active_folder else "عام"
 
     item_id = db.add_item(
+        user_id=uid,
         item_type="pdf",
         content=rel_path,
         title=orig_name[:40],
@@ -372,6 +410,10 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
     if not query:
         return False
     data = query.data
+    user = update.effective_user
+    if not user:
+        return False
+    uid = user.id
 
     # Mode confirmation for photo capture
     if data in ("confirm_cap_mode_qa", "confirm_cap_mode_direct"):
@@ -384,6 +426,7 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
         mode_label = "📖 مراجعة مباشرة (تثبيت)" if review_mode == "direct" else "❓ مسألة تفاعلية (كشف الحل)"
 
         item_id = db.add_item(
+            user_id=uid,
             item_type=pending["item_type"],
             content=pending["content"],
             title=pending["title"],
@@ -392,7 +435,7 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
             review_mode=review_mode,
         )
 
-        active_folder = db.get_folder(pending["folder_id"])
+        active_folder = db.get_folder(pending["folder_id"], uid)
         folder_name = active_folder["name"] if active_folder else "عام"
 
         ack = (
@@ -414,10 +457,10 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
         if not pending:
             await query.answer("انتهت صلاحية الطلب.")
             return True
-        all_folders = db.get_all_folders()
+        all_folders = db.get_all_folders(uid)
         kb = []
         for f in all_folders:
-            path_str = db.get_folder_path_string(f["id"]) or f"{f['icon']} {f['name']}"
+            path_str = db.get_folder_path_string(f["id"], uid) or f"{f['icon']} {f['name']}"
             kb.append([InlineKeyboardButton(path_str, callback_data=f"set_cap_folder_{f['id']}")])
         kb.append([InlineKeyboardButton("❌ إلغاء", callback_data="main_menu")])
         await safe_edit(query, "📁 <b>اختر المجلد لحفظ هذه المسألة:</b>", InlineKeyboardMarkup(kb))
@@ -428,8 +471,8 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
         pending = context.user_data.get("pending_capture")
         if pending:
             pending["folder_id"] = new_fid
-            db.set_active_folder_id(new_fid)
-            f = db.get_folder(new_fid)
+            db.set_active_folder_id(uid, new_fid)
+            f = db.get_folder(new_fid, uid)
             f_name = f["name"] if f else ""
             prompt = (
                 f"📸 <b>تم تحديد المجلد: {html.escape(f_name)}</b>\n\n"
@@ -447,10 +490,10 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
     # Folder changing after saving an item
     if data.startswith("item_change_folder_"):
         item_id = int(data.split("_")[-1])
-        all_folders = db.get_all_folders()
+        all_folders = db.get_all_folders(uid)
         kb = []
         for f in all_folders:
-            path_str = db.get_folder_path_string(f["id"]) or f"{f['icon']} {f['name']}"
+            path_str = db.get_folder_path_string(f["id"], uid) or f"{f['icon']} {f['name']}"
             kb.append([InlineKeyboardButton(path_str, callback_data=f"do_move_item_{item_id}_{f['id']}")])
         kb.append([InlineKeyboardButton("🔙 إلغاء", callback_data="main_menu")])
         await safe_edit(query, "📁 <b>اختر المجلد الذي تريد نقل المسألة إليه:</b>", InlineKeyboardMarkup(kb))
@@ -460,12 +503,12 @@ async def handle_capture_callback(update: Update, context: ContextTypes.DEFAULT_
         parts = data.split("_")
         item_id = int(parts[3])
         new_fid = int(parts[4])
-        db.update_item_folder(item_id, new_fid)
-        folder = db.get_folder(new_fid)
+        db.update_item_folder(item_id, uid, new_fid)
+        folder = db.get_folder(new_fid, uid)
         f_name = folder["name"] if folder else "المجلد"
         await query.answer(f"✅ تم نقل المسألة إلى {f_name} بنجاح!")
         from handlers.main_menu import build_main_dashboard
-        text, kb = build_main_dashboard()
+        text, kb = build_main_dashboard(uid)
         await safe_edit(query, f"✅ تم النقل إلى <b>{html.escape(f_name)}</b> بنجاح!\n\n" + text, kb)
         return True
 

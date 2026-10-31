@@ -9,7 +9,7 @@ except ImportError:
 # Telegram Bot Credentials
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Personal Single-User Admin ID
+# Super Admin / Owner ID
 _env_admin = os.getenv("ADMIN_USER_ID", "6099429826")
 try:
     ADMIN_USER_ID = int(_env_admin.split(",")[0].strip())
@@ -19,8 +19,8 @@ except (ValueError, TypeError):
 ADMIN_IDS = {ADMIN_USER_ID}
 
 
-def is_authorized(user_id: int) -> bool:
-    """Ensures bot only responds to the personal owner."""
+def is_admin(user_id: int) -> bool:
+    """Checks if the user is the Super Admin / Owner."""
     if not user_id:
         return False
     try:
@@ -29,8 +29,15 @@ def is_authorized(user_id: int) -> bool:
         return False
 
 
-# Compatibility alias
-is_admin = is_authorized
+def is_authorized(user_id: int) -> bool:
+    """Public platform: allows all registered Telegram users."""
+    return bool(user_id)
+
+
+# Subscription & Freemium Settings
+TRIAL_DAYS = 3
+STARS_MONTHLY_PRICE = 250  # 250 Telegram Stars (~19-20 SAR)
+STARS_SEASON_PRICE = 600   # 600 Telegram Stars (~45-48 SAR for 3 months)
 
 # Timezone & Scheduling
 TIMEZONE = "Asia/Riyadh"

@@ -8,9 +8,9 @@ from utils import safe_edit
 logger = logging.getLogger(__name__)
 
 
-def build_stats_view() -> tuple[str, InlineKeyboardMarkup]:
-    """Generates the personal analytics dashboard and activity report."""
-    stats = db.get_dashboard_stats()
+def build_stats_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Generates the personal analytics dashboard and activity report scoped to user_id."""
+    stats = db.get_dashboard_stats(user_id)
     total = stats["total_items"]
     active = stats["active_count"]
     mastered = stats["mastered_count"]
@@ -20,15 +20,16 @@ def build_stats_view() -> tuple[str, InlineKeyboardMarkup]:
     recent_daily = stats["recent_daily"]
 
     # Calculate overall retention rate
-    total_rev_all = sum(d["total_reviewed"] for d in recent_daily)
-    easy_good_all = sum(d["easy_count"] + d["good_count"] for d in recent_daily)
+    total_rev_all = sum(d.get("total_reviewed", 0) for d in recent_daily)
+    easy_good_all = sum(d.get("easy_count", 0) + d.get("good_count", 0) for d in recent_daily)
     retention_pct = int((easy_good_all / total_rev_all) * 100) if total_rev_all > 0 else 100
 
     badge = "🏆 مستوى أسطوري" if retention_pct >= 90 else ("🌟 أداء متميز" if retention_pct >= 75 else "💪 في طور البناء")
 
-    # Reminder time
-    r_h = int(db.get_setting("reminder_hour", "5"))
-    r_m = int(db.get_setting("reminder_minute", "0"))
+    # Reminder time for user
+    user = db.get_user(user_id) or {}
+    r_h = int(user.get("reminder_hour") or 5)
+    r_m = int(user.get("reminder_minute") or 0)
     period = "ص" if r_h < 12 else "م"
     dh = r_h if 1 <= r_h <= 12 else (r_h - 12 if r_h > 12 else 12)
 
@@ -80,9 +81,13 @@ async def handle_stats_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not query:
         return False
     data = query.data
+    user = update.effective_user
+    if not user:
+        return False
+    uid = user.id
 
     if data == "stats_menu":
-        text, kb = build_stats_view()
+        text, kb = build_stats_view(uid)
         await safe_edit(query, text, kb)
         return True
 
@@ -90,27 +95,26 @@ async def handle_stats_callback(update: Update, context: ContextTypes.DEFAULT_TY
         parts = data.split("_")
         h = int(parts[2])
         m = int(parts[3])
-        db.set_setting("reminder_hour", str(h))
-        db.set_setting("reminder_minute", str(m))
+        db.update_user_reminder_time(uid, h, m)
 
         # Re-schedule job
         try:
             from bot import schedule_daily_reminder
-            schedule_daily_reminder(context.application.job_queue, update.effective_chat.id, h, m)
+            schedule_daily_reminder(context.application.job_queue, uid, h, m)
         except Exception:
             pass
 
         period = "ص" if h < 12 else "م"
         dh = h if 1 <= h <= 12 else (h - 12 if h > 12 else 12)
         await query.answer(f"✅ تم ضبط موعد التنبيه اليومي: {dh}:{m:02d} {period}", show_alert=True)
-        text, kb = build_stats_view()
+        text, kb = build_stats_view(uid)
         await safe_edit(query, text, kb)
         return True
 
     if data == "test_nudge_now":
         await query.answer("🔔 تم إرسال التنبيه التجريبي!")
         from bot import send_daily_reminder_to_chat
-        await send_daily_reminder_to_chat(context, update.effective_chat.id)
+        await send_daily_reminder_to_chat(context, uid)
         return True
 
     return False

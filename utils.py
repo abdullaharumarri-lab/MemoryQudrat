@@ -143,7 +143,6 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
     bot = context.bot if context and hasattr(context, "bot") else query.get_bot()
 
     # If the message currently has media (photo or document), Telegram cannot edit text in-place.
-    # We must delete the media message and send a single text message in its place.
     if msg and (getattr(msg, "photo", None) or getattr(msg, "document", None)):
         try:
             await msg.delete()
@@ -198,19 +197,22 @@ async def safe_edit(query, text: str, reply_markup=None, parse_mode="HTML", cont
         logger.error("safe_edit fallback send failed: %s", e2)
 
 
-# ─── Media Downloader Helpers ─────────────────────────────────────────────────
+# ─── Multi-Tenant Media Downloader Helpers ─────────────────────────────────────
 
-async def download_telegram_photo(bot, photo_obj) -> str:
+async def download_telegram_photo(bot, photo_obj, user_id: int = None) -> str:
     """
     Downloads photo bytes from Telegram, computes MD5 hash for deduplication,
-    saves to data/photos/photo_{hash}.jpg, and returns relative path.
+    saves to data/photos/{user_id}/photo_{hash}.jpg, and returns relative path.
     """
     file_info = await bot.get_file(photo_obj.file_id)
     byte_array = await file_info.download_as_bytearray()
     
     content_hash = hashlib.md5(byte_array).hexdigest()[:12]
     filename = f"photo_{content_hash}.jpg"
-    target_path = os.path.join(PHOTOS_DIR, filename)
+
+    target_dir = os.path.join(PHOTOS_DIR, str(user_id)) if user_id else PHOTOS_DIR
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, filename)
 
     if not os.path.exists(target_path):
         with open(target_path, "wb") as f:
@@ -220,9 +222,9 @@ async def download_telegram_photo(bot, photo_obj) -> str:
     return rel_path
 
 
-async def download_telegram_document(bot, doc_obj) -> tuple[str, str]:
+async def download_telegram_document(bot, doc_obj, user_id: int = None) -> tuple[str, str]:
     """
-    Downloads document from Telegram, saves to data/documents/{filename},
+    Downloads document from Telegram, saves to data/documents/{user_id}/{filename},
     and returns (relative_path, original_file_name).
     """
     orig_name = doc_obj.file_name or "document.pdf"
@@ -232,7 +234,10 @@ async def download_telegram_document(bot, doc_obj) -> tuple[str, str]:
 
     content_hash = hashlib.md5(byte_array).hexdigest()[:8]
     filename = f"{content_hash}_{clean_name}"
-    target_path = os.path.join(DOCUMENTS_DIR, filename)
+
+    target_dir = os.path.join(DOCUMENTS_DIR, str(user_id)) if user_id else DOCUMENTS_DIR
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, filename)
 
     if not os.path.exists(target_path):
         with open(target_path, "wb") as f:
@@ -245,7 +250,7 @@ async def download_telegram_document(bot, doc_obj) -> tuple[str, str]:
 def resolve_media_path(content: str) -> str:
     """
     Robustly resolves a stored media path into a valid existing absolute path.
-    Checks relative paths, absolute paths, and standard media directories.
+    Checks relative paths, absolute paths, and user subdirectories.
     """
     if not content:
         return ""
@@ -259,12 +264,15 @@ def resolve_media_path(content: str) -> str:
         return candidate1
 
     filename = os.path.basename(content)
-    candidate_photo = os.path.join(PHOTOS_DIR, filename)
-    if os.path.exists(candidate_photo):
-        return candidate_photo
 
-    candidate_doc = os.path.join(DOCUMENTS_DIR, filename)
-    if os.path.exists(candidate_doc):
-        return candidate_doc
+    # Search in photos directory
+    for root, _, files in os.walk(PHOTOS_DIR):
+        if filename in files:
+            return os.path.join(root, filename)
+
+    # Search in documents directory
+    for root, _, files in os.walk(DOCUMENTS_DIR):
+        if filename in files:
+            return os.path.join(root, filename)
 
     return ""

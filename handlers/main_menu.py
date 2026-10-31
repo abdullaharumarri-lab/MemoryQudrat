@@ -4,7 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
-from config import is_authorized
+import config
 from spaced_repetition import get_riyadh_now
 from utils import safe_edit, send_clean_message, clean_entire_chat
 
@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 
 # ─── Main Dashboard Builder ───────────────────────────────────────────────────
 
-def build_main_dashboard() -> tuple[str, InlineKeyboardMarkup]:
-    """Builds the single, clutter-free primary dashboard."""
-    stats = db.get_dashboard_stats()
+def build_main_dashboard(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Builds the single, clutter-free primary dashboard scoped to user_id."""
+    sub = db.check_user_subscription(user_id)
+    stats = db.get_dashboard_stats(user_id)
     due_cnt = stats["due_count"]
     total_cnt = stats["total_items"]
     folders_info = stats["folders_breakdown"]
@@ -25,17 +26,28 @@ def build_main_dashboard() -> tuple[str, InlineKeyboardMarkup]:
     day_name = arabic_days[now.weekday()]
     date_str = now.strftime("%Y-%m-%d")
 
-    active_fid = db.get_active_folder_id()
-    active_folder = db.get_folder(active_fid) if active_fid else None
+    active_fid = db.get_active_folder_id(user_id)
+    active_folder = db.get_folder(active_fid, user_id) if active_fid else None
     if active_folder:
-        path_str = db.get_folder_path_string(active_fid)
+        path_str = db.get_folder_path_string(active_fid, user_id)
         f_title = path_str or f"{active_folder['icon']} {active_folder['name']}"
     else:
         f_title = None
 
+    # Status badge
+    if sub.get("status") == "lifetime" or sub.get("is_admin"):
+        sub_badge = "👑 <b>اشتراك VIP دائم (المالك)</b>"
+    elif sub.get("is_trial"):
+        sub_badge = f"🎁 <b>تجربة مجانية (متبقي {sub['days_left']} يوم)</b>"
+    elif sub.get("is_active"):
+        sub_badge = f"⭐ <b>مشترك نشط (متبقي {sub['days_left']} يوم)</b>"
+    else:
+        sub_badge = "🔒 <b>انتهت التجربة (اضغط زر الاشتراك للتجديد)</b>"
+
     text_lines = [
-        "🧠 <b>ذاكرة القدرات — رفيق المذاكرة الشخصي</b>\n",
-        f"📅 <b>اليوم:</b> {day_name} {date_str}",
+        "🧠 <b>ذاكرة القدرات — رفيق المذاكرة الشخصي</b>",
+        f"💳 {sub_badge}",
+        f"📅 <b>اليوم:</b> {day_name} {date_str}\n",
     ]
 
     if due_cnt > 0:
@@ -46,7 +58,7 @@ def build_main_dashboard() -> tuple[str, InlineKeyboardMarkup]:
     elif total_cnt > 0:
         text_lines.append("✅ <b>جدولك نظيف اليوم!</b> أنهيت مراجعاتك بامتياز 🌟")
     else:
-        text_lines.append("💡 <b>ابدأ المذاكرة:</b> أرسل صورة سؤال أو ملخص لإدراجه في التكرار المتباعد.")
+        text_lines.append("💡 <b>ابدأ المذاكرة:</b> أرسل صورة مسألة أو ملخص لحفظه في جدول التكرار المتباعد.")
 
     if f_title:
         text_lines.append(f"\n📁 <b>المجلد النشط للإيداع:</b> [ <b>{html.escape(f_title)}</b> ]")
@@ -58,11 +70,17 @@ def build_main_dashboard() -> tuple[str, InlineKeyboardMarkup]:
     if due_cnt > 0:
         kb.append([InlineKeyboardButton(f"▶️ ابدأ مراجعات اليوم ({due_cnt})", callback_data="start_review_all")])
 
-    # 2. Distinct, non-redundant controls
+    # 2. Main functional buttons
     kb.append([
         InlineKeyboardButton("📁 مجلداتي ومسائلي", callback_data="folders_menu"),
         InlineKeyboardButton("📊 إحصائياتي والتنبيه", callback_data="stats_menu"),
     ])
+
+    # 3. Subscription & Admin controls
+    sub_row = [InlineKeyboardButton("⭐ الاشتراك والترقية", callback_data="subscription_menu")]
+    if config.is_admin(user_id):
+        sub_row.append(InlineKeyboardButton("👑 لوحة المالك", callback_data="admin_menu"))
+    kb.append(sub_row)
 
     return "\n".join(text_lines), InlineKeyboardMarkup(kb)
 
@@ -72,11 +90,14 @@ def build_main_dashboard() -> tuple[str, InlineKeyboardMarkup]:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point for /start and /menu."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         return
 
+    # Register/fetch student
+    db.get_or_create_user(user.id, user.username or "", user.full_name or "")
+
     chat_id = update.effective_chat.id
-    text, kb = build_main_dashboard()
+    text, kb = build_main_dashboard(user.id)
     await clean_entire_chat(context, chat_id)
     await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
 
@@ -84,7 +105,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point for /review and /today."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         return
     from handlers.review_handler import start_review_session
     await start_review_session(update, context, folder_id=None)
@@ -93,43 +114,41 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def folders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point for /folders."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         return
     from handlers.folders_handler import build_folders_menu
-    text, kb = build_folders_menu()
+    text, kb = build_folders_menu(user.id)
     await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=kb)
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point for /stats."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         return
     from handlers.stats_handler import build_stats_view
-    text, kb = build_stats_view()
+    text, kb = build_stats_view(user.id)
     await send_clean_message(context, update.effective_chat.id, text, update=update, reply_markup=kb)
 
 
 async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point for /backup: exports DB and media into personal chat."""
+    """Entry point for /backup: exports DB into Super Admin chat."""
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user or not config.is_admin(user.id):
         return
 
     chat_id = update.effective_chat.id
-    from config import DB_PATH
     import os
 
     status_msg = await update.message.reply_text("⏳ جاري تجهيز النسخة الاحتياطية الكاملة...")
     try:
-        # Send database file directly
-        if os.path.exists(DB_PATH):
-            with open(DB_PATH, "rb") as db_file:
+        if os.path.exists(config.DB_PATH):
+            with open(config.DB_PATH, "rb") as db_file:
                 await context.bot.send_document(
                     chat_id=chat_id,
                     document=db_file,
-                    filename="memory_qudrat_backup.db",
-                    caption="💾 <b>نسخة احتياطية لقاعدة البيانات</b>",
+                    filename="memory_qudrat_commercial.db",
+                    caption="💾 <b>نسخة احتياطية لقاعدة البيانات التجارية</b>",
                     parse_mode="HTML"
                 )
         await status_msg.edit_text("✅ تم إرسال النسخة الاحتياطية بنجاح!")
@@ -147,7 +166,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = update.effective_user
-    if not user or not is_authorized(user.id):
+    if not user:
         await query.answer("❌ غير مصرح.")
         return
 
@@ -155,7 +174,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Return Home
     if data == "main_menu":
-        text, kb = build_main_dashboard()
+        text, kb = build_main_dashboard(user.id)
         await safe_edit(query, text, kb)
         return
 
@@ -165,22 +184,32 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start_review_session(update, context, folder_id=None)
         return
 
-    # 1. Review Handler Callbacks
+    # 1. Subscription & Telegram Stars Callbacks
+    from handlers.subscription_handler import handle_subscription_callback
+    if await handle_subscription_callback(update, context):
+        return
+
+    # 2. Super Admin Callbacks
+    from handlers.admin_handler import handle_admin_callback
+    if await handle_admin_callback(update, context):
+        return
+
+    # 3. Review Handler Callbacks
     from handlers.review_handler import handle_review_callback
     if await handle_review_callback(update, context):
         return
 
-    # 2. Folders Handler Callbacks
+    # 4. Folders Handler Callbacks
     from handlers.folders_handler import handle_folders_callback
     if await handle_folders_callback(update, context):
         return
 
-    # 3. Capture Handler Callbacks
+    # 5. Capture Handler Callbacks
     from handlers.capture_handler import handle_capture_callback
     if await handle_capture_callback(update, context):
         return
 
-    # 4. Stats Handler Callbacks
+    # 6. Stats Handler Callbacks
     from handlers.stats_handler import handle_stats_callback
     if await handle_stats_callback(update, context):
         return
