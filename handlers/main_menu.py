@@ -174,6 +174,22 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Return Home
     if data == "main_menu":
+        # 1. Clean up any pending invoice message
+        old_inv_id = context.user_data.pop("last_invoice_id", None)
+        if old_inv_id:
+            try:
+                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=old_inv_id)
+            except Exception:
+                pass
+
+        # 2. Clean up any other auxiliary messages to keep chat perfectly clean
+        aux_ids = db.get_and_clear_chat_messages(query.message.chat_id, keep_message_id=query.message.message_id)
+        for mid in aux_ids:
+            try:
+                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=mid)
+            except Exception:
+                pass
+
         text, kb = build_main_dashboard(user.id)
         await safe_edit(query, text, kb)
         return

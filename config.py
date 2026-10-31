@@ -36,8 +36,8 @@ def is_authorized(user_id: int) -> bool:
 
 # Subscription & Freemium Settings
 TRIAL_DAYS = 3
-STARS_MONTHLY_PRICE = 250  # 250 Telegram Stars (~19-20 SAR)
-STARS_SEASON_PRICE = 600   # 600 Telegram Stars (~45-48 SAR for 3 months)
+STARS_MONTHLY_PRICE = 70   # 70 Telegram Stars (~5 SAR - عرض مخفّض جداً للطلاب)
+STARS_SEASON_PRICE = 175   # 175 Telegram Stars (~13 SAR - باقة موسم القدرات 3 أشهر)
 
 # Timezone & Scheduling
 TIMEZONE = "Asia/Riyadh"

@@ -13,45 +13,44 @@ logger = logging.getLogger(__name__)
 # ─── Subscription Dashboard Builder ──────────────────────────────────────────
 
 def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    """Builds the subscription and upgrade view with Telegram Stars packages."""
+    """Builds the simplified subscription and upgrade view with discounted Telegram Stars packages."""
     sub = db.check_user_subscription(user_id)
     user = db.get_user(user_id)
     name = (user.get("full_name") or user.get("username") or "يا بطل").strip()
 
-    status_badge = ""
     if sub.get("status") == "lifetime" or sub.get("is_admin"):
-        status_badge = "👑 <b>اشتراك VIP دائم (المالك والمشرف)</b>"
+        status_badge = "👑 <b>اشتراك VIP دائم (المالك)</b>"
     elif sub.get("is_trial"):
-        status_badge = f"🎁 <b>فترة تجريبية مجانية (متبقي {sub['days_left']} أيام — حتى {sub['expires_at']})</b>"
+        status_badge = f"🎁 <b>تجربة مجانية نشطة (متبقي {sub['days_left']} أيام)</b>"
     elif sub.get("is_active"):
-        status_badge = f"⭐ <b>اشتراك نشط ومفعّل (متبقي {sub['days_left']} يوم — حتى {sub['expires_at']})</b>"
+        status_badge = f"⭐ <b>اشتراك نشط ومفعّل (متبقي {sub['days_left']} يوم)</b>"
     else:
-        status_badge = "🔒 <b>انتهت فترة اشتراكك الحالية</b>"
+        status_badge = "🔒 <b>انتهت الفترة التجريبية</b>"
 
     text_lines = [
-        "⭐ <b>اشتراك ذاكرة القدرات (Active Recall OS)</b>\n",
+        "⭐ <b>باقات اشتراك «ذاكرة القدرات»</b>\n",
         f"👤 <b>المشترك:</b> {html.escape(name)}",
-        f"📊 <b>الحالة:</b> {status_badge}\n",
-        "💡 <b>ماذا يقدم لك الاشتراك؟</b>",
-        "• 🧠 بنك حفظ غير محدود للمسائل، القوانين، والتجميعات.",
-        "• 🔄 خوارزمية التكرار المتباعد SM-2 لحماية معلوماتك من النسيان.",
-        "• 📸 التقاط متعدد الوسائط: صور، نصوص، روابط فورمز، ومستندات PDF.",
-        "• 📁 تنظيم شجري لمجلداتك ومسائلك حسب رغبتك.",
-        "• ⏰ منبّه مراجعة ذكي صباح كل يوم بتوقيت الرياض.",
-        "• ⚡ دفع آمن وسريع بنقرة واحدة داخل تيليجرام عبر <b>Apple Pay</b> أو <b>Google Pay</b>.\n",
-        "👇 <b>اختر باقة الاشتراك المناسبة لك:</b>",
+        f"📊 <b>حالة الحساب:</b> {status_badge}\n",
+        "🎯 <b>ماذا يقدّم لك البوت؟</b>",
+        "• 🧠 <b>تكرار متباعد ذكي:</b> يثبّت القوانين والمسائل في ذاكرتك ولا تنساها في الاختبار.",
+        "• 📸 <b>بنك مسائل غير محدود:</b> صوّر أي مسألة صعبة واحفظها في مجلداتك للرجوع لها.",
+        "• ⏰ <b>منبّه صباحي ذكي:</b> يرسل لك مراجعات اليوم لتنجزها في 5 دقائق فقط.\n",
+        "🏷️ <b>عروض التخفيض الحالية (الدفع بنجوم تيليجرام):</b>",
+        f"• اشتراك شهر: <b>{config.STARS_MONTHLY_PRICE} نجمة ⭐</b> (~5 ريال فقط)",
+        f"• باقة الموسم (3 أشهر): <b>{config.STARS_SEASON_PRICE} نجمة ⭐</b> (~13 ريال فقط)\n",
+        "👇 <i>اختر الباقة المناسبة للبدء فوراً:</i>",
     ]
 
     kb = [
         [
             InlineKeyboardButton(
-                f"⭐ اشتراك شهري (30 يوم) — {config.STARS_MONTHLY_PRICE} نجمة",
+                f"🔥 اشتراك شهر — {config.STARS_MONTHLY_PRICE} نجمة (~5 ريال)",
                 callback_data="stars_buy_month",
             )
         ],
         [
             InlineKeyboardButton(
-                f"🌟 باقة الموسم (3 أشهر) — {config.STARS_SEASON_PRICE} نجمة (خصم 20%)",
+                f"🌟 باقة الموسم (3 أشهر) — {config.STARS_SEASON_PRICE} نجمة (~13 ريال)",
                 callback_data="stars_buy_season",
             )
         ],
@@ -104,11 +103,18 @@ async def handle_subscription_callback(update: Update, context: ContextTypes.DEF
     chat_id = update.effective_chat.id
 
     if data == "subscription_menu":
+        # Clean any pending invoice message
+        old_inv_id = context.user_data.pop("last_invoice_id", None)
+        if old_inv_id:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=old_inv_id)
+            except Exception:
+                pass
         text, kb = build_subscription_view(user.id)
         await safe_edit(query, text, kb)
         return True
 
-    # 1. Monthly Plan (250 Stars)
+    # 1. Monthly Plan
     if data == "stars_buy_month":
         await query.answer("جاري تجهيز فاتورة الاشتراك الشهري...")
         await send_stars_invoice(
@@ -122,7 +128,7 @@ async def handle_subscription_callback(update: Update, context: ContextTypes.DEF
         )
         return True
 
-    # 2. Season Plan (600 Stars / 90 days)
+    # 2. Season Plan
     if data == "stars_buy_season":
         await query.answer("جاري تجهيز فاتورة باقة الموسم...")
         await send_stars_invoice(
@@ -149,9 +155,17 @@ async def send_stars_invoice(
     payload: str,
 ):
     """Sends native Telegram Stars invoice with Apple Pay / Google Pay support."""
+    # Delete any previous pending invoice to avoid clutter
+    old_inv_id = context.user_data.get("last_invoice_id")
+    if old_inv_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=old_inv_id)
+        except Exception:
+            pass
+
     title = f"🧠 ذاكرة القدرات — {plan_name}"
     description = (
-        f"تفعيل كامل لميزات التكرار المتباعد الذكي وحفظ المسائل لمدة {plan_days} يوماً."
+        f"تفعيل كامل لميزات التكرار المتباعد الذكي وحفظ المسائل في ذاكرة القدرات لمدة {plan_days} يوماً."
     )
     prices = [LabeledPrice(label=plan_name, amount=stars_amount)]
 
@@ -164,6 +178,7 @@ async def send_stars_invoice(
             currency="XTR",  # Telegram Stars official currency code
             prices=prices,
         )
+        context.user_data["last_invoice_id"] = msg.message_id
         db.track_chat_message(chat_id, msg.message_id)
         logger.info("Sent Telegram Stars invoice to user %s: %s (%d XTR)", user_id, plan_name, stars_amount)
     except Exception as e:
@@ -197,6 +212,14 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 
     if not payment or not user:
         return
+
+    # Clean up invoice message if stored
+    old_inv_id = context.user_data.pop("last_invoice_id", None)
+    if old_inv_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=old_inv_id)
+        except Exception:
+            pass
 
     payload = payment.invoice_payload or ""
     charge_id = payment.telegram_payment_charge_id
