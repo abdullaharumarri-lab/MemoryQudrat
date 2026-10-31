@@ -39,6 +39,9 @@ TRIAL_DAYS = 3
 STARS_MONTHLY_PRICE = 70   # 70 Telegram Stars (~5 SAR - عرض مخفّض جداً للطلاب)
 STARS_SEASON_PRICE = 175   # 175 Telegram Stars (~13 SAR - باقة موسم القدرات 3 أشهر)
 
+# Official Channel for Broadcasts (can also be configured via /set_channel)
+OFFICIAL_CHANNEL = os.getenv("OFFICIAL_CHANNEL", "")
+
 # Timezone & Scheduling
 TIMEZONE = "Asia/Riyadh"
 REVIEW_INTERVALS = [1, 3, 7, 14, 30]

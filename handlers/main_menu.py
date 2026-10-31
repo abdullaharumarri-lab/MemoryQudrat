@@ -194,6 +194,18 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(query, text, kb)
         return
 
+    # Dismiss Broadcast and Open Dashboard
+    if data == "dismiss_broadcast":
+        chat_id = query.message.chat_id
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await clean_entire_chat(context, chat_id)
+        text, kb = build_main_dashboard(user.id)
+        await send_clean_message(context, chat_id, text, reply_markup=kb)
+        return
+
     # Start all due reviews
     if data == "start_review_all":
         from handlers.review_handler import start_review_session

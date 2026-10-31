@@ -38,6 +38,7 @@ from handlers.admin_handler import (
     admin_command,
     gift_sub_command,
     broadcast_command,
+    set_channel_command,
 )
 from utils import send_clean_message
 
@@ -226,6 +227,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("gift_sub", gift_sub_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("set_channel", set_channel_command))
 
     # 2. Telegram Stars In-App Payments
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
