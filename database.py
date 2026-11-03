@@ -180,11 +180,42 @@ def init_db():
             )
         """)
 
-        # Migration: check if legacy daily_stats had only stat_date as PK
+        # Migration: check if legacy daily_stats had only stat_date as single PK
         cursor.execute("PRAGMA table_info(daily_stats)")
         ds_cols = [row["name"] for row in cursor.fetchall()]
-        if "user_id" not in ds_cols:
+        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='daily_stats'")
+        sql_row = cursor.fetchone()
+        ds_sql = sql_row["sql"] if sql_row else ""
+        if "stat_date DATE PRIMARY KEY" in ds_sql or "stat_date TEXT PRIMARY KEY" in ds_sql:
+            cursor.execute("""
+                CREATE TABLE daily_stats_migrated (
+                    user_id INTEGER NOT NULL,
+                    stat_date DATE NOT NULL,
+                    total_reviewed INTEGER DEFAULT 0,
+                    easy_count INTEGER DEFAULT 0,
+                    good_count INTEGER DEFAULT 0,
+                    hard_count INTEGER DEFAULT 0,
+                    PRIMARY KEY (user_id, stat_date)
+                )
+            """)
+            if "user_id" in ds_cols:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO daily_stats_migrated (user_id, stat_date, total_reviewed, easy_count, good_count, hard_count)
+                    SELECT COALESCE(user_id, ?), stat_date, total_reviewed, easy_count, good_count, hard_count
+                    FROM daily_stats
+                """, (config.ADMIN_USER_ID,))
+            else:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO daily_stats_migrated (user_id, stat_date, total_reviewed, easy_count, good_count, hard_count)
+                    SELECT ?, stat_date, total_reviewed, easy_count, good_count, hard_count
+                    FROM daily_stats
+                """, (config.ADMIN_USER_ID,))
+            cursor.execute("DROP TABLE daily_stats")
+            cursor.execute("ALTER TABLE daily_stats_migrated RENAME TO daily_stats")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_daily_stats_user ON daily_stats(user_id)")
+        elif "user_id" not in ds_cols:
             cursor.execute("ALTER TABLE daily_stats ADD COLUMN user_id INTEGER DEFAULT 6099429826")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_stats_user_date ON daily_stats(user_id, stat_date)")
 
         # 7. Settings table
         cursor.execute("""
@@ -743,6 +774,51 @@ def get_items_by_folder(folder_id: int, user_id: int, include_subfolders: bool =
                 (user_id, folder_id, limit),
             )
         return [dict(r) for r in c.fetchall()]
+
+
+def get_difficult_items(user_id: int, limit: int = 100) -> list[dict]:
+    """Returns unmastered items where the user struggled (lapses > 0 or latest rating was 'hard')."""
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT i.*, f.name as folder_name, f.icon as folder_icon,
+                   (SELECT rating FROM reviews_log rl WHERE rl.item_id = i.id AND rl.user_id = i.user_id ORDER BY rl.id DESC LIMIT 1) as last_rating
+            FROM items i
+            LEFT JOIN folders f ON i.folder_id = f.id
+            WHERE i.user_id = ?
+              AND i.is_mastered = 0
+              AND (
+                  i.lapses > 0 
+                  OR (SELECT rating FROM reviews_log rl WHERE rl.item_id = i.id AND rl.user_id = i.user_id ORDER BY rl.id DESC LIMIT 1) = 'hard'
+              )
+            ORDER BY i.lapses DESC, i.id DESC
+            LIMIT ?
+        """, (user_id, limit))
+        return [dict(r) for r in c.fetchall()]
+
+
+def get_difficult_items_stats(user_id: int) -> dict:
+    """Returns count of total difficult items and due difficult items for user_id."""
+    today_iso = get_riyadh_today_iso()
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT 
+                COUNT(*) as total_difficult,
+                SUM(CASE WHEN next_review_date <= ? THEN 1 ELSE 0 END) as due_difficult
+            FROM items i
+            WHERE i.user_id = ?
+              AND i.is_mastered = 0
+              AND (
+                  i.lapses > 0 
+                  OR (SELECT rating FROM reviews_log rl WHERE rl.item_id = i.id AND rl.user_id = i.user_id ORDER BY rl.id DESC LIMIT 1) = 'hard'
+              )
+        """, (today_iso, user_id))
+        row = c.fetchone()
+        return {
+            "total_difficult": (row["total_difficult"] if row and row["total_difficult"] else 0),
+            "due_difficult": (row["due_difficult"] if row and row["due_difficult"] else 0),
+        }
 
 
 def record_item_review(item_id: int, user_id: int, rating: str) -> dict:

@@ -19,6 +19,9 @@ def build_folders_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     stats = db.get_dashboard_stats(user_id)
     breakdown_map = {f["id"]: f for f in stats["folders_breakdown"]}
     active_fid = db.get_active_folder_id(user_id)
+    diff_stats = db.get_difficult_items_stats(user_id)
+    total_diff = diff_stats["total_difficult"]
+    due_diff = diff_stats["due_difficult"]
 
     if not root_folders:
         text = (
@@ -26,10 +29,14 @@ def build_folders_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
             "لا توجد مجلدات بعد.\n"
             "أنشئ مجلدك الأول لتنظيم وحفظ مسائل وملاحظات القدرات بسهولة:"
         )
-        kb = [
+        kb = []
+        if total_diff > 0:
+            diff_lbl = f"🎯 بنك الأخطاء والمسائل الصعبة ({total_diff}" + (f" | 🔴 {due_diff} مستحق)" if due_diff > 0 else ")")
+            kb.append([InlineKeyboardButton(diff_lbl, callback_data="difficult_bank_menu")])
+        kb.extend([
             [InlineKeyboardButton("➕ إنشاء أول مجلد", callback_data="folder_add_prompt_root")],
             [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
-        ]
+        ])
         return text, InlineKeyboardMarkup(kb)
 
     text_lines = [
@@ -38,6 +45,11 @@ def build_folders_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     ]
 
     kb = []
+    # Dedicated Difficult Items Bank at top of folders
+    if total_diff > 0:
+        diff_lbl = f"🎯 بنك الأخطاء والمسائل الصعبة ({total_diff}" + (f" | 🔴 {due_diff} مستحق)" if due_diff > 0 else ")")
+        kb.append([InlineKeyboardButton(diff_lbl, callback_data="difficult_bank_menu")])
+
     for f in root_folders:
         fid = f["id"]
         f_stat = breakdown_map.get(fid, {})
@@ -56,6 +68,42 @@ def build_folders_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     kb.append([InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")])
 
     return "\n".join(text_lines), InlineKeyboardMarkup(kb)
+
+
+def build_difficult_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Builds dedicated dashboard for student's difficult items and mistakes."""
+    diff_stats = db.get_difficult_items_stats(user_id)
+    total_diff = diff_stats["total_difficult"]
+    due_diff = diff_stats["due_difficult"]
+
+    if total_diff == 0:
+        text = (
+            "🎯 <b>بنك الأخطاء والمسائل الصعبة</b> 🧠\n\n"
+            "🌟 <b>رائع جداً! لا توجد أي مسائل صعبة مسجلة حالياً</b>\n\n"
+            "جميع مسائلك التي راجعتها متقنة. عند مواجهة أي صعوبة في مسألة وتحديد (🔴 لم أراجعه / صعب)، ستُحفظ هنا تلقائياً لمراجعتها بتركيز."
+        )
+        kb = [
+            [InlineKeyboardButton("📁 استعراض مجلداتي", callback_data="folders_menu")],
+            [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+        ]
+        return text, InlineKeyboardMarkup(kb)
+
+    text = (
+        "🎯 <b>بنك الأخطاء والمسائل الصعبة</b> 🧠\n\n"
+        "هنا تجتمع جميع المسائل والمستندات التي تعثرت فيها أو قيّمتها كـ (لم أراجعه / صعب)، لتتمكن من مراجعتها بتركيز وتقوية نقاط ضعفك:\n\n"
+        f"📊 <b>إجمالي المسائل الصعبة:</b> <b>{total_diff}</b> مسألة\n"
+        f"🔔 <b>المستحق للمراجعة اليوم:</b> <b>{due_diff}</b> مسألة\n\n"
+        "اختر الإجراء المطلوب يا بطل:"
+    )
+
+    kb = []
+    kb.append([InlineKeyboardButton(f"⚡ مراجعة وتقوية المسائل الصعبة ({total_diff})", callback_data="start_review_difficult")])
+    kb.append([InlineKeyboardButton(f"📋 استعراض قائمة الأخطاء ({total_diff})", callback_data="difficult_browse_0")])
+    kb.append([
+        InlineKeyboardButton("🔙 قائمة المجلدات", callback_data="folders_menu"),
+        InlineKeyboardButton("🏠 الرئيسية", callback_data="main_menu"),
+    ])
+    return text, InlineKeyboardMarkup(kb)
 
 
 def build_folder_detail_view(folder_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -143,6 +191,103 @@ async def handle_folders_callback(update: Update, context: ContextTypes.DEFAULT_
     if data == "folders_menu":
         text, kb = build_folders_menu(uid)
         await safe_edit(query, text, kb)
+        return True
+
+    # Difficult Bank menu
+    if data == "difficult_bank_menu":
+        text, kb = build_difficult_menu(uid)
+        await safe_edit(query, text, kb)
+        return True
+
+    # Start Review for Difficult Items
+    if data == "start_review_difficult":
+        from handlers.review_handler import start_review_session
+        await start_review_session(update, context, only_difficult=True)
+        return True
+
+    # Browse Difficult Items
+    if data.startswith("difficult_browse_"):
+        idx = int(data.split("_")[-1])
+        items = db.get_difficult_items(uid)
+        if not items:
+            await query.answer("لا توجد مسائل صعبة مسجلة.")
+            text, kb = build_difficult_menu(uid)
+            await safe_edit(query, text, kb)
+            return True
+
+        idx = max(0, min(idx, len(items) - 1))
+        item = items[idx]
+        total = len(items)
+        stg_lbl = stage_label(item["stage"], bool(item["is_mastered"]))
+
+        text = (
+            f"🎯 <b>بنك الأخطاء ({idx + 1} من {total})</b>\n"
+            f"📁 <b>المجلد الأصلي:</b> {html.escape(item.get('folder_name') or 'عام')}\n"
+            f"📝 <b>العنوان:</b> {html.escape(item.get('title') or 'مسألة صعبة')}\n"
+            f"⚠️ <b>مرات التعثر/الخطأ:</b> <b>{item.get('lapses', 1)}</b> مرة\n"
+            f"📅 <b>المرحلة:</b> {stg_lbl}\n\n"
+        )
+        if item.get("solution"):
+            text += f"💡 <b>الحل النموذجي والشرح:</b>\n<blockquote>{html.escape(item['solution'])}</blockquote>\n"
+
+        nav = []
+        if idx > 0:
+            nav.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"difficult_browse_{idx - 1}"))
+        if idx < total - 1:
+            nav.append(InlineKeyboardButton("التالي ➡️", callback_data=f"difficult_browse_{idx + 1}"))
+
+        kb = []
+        if nav:
+            kb.append(nav)
+        kb.append([InlineKeyboardButton("🔙 رجوع لبنك الأخطاء", callback_data="difficult_bank_menu")])
+        kb.append([InlineKeyboardButton("🏠 الرئيسية", callback_data="main_menu")])
+
+        if item.get("item_type") == "photo":
+            full_path = resolve_media_path(item.get("content", ""))
+            if full_path and os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as pf:
+                        new_photo_msg = await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=pf,
+                            caption=text[:1024],
+                            parse_mode="HTML",
+                            reply_markup=InlineKeyboardMarkup(kb),
+                        )
+                    db.track_chat_message(update.effective_chat.id, new_photo_msg.message_id)
+                    if query.message:
+                        try:
+                            await query.message.delete()
+                        except Exception:
+                            pass
+                    return True
+                except Exception as e:
+                    logger.warning("Failed to send photo in difficult browser: %s", e)
+
+        if item.get("item_type") == "pdf":
+            full_path = resolve_media_path(item.get("content", ""))
+            if full_path and os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as df:
+                        new_doc_msg = await context.bot.send_document(
+                            chat_id=update.effective_chat.id,
+                            document=df,
+                            filename=os.path.basename(full_path),
+                            caption=text[:1024],
+                            parse_mode="HTML",
+                            reply_markup=InlineKeyboardMarkup(kb),
+                        )
+                    db.track_chat_message(update.effective_chat.id, new_doc_msg.message_id)
+                    if query.message:
+                        try:
+                            await query.message.delete()
+                        except Exception:
+                            pass
+                    return True
+                except Exception as e:
+                    logger.warning("Failed to send doc in difficult browser: %s", e)
+
+        await safe_edit(query, text, InlineKeyboardMarkup(kb))
         return True
 
     # Folder detail

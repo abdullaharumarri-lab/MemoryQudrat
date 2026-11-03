@@ -382,6 +382,56 @@ class TestCommercialSaaSMemoryQudrat(unittest.TestCase):
         self.assertTrue(os.path.exists(resolved))
         self.assertEqual(resolved, os.path.abspath(test_file))
 
+    def test_daily_stats_multi_user_conflict_and_ratings(self):
+        """Verify rating buttons and daily_stats work across multiple users on same date without SQLite conflict error."""
+        self.db.get_or_create_user(self.student_1, "user1", "User 1")
+        self.db.get_or_create_user(self.student_2, "user2", "User 2")
+
+        id1 = self.db.add_item(self.student_1, "photo", "data/p1.jpg", title="Q1")
+        id2 = self.db.add_item(self.student_2, "pdf", "data/doc2.pdf", title="Q2")
+
+        # Student 1 rates 'good'
+        sched1 = self.db.record_item_review(id1, self.student_1, "good")
+        self.assertTrue(sched1)
+        self.assertEqual(sched1["new_stage"], 1)
+
+        # Student 2 rates 'hard' on same date (this used to crash with ON CONFLICT error!)
+        sched2 = self.db.record_item_review(id2, self.student_2, "hard")
+        self.assertTrue(sched2)
+        self.assertEqual(sched2["new_stage"], 0)
+
+        # Student 1 rates again on same date (updates conflict)
+        sched1_again = self.db.record_item_review(id1, self.student_1, "easy")
+        self.assertTrue(sched1_again)
+
+    def test_difficult_items_bank(self):
+        """Verify that questions rated 'hard' or with lapses enter and graduate from the Difficult Bank."""
+        self.db.get_or_create_user(self.student_1, "user1", "User 1")
+
+        q_easy = self.db.add_item(self.student_1, "photo", "data/easy.jpg", title="Easy Q")
+        q_hard = self.db.add_item(self.student_1, "pdf", "data/hard.pdf", title="Hard Q")
+
+        # Rate easy Q with 'good'
+        self.db.record_item_review(q_easy, self.student_1, "good")
+
+        # Rate hard Q with 'hard'
+        self.db.record_item_review(q_hard, self.student_1, "hard")
+
+        # Check Difficult Bank
+        diff_items = self.db.get_difficult_items(self.student_1)
+        self.assertEqual(len(diff_items), 1)
+        self.assertEqual(diff_items[0]["id"], q_hard)
+
+        diff_stats = self.db.get_difficult_items_stats(self.student_1)
+        self.assertEqual(diff_stats["total_difficult"], 1)
+
+        # Graduate the item: mark mastered
+        with self.db.get_db_connection() as conn:
+            conn.cursor().execute("UPDATE items SET is_mastered = 1 WHERE id = ?", (q_hard,))
+
+        diff_after = self.db.get_difficult_items(self.student_1)
+        self.assertEqual(len(diff_after), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

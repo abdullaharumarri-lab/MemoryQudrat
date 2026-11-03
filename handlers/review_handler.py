@@ -13,8 +13,21 @@ logger = logging.getLogger(__name__)
 
 # ─── Review Session Engine ───────────────────────────────────────────────────
 
+async def _record_and_cleanup_msg(context: ContextTypes.DEFAULT_TYPE, chat_id: int, session: dict, msg):
+    """Tracks the review message and removes the temporary loading screen."""
+    if msg:
+        session["session_message_ids"].append(msg.message_id)
+        db.track_chat_message(chat_id, msg.message_id)
+        loading_id = session.pop("loading_msg_id", None)
+        if loading_id:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=loading_id)
+            except Exception:
+                pass
+
+
 async def start_review_session(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, folder_id: int = None
+    update: Update, context: ContextTypes.DEFAULT_TYPE, folder_id: int = None, only_difficult: bool = False
 ):
     """Initiates an active recall review session scoped to user_id."""
     user = update.effective_user
@@ -25,19 +38,30 @@ async def start_review_session(
     chat_id = update.effective_chat.id
     query = update.callback_query
 
-    due_items = db.get_due_items(uid, folder_id=folder_id)
-    folder_name = "جميع المجلدات"
-    if folder_id:
-        f = db.get_folder(folder_id, uid)
-        if f:
-            folder_name = f"{f['icon']} {f['name']}"
+    if only_difficult:
+        due_items = db.get_difficult_items(uid)
+        folder_name = "🎯 بنك الأخطاء والمسائل الصعبة"
+    else:
+        due_items = db.get_due_items(uid, folder_id=folder_id)
+        folder_name = "جميع المجلدات"
+        if folder_id:
+            f = db.get_folder(folder_id, uid)
+            if f:
+                folder_name = f"{f['icon']} {f['name']}"
 
     if not due_items:
-        clean_text = (
-            f"🎉 <b>أحسنت يا بطل! جدولك نظيف تماماً</b> 🌟\n\n"
-            f"لا توجد أي مراجعات مستحقة اليوم في: <b>{html.escape(folder_name)}</b>.\n\n"
-            f"💪 <i>ذاكرتك في أعلى مستويات الأمان. استغل وقتك في إضافة مسائل جديدة من تجميعاتك!</i>"
-        )
+        if only_difficult:
+            clean_text = (
+                "🎯 <b>أحسنت يا بطل! لا توجد مسائل صعبة</b> 🌟\n\n"
+                "جميع مسائلك متقنة ومحفوظة بنجاح، ولا توجد أي أخطاء أو مسائل مسجلة كصعبة حالياً.\n\n"
+                "💪 <i>استمر في المذاكرة وحل مسائل جديدة من تجميعاتك!</i>"
+            )
+        else:
+            clean_text = (
+                f"🎉 <b>أحسنت يا بطل! جدولك نظيف تماماً</b> 🌟\n\n"
+                f"لا توجد أي مراجعات مستحقة اليوم في: <b>{html.escape(folder_name)}</b>.\n\n"
+                f"💪 <i>ذاكرتك في أعلى مستويات الأمان. استغل وقتك في إضافة مسائل جديدة من تجميعاتك!</i>"
+            )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📁 استعراض المجلدات", callback_data="folders_menu")],
             [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
@@ -48,21 +72,37 @@ async def start_review_session(
             await send_clean_message(context, chat_id, clean_text, update=update, reply_markup=kb)
         return
 
+    # Immediate reassuring loading message so Telegram NEVER flashes START bottom bar
+    loading_msg_id = None
+    loading_text = "⏳ <b>جاري تحضير ملفات ومسائل المراجعة لليوم...</b>\n<i>لحظات يا بطل وتظهر مراجعتك الأولى ✨</i>"
+    if query and query.message:
+        try:
+            await safe_edit(query, loading_text, None)
+            loading_msg_id = query.message.message_id
+        except Exception:
+            pass
+    elif not query:
+        try:
+            l_msg = await context.bot.send_message(chat_id=chat_id, text=loading_text, parse_mode="HTML")
+            loading_msg_id = l_msg.message_id
+        except Exception:
+            pass
+
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    except Exception:
+        pass
+
     # Initialize review session state
     item_ids = [item["id"] for item in due_items]
     context.user_data["active_review_session"] = {
         "item_ids": item_ids,
         "index": 0,
         "folder_id": folder_id,
+        "only_difficult": only_difficult,
         "session_message_ids": [],
+        "loading_msg_id": loading_msg_id,
     }
-
-    # Clean prior menu message
-    if query and query.message:
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
 
     await show_current_review_item(update, context)
 
@@ -140,8 +180,7 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
             ])
             with open(full_path, "rb") as pf:
                 msg = await context.bot.send_photo(chat_id=chat_id, photo=pf, caption=caption, parse_mode="HTML", reply_markup=kb)
-            session["session_message_ids"].append(msg.message_id)
-            db.track_chat_message(chat_id, msg.message_id)
+            await _record_and_cleanup_msg(context, chat_id, session, msg)
             return
 
         else:
@@ -156,8 +195,7 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
             ])
             with open(full_path, "rb") as pf:
                 msg = await context.bot.send_photo(chat_id=chat_id, photo=pf, caption=caption, parse_mode="HTML", reply_markup=kb)
-            session["session_message_ids"].append(msg.message_id)
-            db.track_chat_message(chat_id, msg.message_id)
+            await _record_and_cleanup_msg(context, chat_id, session, msg)
             return
 
     # ── 2. Link Item (Forms / Quiz URLs) ──
@@ -174,8 +212,7 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
             [InlineKeyboardButton("⏹️ إنهاء الجلسة", callback_data="exit_review_session")],
         ])
         msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=kb)
-        session["session_message_ids"].append(msg.message_id)
-        db.track_chat_message(chat_id, msg.message_id)
+        await _record_and_cleanup_msg(context, chat_id, session, msg)
         return
 
     # ── 3. Text Item ──
@@ -205,8 +242,7 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
                 [InlineKeyboardButton("⏹️ إنهاء", callback_data="exit_review_session")],
             ])
         msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=kb)
-        session["session_message_ids"].append(msg.message_id)
-        db.track_chat_message(chat_id, msg.message_id)
+        await _record_and_cleanup_msg(context, chat_id, session, msg)
         return
 
     # ── 4. Document / PDF Item ──
@@ -235,8 +271,7 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
                     parse_mode="HTML",
                     reply_markup=kb,
                 )
-            session["session_message_ids"].append(msg.message_id)
-            db.track_chat_message(chat_id, msg.message_id)
+            await _record_and_cleanup_msg(context, chat_id, session, msg)
             return
         else:
             text = (
@@ -246,8 +281,7 @@ async def show_current_review_item(update: Update, context: ContextTypes.DEFAULT
                 f"👇 <i>قيّم إنجازك للمراجعة:</i>"
             )
             msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=kb)
-            session["session_message_ids"].append(msg.message_id)
-            db.track_chat_message(chat_id, msg.message_id)
+            await _record_and_cleanup_msg(context, chat_id, session, msg)
             return
 
 
@@ -297,8 +331,19 @@ async def handle_review_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     # Exit session
     if data == "exit_review_session":
-        await query.answer("تم إنهاء جلسة المراجعة مؤقتاً.")
-        await finish_review_session(update, context)
+        session = context.user_data.pop("active_review_session", None)
+        chat_id = update.effective_chat.id
+        if session:
+            old_ids = session.get("session_message_ids", [])
+            if old_ids:
+                from utils import delete_messages_bulk
+                await delete_messages_bulk(context, chat_id, old_ids)
+
+        await query.answer("⏸️ تم الإيقاف مؤقتاً.")
+        from handlers.main_menu import build_main_dashboard
+        dash_text, kb = build_main_dashboard(uid)
+        simple_exit_text = f"⏸️ <b>تم الإيقاف مؤقتاً.</b>\n\n{dash_text}"
+        await send_clean_message(context, chat_id, simple_exit_text, update=update, reply_markup=kb)
         return True
 
     # Reveal Solution in QA mode
@@ -344,7 +389,11 @@ async def handle_review_callback(update: Update, context: ContextTypes.DEFAULT_T
         _ = db.record_item_review(item_id, uid, rating)
 
         # Immediate feedback toast
-        labels = {"easy": "🟢 ممتاز! قفزت مرحلتين للأمام 🌟", "good": "🟡 أحسنت! تقدمت مرحلة ⚡", "hard": "🔴 سيعاد تكرارها غداً للترسيخ 💪"}
+        labels = {
+            "easy": "🟢 ممتاز! قفزت مرحلتين للأمام 🌟",
+            "good": "🟡 أحسنت! تقدمت مرحلة ⚡",
+            "hard": "🔴 تم حفظها في بنك المسائل الصعبة للترسيخ 💪",
+        }
         await query.answer(labels.get(rating, "تم الحفظ!"))
 
         # Advance session
@@ -352,6 +401,10 @@ async def handle_review_callback(update: Update, context: ContextTypes.DEFAULT_T
         if session:
             session["index"] += 1
             await show_current_review_item(update, context)
+        else:
+            from handlers.main_menu import build_main_dashboard
+            dash_text, kb = build_main_dashboard(uid)
+            await send_clean_message(context, update.effective_chat.id, dash_text, update=update, reply_markup=kb)
         return True
 
     return False
