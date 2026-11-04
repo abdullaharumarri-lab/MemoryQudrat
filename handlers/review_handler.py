@@ -294,11 +294,22 @@ async def finish_review_session(update: Update, context: ContextTypes.DEFAULT_TY
     uid = user.id
     chat_id = update.effective_chat.id
 
+    query = update.callback_query
+    if query and query.message:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
     if session:
         old_ids = session.get("session_message_ids", [])
         if old_ids:
             from utils import delete_messages_bulk
             await delete_messages_bulk(context, chat_id, old_ids)
+
+    # Sweep entire chat history to ensure no lingering files or menus
+    from utils import clean_entire_chat
+    await clean_entire_chat(context, chat_id)
 
     stats = db.get_dashboard_stats(uid)
     text = (
@@ -395,6 +406,13 @@ async def handle_review_callback(update: Update, context: ContextTypes.DEFAULT_T
             "hard": "🔴 تم حفظها في بنك المسائل الصعبة للترسيخ 💪",
         }
         await query.answer(labels.get(rating, "تم الحفظ!"))
+
+        # Immediately delete the reviewed item message so it never lingers in chat
+        if query.message:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
 
         # Advance session
         session = context.user_data.get("active_review_session")

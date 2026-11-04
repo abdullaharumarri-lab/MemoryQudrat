@@ -94,11 +94,16 @@ async def send_clean_message(
     Sends a message and cleans up prior user input and tracked bot messages for an ultra-clean UI.
     """
     if update:
-        msg_to_del = update.message or update.effective_message
-        if msg_to_del and not getattr(update, "callback_query", None):
-            user_msg_id = msg_to_del.message_id
-            db.track_chat_message(chat_id, user_msg_id)
-            asyncio.create_task(_safe_delete_message(context, chat_id, user_msg_id))
+        if update.callback_query and update.callback_query.message:
+            cb_msg_id = update.callback_query.message.message_id
+            db.track_chat_message(chat_id, cb_msg_id)
+            asyncio.create_task(_safe_delete_message(context, chat_id, cb_msg_id))
+        else:
+            msg_to_del = update.message or update.effective_message
+            if msg_to_del:
+                user_msg_id = msg_to_del.message_id
+                db.track_chat_message(chat_id, user_msg_id)
+                asyncio.create_task(_safe_delete_message(context, chat_id, user_msg_id))
 
     # Clean old bot messages so only the new message remains in the chat
     await clean_entire_chat(context, chat_id)

@@ -250,12 +250,19 @@ def init_db():
         cursor.execute("UPDATE items SET user_id = ? WHERE user_id IS NULL", (config.ADMIN_USER_ID,))
         cursor.execute("UPDATE reviews_log SET user_id = ? WHERE user_id IS NULL", (config.ADMIN_USER_ID,))
 
-        # Clean legacy empty seed folders
-        cursor.execute("""
-            DELETE FROM folders 
-            WHERE name IN ('📐 قدرات كمي', '📖 قدرات لفظي', '💡 قوانين وقواعد', '🎯 تجميعات 1446')
-            AND id NOT IN (SELECT DISTINCT folder_id FROM items WHERE folder_id IS NOT NULL)
-        """)
+        # ── Drop Legacy v1 Unused Tables & Optimize Database ──
+        legacy_tables = [
+            "active_session", "bot_state", "categories", "question_reports",
+            "quiz_reviews", "weak_questions", "quiz_weak_mastery",
+            "quiz_sessions_log", "questions", "quizzes"
+        ]
+        cursor.execute("PRAGMA foreign_keys = OFF")
+        for lt in legacy_tables:
+            try:
+                cursor.execute(f"DROP TABLE IF EXISTS [{lt}]")
+            except Exception:
+                pass
+        cursor.execute("PRAGMA foreign_keys = ON")
 
 
 # ─── Settings Helpers ─────────────────────────────────────────────────────────
