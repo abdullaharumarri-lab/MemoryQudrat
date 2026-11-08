@@ -18,16 +18,10 @@ import database as db
 from config import TELEGRAM_BOT_TOKEN, ADMIN_USER_ID, TIMEZONE
 from handlers.main_menu import (
     start_command,
-    review_command,
-    folders_command,
-    stats_command,
+    today_command,
+    subjects_command,
     backup_command,
     button_router,
-)
-from handlers.capture_handler import (
-    handle_photo_capture,
-    handle_text_and_url_capture,
-    handle_document_capture,
 )
 from handlers.subscription_handler import (
     subscription_command,
@@ -76,39 +70,41 @@ def schedule_daily_reminder(job_queue, chat_id: int, hour: int = 5, minute: int 
 
 
 async def send_daily_reminder_to_chat(context, chat_id: int):
-    """Sends the daily active recall nudge to the user."""
+    """Sends a friendly morning buddy nudge to the student."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-    stats = db.get_dashboard_stats(user_id=chat_id)
-    due = stats["due_count"]
-    folders_info = stats["folders_breakdown"]
+    tasks = db.get_today_tasks(user_id=chat_id)
+    new_count = len(tasks["new_lessons"])
+    rev_count = len(tasks["due_reviews"])
 
-    if due > 0:
+    if new_count > 0 or rev_count > 0:
         lines = [
-            "🌅 <b>صباح الخير والهمة العالية! 🧠</b>\n",
-            f"لديك اليوم <b>{due}</b> مادة مستحقة للمراجعة في جدول التكرار المتباعد:\n",
+            "🌅 <b>صباح الروقان والهمة العالية يا بطل! ☕🧠</b>\n",
+            "جاهز ننجز خطوة جديدة اليوم؟ جدولك لليوم فيه:\n",
         ]
-        for f in folders_info:
-            if f["due_items"] > 0:
-                lines.append(f"• {f['icon']} {f['name']}: <b>{f['due_items']}</b> مستحق")
-
-        lines.append("\n💪 <i>10 دقائق فقط الآن تحمي معلوماتك من النسيان بنسبة 100%!</i>")
+        if new_count > 0:
+            lines.append(f"• 📖 <b>{new_count}</b> دروس جديدة للمذاكرة")
+        if rev_count > 0:
+            lines.append(f"• 🔄 <b>{rev_count}</b> مراجعات لتثبيت الذاكرة")
+        lines.append("\n💪 <i>خطوات بسيطة يومياً تصنع الـ 100% بإذن الله! اضغط بالأسفل وابدأ فوراً:</i>")
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"▶️ ابدأ مراجعات اليوم ({due})", callback_data="start_review_all")],
-            [InlineKeyboardButton("📁 استعراض المجلدات", callback_data="folders_menu")],
+            [InlineKeyboardButton("📅 افتح مهام اليوم", callback_data="today_tasks")],
+            [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
         ])
         await send_clean_message(context, chat_id, "\n".join(lines), reply_markup=kb)
     else:
-        text = (
-            "🌅 <b>صباح الخير يا بطل! 🌟</b>\n\n"
-            "أحسنت! جدولك نظيف تماماً ولا توجد مراجعات متراكمة عليك اليوم ✨\n"
-            "استغل هذا الوقت لإضافة مسائل جديدة أو الاستراحة."
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📁 استعراض مجلداتي", callback_data="folders_menu")],
-            [InlineKeyboardButton("📊 تقريري وإحصائياتي", callback_data="stats_menu")],
-        ])
-        await send_clean_message(context, chat_id, text, reply_markup=kb)
+        subjects = db.get_user_subjects(chat_id)
+        if subjects:
+            text = (
+                "🌅 <b>صباح الخير يا بطل! 🌟</b>\n\n"
+                "كفو عليك! جدولك نظيف اليوم وما عندك أي دروس أو مراجعات متراكمة ✨\n"
+                "استمتع بيومك، أو راجع موادك وجداولك وقت ما تحب!"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📚 موادي وجداولي", callback_data="subjects_menu")],
+                [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+            ])
+            await send_clean_message(context, chat_id, text, reply_markup=kb)
 
 
 async def daily_reminder_job(context):
@@ -116,10 +112,42 @@ async def daily_reminder_job(context):
     await send_daily_reminder_to_chat(context, chat_id)
 
 
+# ─── User Text & Media Handlers ──────────────────────────────────────────────
+
+async def handle_incoming_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Routes incoming text to wizard if active, or presents dashboard."""
+    from handlers.schedule_wizard import handle_wizard_text_input
+    if await handle_wizard_text_input(update, context):
+        return
+
+    # Outside wizard: send clean main dashboard
+    chat_id = update.effective_chat.id
+    from handlers.main_menu import build_main_dashboard
+    user = update.effective_user
+    text, kb = build_main_dashboard(user.id if user else chat_id)
+    await send_clean_message(context, chat_id, text, update=update, reply_markup=kb)
+
+
+async def handle_incoming_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Friendly reminder that V3 is focused on study schedules and spaced repetition."""
+    chat_id = update.effective_chat.id
+    reply = (
+        "💡 <b>يا هلا يا بطل!</b>\n\n"
+        "أنا الآن رفيقك الذكي لجدولة المواد والمذاكرة بالتكرار المتباعد 📅✨\n"
+        "ما يحتاج ترسل صور، اضغط بالأسفل ورتب جدولك للمذاكرة فوراً!"
+    )
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ سوي جدول جديد", callback_data="wizard_start")],
+        [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+    ])
+    await send_clean_message(context, chat_id, reply, update=update, reply_markup=kb)
+
+
 # ─── Post Init Setup ──────────────────────────────────────────────────────────
 
 async def post_init(application):
-    logger.info("Initializing commercial MemoryQudrat SaaS bot...")
+    logger.info("Initializing MemoryQudrat V3 bot...")
     db.init_db()
 
     # Schedule reminders for all users with their preferred time
@@ -134,17 +162,16 @@ async def post_init(application):
 
     # Set Telegram Menu Commands
     commands = [
-        BotCommand("start", "🏠 لوحة المذاكرة الرئيسية"),
-        BotCommand("review", "▶️ ابدأ مراجعات اليوم"),
-        BotCommand("folders", "📁 مجلداتي وأرشيف المسائل"),
-        BotCommand("stats", "📊 تقريري الإحصائي والنبض"),
+        BotCommand("start", "🏠 القائمة الرئيسية"),
+        BotCommand("today", "📅 جدول اليوم وإنجازي"),
+        BotCommand("subjects", "📚 موادي وجداولي"),
         BotCommand("subscribe", "⭐ باقات الاشتراك والترقية"),
-        BotCommand("backup", "💾 نسخة احتياطية للبيانات"),
+        BotCommand("backup", "💾 نسخة احتياطية (للمالك)"),
     ]
     try:
         await application.bot.set_my_commands(commands)
         await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-        logger.info("Commercial bot commands and Menu Button configured successfully.")
+        logger.info("Bot commands and Menu Button configured successfully.")
     except Exception as e:
         logger.warning("Could not set bot commands: %s", e)
 
@@ -217,10 +244,8 @@ def main():
     # 1. Commands Handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", start_command))
-    app.add_handler(CommandHandler("review", review_command))
-    app.add_handler(CommandHandler("today", review_command))
-    app.add_handler(CommandHandler("folders", folders_command))
-    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("today", today_command))
+    app.add_handler(CommandHandler("subjects", subjects_command))
     app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("subscribe", subscription_command))
     app.add_handler(CommandHandler("pricing", subscription_command))
@@ -233,17 +258,16 @@ def main():
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-    # 3. Media Capture Handlers (Zero-friction)
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo_capture))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document_capture))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_and_url_capture))
+    # 3. Text and Media Handlers
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_incoming_media))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_incoming_text))
 
     # 4. Interactive Callbacks Router
     app.add_handler(CallbackQueryHandler(button_router))
 
     app.add_error_handler(error_handler)
 
-    logger.info("MemoryQudrat Commercial SaaS Active Recall OS started successfully!")
+    logger.info("MemoryQudrat V3 Active Recall & Schedule Bot started successfully!")
 
     port = int(os.environ.get("PORT", 8000))
     app_url = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("APP_URL")

@@ -1,8 +1,13 @@
 import datetime
+import math
 import pytz
 
-DEFAULT_REVIEW_INTERVALS = [1, 3, 7, 14, 30]
-MAX_STAGE = 5
+REVIEW_INTERVALS = {
+    1: 3,   # Review 1 after 3 days
+    2: 7,   # Review 2 after 7 days
+    3: 14,  # Review 3 after 14 days
+}
+MAX_REVIEW_STAGE = 3
 
 
 def get_riyadh_now() -> datetime.datetime:
@@ -37,78 +42,63 @@ def days_until(target_date_str: str) -> int:
     return (target - today).days
 
 
-def stage_label(stage: int, is_mastered: bool = False) -> str:
-    """Returns human-friendly Arabic label for the card review stage."""
-    if is_mastered or stage >= MAX_STAGE:
-        return "متقن في الذاكرة الدائمة 🌟"
-    labels = [
-        "المرحلة 1 (غداً 🧠)",
-        "المرحلة 2 (بعد 3 أيام ⚡)",
-        "المرحلة 3 (بعد أسبوع 🎯)",
-        "المرحلة 4 (بعد أسبوعين 💎)",
-        "المرحلة 5 (بعد شهر 🏆)",
-    ]
-    try:
-        stg = int(stage)
-        if 0 <= stg < len(labels):
-            return labels[stg]
-    except (ValueError, TypeError):
-        pass
-    return "مكتمل ومثبت 🌟"
+def distribute_lessons(total_lessons: int, target_days: int) -> list[int]:
+    """
+    Distributes total_lessons (1..N) across target_days (1..D).
+    Returns a list of length total_lessons where index i has scheduled_day (1..D).
+    """
+    if total_lessons <= 0:
+        return []
+    target_days = max(1, target_days)
+    
+    distribution = []
+    for i in range(total_lessons):
+        # Calculate day index 1..target_days
+        day = min(target_days, math.floor(i * target_days / total_lessons) + 1)
+        distribution.append(day)
+    return distribution
 
 
-def calculate_next_schedule(
-    current_stage: int, rating: str, ease_factor: float = 2.5
-) -> dict:
+def calculate_next_review(current_stage: int) -> dict:
     """
-    Computes new stage, next review date, ease factor, and mastery status.
-    Rating options:
-      - 'easy': User found it effortless. Jump +2 stages (or reach mastery), ease factor increases.
-      - 'good': User recalled after some thought. Standard advance +1 stage.
-      - 'hard': User forgot or made a mistake. Reset to stage 0 (tomorrow), ease factor drops.
+    Calculates next review stage, interval days, and due date.
+    Returns:
+      {
+        "next_stage": int,
+        "days_to_add": int,
+        "due_date": "YYYY-MM-DD",
+        "is_mastered": bool
+      }
     """
+    next_stage = current_stage + 1
     today = get_riyadh_today()
-    ease = max(1.3, float(ease_factor or 2.5))
-    is_mastered = 0
-    lapsed = False
 
-    if rating == "easy":
-        ease = min(3.0, ease + 0.15)
-        new_stage = current_stage + 2
-        if new_stage >= MAX_STAGE:
-            new_stage = MAX_STAGE
-            is_mastered = 1
-            days_to_add = 60  # Maintenance check
-        else:
-            days_to_add = DEFAULT_REVIEW_INTERVALS[min(new_stage, len(DEFAULT_REVIEW_INTERVALS) - 1)]
+    if next_stage > MAX_REVIEW_STAGE:
+        return {
+            "next_stage": MAX_REVIEW_STAGE,
+            "days_to_add": 0,
+            "due_date": today.isoformat(),
+            "is_mastered": True,
+        }
 
-    elif rating == "good":
-        new_stage = current_stage + 1
-        if new_stage >= MAX_STAGE:
-            new_stage = MAX_STAGE
-            is_mastered = 1
-            days_to_add = 45
-        else:
-            days_to_add = DEFAULT_REVIEW_INTERVALS[min(new_stage, len(DEFAULT_REVIEW_INTERVALS) - 1)]
-
-    else:  # 'hard'
-        lapsed = True
-        ease = max(1.3, ease - 0.20)
-        new_stage = 0
-        days_to_add = 1  # Re-test tomorrow
-
-    next_date = today + datetime.timedelta(days=days_to_add)
+    days_to_add = REVIEW_INTERVALS.get(next_stage, 3)
+    due_date = today + datetime.timedelta(days=days_to_add)
 
     return {
-        "new_stage": new_stage,
-        "next_review_date": next_date.isoformat(),
-        "ease_factor": round(ease, 2),
-        "is_mastered": is_mastered,
-        "lapsed": lapsed,
+        "next_stage": next_stage,
         "days_to_add": days_to_add,
+        "due_date": due_date.isoformat(),
+        "is_mastered": False,
     }
 
 
-def get_initial_review_date() -> str:
-    """First review is scheduled for tomorrow (1 day interval)."""
-    return (get_riyadh_today() + datetime.timedelta(days=1)).isoformat()
+def stage_label(stage: int, is_mastered: bool = False) -> str:
+    """Returns friendly Arabic label for review stage."""
+    if is_mastered or stage >= MAX_REVIEW_STAGE:
+        return "مثبت في الذاكرة الدائمة 🌟"
+    labels = {
+        1: "مراجعة 1 (تثبيت بعد 3 أيام ⚡)",
+        2: "مراجعة 2 (ترسيخ بعد أسبوع 🎯)",
+        3: "مراجعة 3 (إتقان نهائي 🏆)",
+    }
+    return labels.get(stage, f"مراجعة مرحلة {stage}")

@@ -6,8 +6,10 @@ memory_qudrat.db*
 archive_backup_pre_v2/
 data/photos/*
 data/documents/*
+data/generated_schedules/*
 !data/photos/.gitkeep
 !data/documents/.gitkeep
+!data/generated_schedules/.gitkeep
 venv/
 .venv/
 .idea/

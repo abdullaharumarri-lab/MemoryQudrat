@@ -1,19 +1,25 @@
 """
-Handlers package for MemoryQudrat SaaS Platform.
+Handlers package for MemoryQudrat V3 Platform.
 """
 
 from handlers.main_menu import (
     start_command,
-    review_command,
-    folders_command,
-    stats_command,
+    today_command,
+    subjects_command,
     backup_command,
     button_router,
 )
-from handlers.capture_handler import (
-    handle_photo_capture,
-    handle_text_and_url_capture,
-    handle_document_capture,
+from handlers.schedule_wizard import (
+    handle_wizard_callback,
+    handle_wizard_text_input,
+)
+from handlers.today_handler import (
+    show_today_tasks,
+    handle_today_callback,
+)
+from handlers.subjects_handler import (
+    show_subjects_menu,
+    handle_subjects_callback,
 )
 from handlers.subscription_handler import (
     subscription_command,
@@ -30,14 +36,16 @@ from handlers.admin_handler import (
 
 __all__ = [
     "start_command",
-    "review_command",
-    "folders_command",
-    "stats_command",
+    "today_command",
+    "subjects_command",
     "backup_command",
     "button_router",
-    "handle_photo_capture",
-    "handle_text_and_url_capture",
-    "handle_document_capture",
+    "handle_wizard_callback",
+    "handle_wizard_text_input",
+    "show_today_tasks",
+    "handle_today_callback",
+    "show_subjects_menu",
+    "handle_subjects_callback",
     "subscription_command",
     "handle_subscription_callback",
     "precheckout_callback",
